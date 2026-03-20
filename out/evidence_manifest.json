@@ -1,0 +1,1108 @@
+[
+  {
+    "path": "./out/evidence_images/units_operational_FY2024_Consolidated Forecast (A).png",
+    "sha256": "70b3aeda51a2badc75ecaeb04f3ecc3a0cbfdcfe61f3c6ed77124f7682336646",
+    "proves": "units_operational FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2025_Consolidated Forecast (A).png",
+    "sha256": "d4663a27e676ab7e3b98105016d3e71e295cbb31b91ca6c8c9957de177af68f2",
+    "proves": "units_operational FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2026_Consolidated Forecast (A).png",
+    "sha256": "e3a7ab5ce99be91ed59d96e63ce4e1a747ddf3b4d7bc9d19808f766c8456376d",
+    "proves": "units_operational FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2027_Consolidated Forecast (A).png",
+    "sha256": "5eb96c397a143d0c455aed9b1283e705641b359c9e6bc12d350ab2604ec8b5fb",
+    "proves": "units_operational FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2028_Consolidated Forecast (A).png",
+    "sha256": "7fb2fa1eaee1a07eb5b5119ab5848289c12eded248389d70793dfe9b6b9dbd19",
+    "proves": "units_operational FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2029_Consolidated Forecast (A).png",
+    "sha256": "02b098dcec1eb6651d8b7166d8df78bc46b2c77b2c4fc671cc3ac2e7674addca",
+    "proves": "units_operational FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2030_Consolidated Forecast (A).png",
+    "sha256": "54c8bd7c1988146fc07fb823c96231bead113defbe2791581d7f55a260f05811",
+    "proves": "units_operational FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2031_Consolidated Forecast (A).png",
+    "sha256": "438b87ee7cea8942d7875e64ed7c1a543fe1b3346f8e0975c173fb6ad5c589bf",
+    "proves": "units_operational FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2032_Consolidated Forecast (A).png",
+    "sha256": "c7d964de2d9954f8a41aa07596e33256b22b6da8c74fdcdd0605281550e2bf1d",
+    "proves": "units_operational FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2033_Consolidated Forecast (A).png",
+    "sha256": "1032c6bd44ba30347f51b06fce65a88028489b2a6817a915021d74b4e6e106cf",
+    "proves": "units_operational FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2034_Consolidated Forecast (A).png",
+    "sha256": "e0a37d15d08bc9456b184b54c612e67c7ef91f0dbddcba6509f549f3e03f8eea",
+    "proves": "units_operational FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2035_Consolidated Forecast (A).png",
+    "sha256": "649c9dbcd77eae6004472bf6ca18bcc2985a06f1e0547bc245b6202211ec39bc",
+    "proves": "units_operational FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2024_Consolidated Forecast (A).png",
+    "sha256": "d5ac3dd16a8ef58d63e7490fdddda80ad7b58614b2e81515a41379e972b6ebf1",
+    "proves": "revenue FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2025_Consolidated Forecast (A).png",
+    "sha256": "91130420e37c523b23aebd0d6920d0f8f941baef31f3e7201b358a4467135686",
+    "proves": "revenue FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2026_Consolidated Forecast (A).png",
+    "sha256": "8238d55683167772818ba92716bca96debf096427eb3109ee1ea6f6a220fb607",
+    "proves": "revenue FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2027_Consolidated Forecast (A).png",
+    "sha256": "6da4fb758ac7e43ca19d6b367fb310f314cfa9cc14984dcf0914bb6a80af2c73",
+    "proves": "revenue FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2028_Consolidated Forecast (A).png",
+    "sha256": "0d9debf70d5691872f531f26bd1e1481ef43b901f05690d17d1b9192759245c6",
+    "proves": "revenue FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2029_Consolidated Forecast (A).png",
+    "sha256": "2ab623f27ad546d8629b8ef3b06227c4ba66207e22224ace0d4206fc14f37793",
+    "proves": "revenue FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2030_Consolidated Forecast (A).png",
+    "sha256": "92968832aa998c0b6fcc80bb4cf856ed231a4609ef043fd91ee690013c569595",
+    "proves": "revenue FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2031_Consolidated Forecast (A).png",
+    "sha256": "aa439e4e13eff6c28838fb952bdfdebf6b3e835ecd0be234d3d8fba1ced74ed7",
+    "proves": "revenue FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2032_Consolidated Forecast (A).png",
+    "sha256": "be54d595028664a958993947a494558ec8515ce4bbd880eb6eafb33452fb96ea",
+    "proves": "revenue FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2033_Consolidated Forecast (A).png",
+    "sha256": "d9d48c9bd21e988106e042d69c80b2b8b10ac8b1e367be4005cfc989a37a02ac",
+    "proves": "revenue FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2034_Consolidated Forecast (A).png",
+    "sha256": "1eda12380b6e0703d84f5328366663694952230429ca8731b6d5159dd8a8296a",
+    "proves": "revenue FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2035_Consolidated Forecast (A).png",
+    "sha256": "345092ffbd05a8678b434530bd7515672106c1637ad7d39045753ab88b572d36",
+    "proves": "revenue FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2024_Consolidated Forecast (A).png",
+    "sha256": "77fecb1febe0f1f3805e8c795aa45aec27966335eaf40ee8ff50a136d5416d42",
+    "proves": "ebitda FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2025_Consolidated Forecast (A).png",
+    "sha256": "22939e3d3b9a53516ef50914beee8f296a7a57d3c7720e32766fbf8289b88aad",
+    "proves": "ebitda FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2026_Consolidated Forecast (A).png",
+    "sha256": "e95918761b315e8135edbbc70d1b8bacfb50f5280d79b55f32ef835b7d47e481",
+    "proves": "ebitda FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2027_Consolidated Forecast (A).png",
+    "sha256": "00297064408f1c1d955d1bedac5737700c72f2beb82717d47d0b952bc28181ab",
+    "proves": "ebitda FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2028_Consolidated Forecast (A).png",
+    "sha256": "fb736999206b2c655fc359773b8c77ef53b29c29c7b2b639cef701a456e37fd5",
+    "proves": "ebitda FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2029_Consolidated Forecast (A).png",
+    "sha256": "0e52236d4560471dd6b0384b96aef387c16e1970ce0750735742804c5862684c",
+    "proves": "ebitda FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2030_Consolidated Forecast (A).png",
+    "sha256": "1893f44e9b5cf834f3df1883bbbf8de487516999db50905b213e67a9801f056c",
+    "proves": "ebitda FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2031_Consolidated Forecast (A).png",
+    "sha256": "5fc36e76dd597d23d9cdc7afe0f606ef4119e5f0c2f3543d1acac6d0c74fce83",
+    "proves": "ebitda FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2032_Consolidated Forecast (A).png",
+    "sha256": "bbcfab9d57da7b898256784bd78ad45a894cf37a80a50b33ada512f81630973a",
+    "proves": "ebitda FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2033_Consolidated Forecast (A).png",
+    "sha256": "34ab73ac96f0d0b836eec324951aa79ee039e6d6f9e98e3142e3d608fd51a400",
+    "proves": "ebitda FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2034_Consolidated Forecast (A).png",
+    "sha256": "d2b0357877c40917096be8434cd8de9ac5b9d102723329021ed2c1a649e218b0",
+    "proves": "ebitda FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2035_Consolidated Forecast (A).png",
+    "sha256": "7b452beaaca78d1b78f4876c21cccfe2084edc582dda136009582a050b8accdf",
+    "proves": "ebitda FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2024_Consolidated Forecast (A).png",
+    "sha256": "f7d8c90d37342e48ef70cbb335c79c7b8d8f3033bdfa0bc9d76df9066eb7164a",
+    "proves": "ebitda FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2025_Consolidated Forecast (A).png",
+    "sha256": "df31ab4d37fea7120c3fd1cd0aeafb11f5a74e498592b2b75b7237d4c1f7001e",
+    "proves": "ebitda FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2026_Consolidated Forecast (A).png",
+    "sha256": "86b983b2efd4fe1211fbeef568edb55dba0178a62b07e598cdcb6d0d2bfb5573",
+    "proves": "ebitda FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2027_Consolidated Forecast (A).png",
+    "sha256": "33fb0d8c4e191415ddcc6fdfe3f4ee8320e607ee2e8109c2e280f4d09d4f87a6",
+    "proves": "ebitda FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2028_Consolidated Forecast (A).png",
+    "sha256": "7e2a4c30742fd0a245ccc5728867f0dc7096144fcdff36e605c6ad0f6a4019d7",
+    "proves": "ebitda FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2029_Consolidated Forecast (A).png",
+    "sha256": "78e5fff5b60811ebdd6d1d7d7fd9a9f3379e095dc3a51a36ab503a6b661aa304",
+    "proves": "ebitda FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2030_Consolidated Forecast (A).png",
+    "sha256": "4990778a4f07493b50b55d7ca6c18a7201bfd82efcfd062ade7fec5b29c54cef",
+    "proves": "ebitda FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2031_Consolidated Forecast (A).png",
+    "sha256": "84abd5b1bcbd7be481c845710b6b3de0c5d0ff9f1629cead4936f2a7a65d0170",
+    "proves": "ebitda FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2032_Consolidated Forecast (A).png",
+    "sha256": "e67aea4d5145ecf479e43eb3310e3bdc26c2df87acbb80b34cee4e44f1962d42",
+    "proves": "ebitda FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2033_Consolidated Forecast (A).png",
+    "sha256": "54f9fdc6ce450f335ebdd9284c3eb26c905e2229f2a2b03790bb8f0826df4758",
+    "proves": "ebitda FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2034_Consolidated Forecast (A).png",
+    "sha256": "05f477642700775b2ab31857375f3c77cf8b2f1220f8421e995e1c6847cd0546",
+    "proves": "ebitda FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2035_Consolidated Forecast (A).png",
+    "sha256": "9c15b10c6ebc9dbb54aa72561e48bf944e980fdc33428823d00e2578448dce81",
+    "proves": "ebitda FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2024_Consolidated Forecast (A).png",
+    "sha256": "06ef9cf56178368d51ac9cd78333bead2288d8336d17686d98d7973bea312b7f",
+    "proves": "ebitda FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2025_Consolidated Forecast (A).png",
+    "sha256": "e7ba678895c6531e4b01f3682af842923007b26d34cfb3245b11692d434e88a5",
+    "proves": "ebitda FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2026_Consolidated Forecast (A).png",
+    "sha256": "08d9a83349a8ad83bd5f18fea9f3b6ac0d53b6259c61b66abb37f4bb998f7ede",
+    "proves": "ebitda FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2027_Consolidated Forecast (A).png",
+    "sha256": "a0daba8bf6bbcdf9ba3898f1de8f20b7a20411275942517ad8e0faa0480a44e8",
+    "proves": "ebitda FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2028_Consolidated Forecast (A).png",
+    "sha256": "76800b49a2bfc0c20e5fe93ce94c129c4a3062f2a265aafa6cbb30285737132b",
+    "proves": "ebitda FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2029_Consolidated Forecast (A).png",
+    "sha256": "99029847f55a0e3692a97ca8b734df9563558339687de27065b12e5c7ee808e0",
+    "proves": "ebitda FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2030_Consolidated Forecast (A).png",
+    "sha256": "b903b6bce9e2b84fc0f958245335f0a931dc7801ae744d74913b8be28896ac59",
+    "proves": "ebitda FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2031_Consolidated Forecast (A).png",
+    "sha256": "31b105d59cd1052f8a16f09d5192685390c9244a1488ba542ab670d7ec63277a",
+    "proves": "ebitda FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2032_Consolidated Forecast (A).png",
+    "sha256": "bf8ac6f826d3a23fd0c0c95602e4d9164329c0763c1de15f60c4d1eeec1776bc",
+    "proves": "ebitda FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2033_Consolidated Forecast (A).png",
+    "sha256": "d40c1f0317b9650e5174739ece2ef0186ccc95c7463d7ecc3741ea8fd060d129",
+    "proves": "ebitda FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2034_Consolidated Forecast (A).png",
+    "sha256": "7b68268fa020c69b0e08fc6142bc77dd66b131f41bba9ce180dacd7a52d04fc4",
+    "proves": "ebitda FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2035_Consolidated Forecast (A).png",
+    "sha256": "6e5efaaf1534b953003fbf76993f5e75ea649f7d57d04e30f3f7219ba0bc9b33",
+    "proves": "ebitda FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2024_Consolidated Forecast (A).png",
+    "sha256": "c524576b1f539404d8637a08bbfd0cdfe47573a49a0aabad4c666c4870a79778",
+    "proves": "units_operational FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2025_Consolidated Forecast (A).png",
+    "sha256": "254a228e13bdeedd343bd1f3431753a5a915415a84e3b6d74b1e97d4934669b1",
+    "proves": "units_operational FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2026_Consolidated Forecast (A).png",
+    "sha256": "2ccde704c9f1f04fb8612b1920a7bf86a0390f366eb657215e3e08a9e19c3891",
+    "proves": "units_operational FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2027_Consolidated Forecast (A).png",
+    "sha256": "b55565f17ea4e00465568bd42ee6b44a0a64517094c7ad4cca61bb8bca18d9ff",
+    "proves": "units_operational FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2028_Consolidated Forecast (A).png",
+    "sha256": "78afeffa15147ad6e9b1a21cfc4f8ecc6456b3f8240ca99d210a67df2e624021",
+    "proves": "units_operational FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2029_Consolidated Forecast (A).png",
+    "sha256": "716ade77bb3030b77d3136ecdc7d7295409f721fd10e1f2b2c0b20bd016597e8",
+    "proves": "units_operational FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2030_Consolidated Forecast (A).png",
+    "sha256": "9d4b6365bd5e0b13cd614d10bbe028f97aa13fc0170776fd9b738eb09fc6b702",
+    "proves": "units_operational FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2031_Consolidated Forecast (A).png",
+    "sha256": "686e45995de660a145637d9dc33bd616e9dba2288cb7c6ad6abc74dee2147358",
+    "proves": "units_operational FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2032_Consolidated Forecast (A).png",
+    "sha256": "de9958d70a32fe2b3d46c38774db72479b34f5b157cc1d6273fe8b0d3090e345",
+    "proves": "units_operational FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2033_Consolidated Forecast (A).png",
+    "sha256": "30dc1f95051ba55cfb1cb1bb7e3fb2c77d52d1a721631e81b69f2c7195ee3593",
+    "proves": "units_operational FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2034_Consolidated Forecast (A).png",
+    "sha256": "5f40ee631a2e363e38ed9fe17a8b85b14378ad852483991962c213388966b07b",
+    "proves": "units_operational FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/units_operational_FY2035_Consolidated Forecast (A).png",
+    "sha256": "cf72dd5408f3170ce2cd95086e40653653c86323a3b3f56dd585603cf637d01e",
+    "proves": "units_operational FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "units_operational",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2024_Consolidated Forecast (A).png",
+    "sha256": "a0656e5e65b2380144b76f1da87b7f96f5ce2b4a3e5f50c1694bea3decf88485",
+    "proves": "revenue FY2024 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2025_Consolidated Forecast (A).png",
+    "sha256": "aeef17e5beec4ee419048f86e05d1417246e1a4b3d8637b0924e41875fba9223",
+    "proves": "revenue FY2025 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2026_Consolidated Forecast (A).png",
+    "sha256": "f93b1b925ac38ab55b13e4c96fd090203819e3680b281d998401ca1847dbb290",
+    "proves": "revenue FY2026 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2027_Consolidated Forecast (A).png",
+    "sha256": "09f4c74254001c34ef36f393787ecd762a545f681ff69bab88498c8e1c53f034",
+    "proves": "revenue FY2027 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2028_Consolidated Forecast (A).png",
+    "sha256": "f1ceb45a67042382666b3d97a17070dbf0ca3bb2abc36bc0868f106981d687fc",
+    "proves": "revenue FY2028 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2029_Consolidated Forecast (A).png",
+    "sha256": "baba35a7ffdf7fc10f57ec81437cccc7eae695c51901e0e48f5b2534b1c6b261",
+    "proves": "revenue FY2029 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2030_Consolidated Forecast (A).png",
+    "sha256": "34f906cb0762f92c7cb2503085e208e2863a54cdadb868072c6725194cbd286b",
+    "proves": "revenue FY2030 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2031_Consolidated Forecast (A).png",
+    "sha256": "b1ef3fdb57e383869f4d30f7cfe4e5d64d7a95327152102b175c0af0cb9b27ba",
+    "proves": "revenue FY2031 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2032_Consolidated Forecast (A).png",
+    "sha256": "0ff478e160052e5a477df8594e5186d6b02cd03e700bb8b4dc9d69ec5a9eba6f",
+    "proves": "revenue FY2032 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2033_Consolidated Forecast (A).png",
+    "sha256": "9d0bc040b4dd97ec810c045109551ecd0deff162197f80904b5bc00825b8691c",
+    "proves": "revenue FY2033 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2034_Consolidated Forecast (A).png",
+    "sha256": "ef6d4bb6932d8a1e4c22ea28ebce1940183e96395850275c95b567f9480687cb",
+    "proves": "revenue FY2034 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2035_Consolidated Forecast (A).png",
+    "sha256": "3825a007e42d10c2be9f0d944bf92adc94fce24a181545842cb82ac6fc63eff2",
+    "proves": "revenue FY2035 extraction from Consolidated Forecast (A)",
+    "metric": "revenue",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2004_Consolidated Forecast (A).png",
+    "sha256": "1e0ed6f98223fcdc0f6ba3e79397ed26cc41c2d279ef429297a17b779880f7db",
+    "proves": "ebitda FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2045_Consolidated Forecast (A).png",
+    "sha256": "321635d76276313a5060b11146097f8ebba3b76d98ab751ed68b87713ce2b881",
+    "proves": "ebitda FY2045 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2045
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2004_Consolidated Forecast (A).png",
+    "sha256": "54219f5c54a5beee2d0b28c1f11932d13ac15458aaccf72cfda5f3a24db98054",
+    "proves": "ebitda FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2045_Consolidated Forecast (A).png",
+    "sha256": "616c9db8832e1b8794a45912d4c1d991040699fe0f15381a359ccc1be6d6aa4c",
+    "proves": "ebitda FY2045 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2045
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2004_Consolidated Forecast (A).png",
+    "sha256": "4c06aaa818a3324a511a8f64dad893d71727348995630181043f5135f09e2496",
+    "proves": "ebitda FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2045_Consolidated Forecast (A).png",
+    "sha256": "87b60ca79c31c8fa38899593b9a383543400bbc2a5c4b52b6fa800ab8d99a52b",
+    "proves": "ebitda FY2045 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2045
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2004_Consolidated Forecast (A).png",
+    "sha256": "977082d6b29487321f341ceeceed7467db038d47b7482d5009cf432c2c99b026",
+    "proves": "ebitda FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "ebitda",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2004_Consolidated Forecast (A).png",
+    "sha256": "3a056c96c9444cd72fb57f3e9c4fd3ca3295ea03a343b36783d93b579c5538f5",
+    "proves": "opex FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "opex",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2045_Consolidated Forecast (A).png",
+    "sha256": "1c1283dfdc94cc4eb0c387d51f88a290f1d39e22c22b96b4b6a2d53b8ddaecb8",
+    "proves": "opex FY2045 extraction from Consolidated Forecast (A)",
+    "metric": "opex",
+    "fiscal_year": 2045
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2004_Consolidated Forecast (A).png",
+    "sha256": "f298fa402330f32318321daf2d92197f63be3498dfc250c5b74650299ea45812",
+    "proves": "opex FY2004 extraction from Consolidated Forecast (A)",
+    "metric": "opex",
+    "fiscal_year": 2004
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2045_Consolidated Forecast (A).png",
+    "sha256": "58c5ff440fdbd1ad6636452acaf78848cb9b56a29bd774084f981dfb5407dfec",
+    "proves": "opex FY2045 extraction from Consolidated Forecast (A)",
+    "metric": "opex",
+    "fiscal_year": 2045
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2026_ST Forecast (M).png",
+    "sha256": "af294d4fd7dbd12a404cb291bd22860f55ca1008b413e5035a6268eb8c147e7b",
+    "proves": "opex FY2026 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2027_ST Forecast (M).png",
+    "sha256": "5de69e55e261b4a5ae66eacce91a59d9c40872f9d9cf92b6904ad58ad9ea0e8b",
+    "proves": "opex FY2027 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2028_ST Forecast (M).png",
+    "sha256": "1c0f702e71bccf27547751eca874d8ede852ebd5b3a14faed28fec36a1f9eb5f",
+    "proves": "opex FY2028 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2026_ST Forecast (M).png",
+    "sha256": "fbebf7446451d112f0e9142ebd93124420ed5e7ca41b34237bdf72ef5130f504",
+    "proves": "opex FY2026 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2027_ST Forecast (M).png",
+    "sha256": "fffd49d44fe6fdc848155a78f06e3df018c1a4154d3cde4a351bb335c97a7707",
+    "proves": "opex FY2027 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2028_ST Forecast (M).png",
+    "sha256": "364d3204e0853afa6e8c112224de92fb1644ee5f19b1d499d18a9c85db1e5c8e",
+    "proves": "opex FY2028 extraction from ST Forecast (M)",
+    "metric": "opex",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2025_Outputs.png",
+    "sha256": "5fc1add9a9ace856678e6005dc602285f1f03377fe182ffc605f9d9b9e3eaf2f",
+    "proves": "revenue FY2025 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2026_Outputs.png",
+    "sha256": "ae5248b2b69b986f53b97be6f7383a8b7ee88f4000d35f60941fa26fb48d4b7c",
+    "proves": "revenue FY2026 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2027_Outputs.png",
+    "sha256": "6a48cdc193979c353d100e006d44a7c248ed89d1048baa5787b3e717ea25a60f",
+    "proves": "revenue FY2027 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2028_Outputs.png",
+    "sha256": "df722268d5f0b095fbe9d3b39731e6bff2b04abcb06a6cc8b2b15570e29077b0",
+    "proves": "revenue FY2028 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2029_Outputs.png",
+    "sha256": "27dc5c4c8ea7696367fcd2582f751855779fab37cd7e018242768317051aac36",
+    "proves": "revenue FY2029 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2030_Outputs.png",
+    "sha256": "9bf04cd1272d2b70ad40f911835db73af2e94c90e541b909169bd00f40034802",
+    "proves": "revenue FY2030 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2031_Outputs.png",
+    "sha256": "e56a45036d2b2bb3f5f4b1b61c7c38639ad7bbbda3d542af15e1256b7d042ae6",
+    "proves": "revenue FY2031 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2032_Outputs.png",
+    "sha256": "8fea5a459578560358e3b3d32f0e199a8e699cd3193a04c063f124fb9a7bb494",
+    "proves": "revenue FY2032 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2033_Outputs.png",
+    "sha256": "b8d163653125755dcebfb5c6a02eedff54d2716decf66d37492771ada282f620",
+    "proves": "revenue FY2033 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2034_Outputs.png",
+    "sha256": "3da3562a5aa827ae6b4b357483f724e4c39e40ac841f7b6c6b1e0c37f30fea18",
+    "proves": "revenue FY2034 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/revenue_FY2035_Outputs.png",
+    "sha256": "1b5407f81ec8daf2fc1ff11fbb65459ece913de8f3eddd6724cded1cd5ee0726",
+    "proves": "revenue FY2035 extraction from Outputs",
+    "metric": "revenue",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2025_Outputs.png",
+    "sha256": "aedc28fece583b22b7591799b412ede1b761652f4ed8e2a83c691b48141f3c58",
+    "proves": "opex FY2025 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2026_Outputs.png",
+    "sha256": "9773e5bbf1c9a5a747bce319e7ec14e007358f5492bb71691cc488bc0be82aca",
+    "proves": "opex FY2026 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2027_Outputs.png",
+    "sha256": "84a8db56673f0557ee5bd7119f07d14e57742e8f0c683da8f408380a6bde29e9",
+    "proves": "opex FY2027 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2028_Outputs.png",
+    "sha256": "4a12964b919cf929338e8acc611145b618be297b8640692d059ade31c924804c",
+    "proves": "opex FY2028 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2029_Outputs.png",
+    "sha256": "6f5133c763d7f4ca9f9294b1ca96b2141f4f15f7cd5dac86cd585d91869b9460",
+    "proves": "opex FY2029 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2030_Outputs.png",
+    "sha256": "1377728d400ffc333ca57cdac2c4e50107c7d729122e516f2fd81b5b8eff62f5",
+    "proves": "opex FY2030 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2031_Outputs.png",
+    "sha256": "2cb540ac0ccbe17becc7dd49e633e8a950d90077c7797575881ae957495f2579",
+    "proves": "opex FY2031 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2032_Outputs.png",
+    "sha256": "cd3b7d1ccec39dc2d6aaa4abc9fcce8fa9b4a0dfcb3d8215162ba97adc9f7260",
+    "proves": "opex FY2032 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2033_Outputs.png",
+    "sha256": "7eb05405d7076509a44d55a57c1d1bdfed07c87ec1147501402b6206a22dcdab",
+    "proves": "opex FY2033 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2034_Outputs.png",
+    "sha256": "c9cd0619aeeecbe86077c0fec031a703eb9ae631c1a9319e2ddf67197637c3c4",
+    "proves": "opex FY2034 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2035_Outputs.png",
+    "sha256": "82077b60e8a0e7529094f3562cc35f30dabbac7e0a339c427428028b058b0d9c",
+    "proves": "opex FY2035 extraction from Outputs",
+    "metric": "opex",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2025_Outputs.png",
+    "sha256": "7edbbe3ef4dd44d632e5311d9e03f759dce8e5272808e44e5eae39e4aec46e99",
+    "proves": "ebitda FY2025 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2026_Outputs.png",
+    "sha256": "7ec9b4e717fdc47cdd8b6a32cccfa98433b713e1f82a83d35d6d0294d830a78e",
+    "proves": "ebitda FY2026 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2027_Outputs.png",
+    "sha256": "38d321ae9c520eb85a836244b8a82491a4f629b05cbdc831e06224fc1e443f02",
+    "proves": "ebitda FY2027 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2028_Outputs.png",
+    "sha256": "2ec1229d87498f8dbf668ede0edba7f7dcdd09814a22781966af19ba5016f63e",
+    "proves": "ebitda FY2028 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2029_Outputs.png",
+    "sha256": "3b19183d593de3b183cfaf1f90b9e95bce02ed480edd232c9877bc70ad7d9908",
+    "proves": "ebitda FY2029 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2030_Outputs.png",
+    "sha256": "c288467f1fa63b1eb9c823dff3d111841ad958ab2b5e820927f448d53f049d09",
+    "proves": "ebitda FY2030 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2031_Outputs.png",
+    "sha256": "0eaa45824f371a88671175c5c8befc5ff7d86eceb7cf6cb1012b59a151968583",
+    "proves": "ebitda FY2031 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2032_Outputs.png",
+    "sha256": "d5e16d1a1a8f7e9c73e477fb58e691e7cb56238584751ac78b3193e9d2559bea",
+    "proves": "ebitda FY2032 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2033_Outputs.png",
+    "sha256": "cd0de0b58e648d81dbbfcddbc187dbbf56a6a3c097f06fbea039b7356455a21f",
+    "proves": "ebitda FY2033 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2034_Outputs.png",
+    "sha256": "dcdf93962c1d6357e218c4cd3c0da9c7c0573f5c16eab85590618f479f963d00",
+    "proves": "ebitda FY2034 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2035_Outputs.png",
+    "sha256": "654d6b37e07721fa501b81a4978f9c5258945b174e355fee8ba8f1045b084c2c",
+    "proves": "ebitda FY2035 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2025_Outputs.png",
+    "sha256": "347d421b946b7387acad0f0bbfc140ed99206936fe272c9658d91881210c8068",
+    "proves": "ebitda FY2025 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2026_Outputs.png",
+    "sha256": "3e52492d6d944db85e375b90349e6c7e3f313ec57ddd26796ce2b14636d6ae47",
+    "proves": "ebitda FY2026 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2026
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2027_Outputs.png",
+    "sha256": "942b90d2ad9496f95be2f3c3b28782a29f6536e6608551289448e5006144cd0a",
+    "proves": "ebitda FY2027 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2027
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2028_Outputs.png",
+    "sha256": "c763ab6fc7f461dbf55c429c61a26ef6c019ee1b04e1f20e9c81ab8e75c77525",
+    "proves": "ebitda FY2028 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2028
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2029_Outputs.png",
+    "sha256": "b2b3efc9792983b00e3ed80849ddb2d5af003feb246b1229261d9d91bb6d0a3c",
+    "proves": "ebitda FY2029 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2029
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2030_Outputs.png",
+    "sha256": "bfb066dcad2a5524df141580f9dc8ccfbf9193b944b635179bf9eba29996063f",
+    "proves": "ebitda FY2030 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2030
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2031_Outputs.png",
+    "sha256": "75cf62b9d228d56623d31173b7b160ec587ed42d6c638f48bf3adc4e645ecfc8",
+    "proves": "ebitda FY2031 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2031
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2032_Outputs.png",
+    "sha256": "5f4dd9affc87513a7fcf86f2937ccddf58baa8f84874e92d36e56dd5b86a4504",
+    "proves": "ebitda FY2032 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2032
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2033_Outputs.png",
+    "sha256": "2064eb164b228992a0daa3389e077bb26d44ca14aaefd18bd06ad80a236b92dd",
+    "proves": "ebitda FY2033 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2033
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2034_Outputs.png",
+    "sha256": "750ee17e6835bec84848e4795fabe994cccbd2abf10b0680624d7476bbae9b92",
+    "proves": "ebitda FY2034 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2034
+  },
+  {
+    "path": "./out/evidence_images/ebitda_FY2035_Outputs.png",
+    "sha256": "860d24e299c972341d90d469beb6f9daa2dacf897031c6634473af9b360732c0",
+    "proves": "ebitda FY2035 extraction from Outputs",
+    "metric": "ebitda",
+    "fiscal_year": 2035
+  },
+  {
+    "path": "./out/evidence_images/opex_FY2024_Historical PnL (M).png",
+    "sha256": "641a53ca960027bb91fb86b32c0d64e86298b78cf49169e84fe6e817bc5204d6",
+    "proves": "opex FY2024 extraction from Historical PnL (M)",
+    "metric": "opex",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/cogs_FY2024_Historical IS.png",
+    "sha256": "0fea58687a79f7dc29b9e98ae882aab8cba123fae5e5b307f0c7dbb836a00339",
+    "proves": "cogs FY2024 extraction from Historical IS",
+    "metric": "cogs",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/cogs_FY2025_Historical IS.png",
+    "sha256": "acd93a1236b2be48133d5b3b6e129c438dd5adb1a26418a3c8b09a1a6d357484",
+    "proves": "cogs FY2025 extraction from Historical IS",
+    "metric": "cogs",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/gross_profit_FY2024_Historical IS.png",
+    "sha256": "e43c4cb771b505a3d1a77db98cb73d76330ea3f08de30247bbebfedc567d5542",
+    "proves": "gross_profit FY2024 extraction from Historical IS",
+    "metric": "gross_profit",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/gross_profit_FY2025_Historical IS.png",
+    "sha256": "34aedb7c374df5b9d4b40a1f759b9e56dd5320a94bf9ce90db1c9c15e5345220",
+    "proves": "gross_profit FY2025 extraction from Historical IS",
+    "metric": "gross_profit",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/net_income_FY2024_Historical IS.png",
+    "sha256": "c6fee6d82bc088fdfd6b9cb672418a5c08e3d3ef92225023140b55ffb8384cf4",
+    "proves": "net_income FY2024 extraction from Historical IS",
+    "metric": "net_income",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/net_income_FY2025_Historical IS.png",
+    "sha256": "01bd95fcf06538685d3da35bc57b376f70a7adf42cd3b7e22a7287b43a4df304",
+    "proves": "net_income FY2025 extraction from Historical IS",
+    "metric": "net_income",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/cash_FY2024_Historical BS.png",
+    "sha256": "b2fee1b37f2fa2f979a79f0eed9b0a79ce01a98ba9ff38841e7d028fa789603b",
+    "proves": "cash FY2024 extraction from Historical BS",
+    "metric": "cash",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/cash_FY2025_Historical BS.png",
+    "sha256": "15f74a4dbab8a318d457ff787e698e97fcdd3a6abc7b4e1014c3d71e28a5f21c",
+    "proves": "cash FY2025 extraction from Historical BS",
+    "metric": "cash",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/total_assets_FY2024_Historical BS.png",
+    "sha256": "4296e1bc4108ba4e5edd847fa3dd75af05613b0a4738789bd7edc58984957204",
+    "proves": "total_assets FY2024 extraction from Historical BS",
+    "metric": "total_assets",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/total_assets_FY2025_Historical BS.png",
+    "sha256": "8a7deda7250ebfcd7efcf6cfdf3da2e649a2929944df0788f0bf94a11155dc71",
+    "proves": "total_assets FY2025 extraction from Historical BS",
+    "metric": "total_assets",
+    "fiscal_year": 2025
+  },
+  {
+    "path": "./out/evidence_images/total_liabilities_FY2024_Historical BS.png",
+    "sha256": "5638af027330da1f95b753b39bf97aff1c59b50b85ac42a18bf391ce0c31d355",
+    "proves": "total_liabilities FY2024 extraction from Historical BS",
+    "metric": "total_liabilities",
+    "fiscal_year": 2024
+  },
+  {
+    "path": "./out/evidence_images/total_liabilities_FY2025_Historical BS.png",
+    "sha256": "c21dbbac5c1fbb58f77a24f0ba310857196ce4c70a11f5b246acd6b6dbdd9dfe",
+    "proves": "total_liabilities FY2025 extraction from Historical BS",
+    "metric": "total_liabilities",
+    "fiscal_year": 2025
+  }
+]

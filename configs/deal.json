@@ -1,0 +1,16 @@
+{
+  "name": "Example Deal",
+  "cap_multiple": 10.0,
+  "success_prob": 0.3,
+  "failure_multiple": 0.0,
+  "exit_year_mode": "fixed",
+  "exit_year": 7,
+  "exit_year_triangular": {
+    "low": 3,
+    "mode": 7,
+    "high": 10
+  },
+  "check_size": 3000000,
+  "follow_on_allowed": false,
+  "metric": "ev_rev"
+}

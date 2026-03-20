@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoLo Earth Ventures — Underwriting Engine</title>
+    <link rel="stylesheet" href="/static/styles.css?v=76">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+</head>
+<body>
+    <!-- AUTH OVERLAY -->
+    <div id="auth-overlay" class="auth-overlay">
+        <div class="auth-card">
+            <div class="auth-brand">
+                <img src="/static/logo.png" alt="VoLo" class="auth-logo"><br>
+                <span class="auth-subtitle">Underwriting Engine</span>
+            </div>
+            <div class="auth-tabs">
+                <button onclick="showAuthTab('login')" id="auth-tab-login" class="auth-tab active">Login</button>
+                <button onclick="showAuthTab('register')" id="auth-tab-register" class="auth-tab">Register</button>
+            </div>
+            <div id="auth-login-form">
+                <div class="auth-field"><label>Username</label><input type="text" id="login-username" placeholder="Enter username"></div>
+                <div class="auth-field"><label>Password</label><input type="password" id="login-password" placeholder="Enter password"></div>
+                <button onclick="doLogin()" class="auth-submit">Sign In</button>
+            </div>
+            <div id="auth-register-form" style="display:none">
+                <div class="auth-field"><label>Username</label><input type="text" id="reg-username" placeholder="Choose username"></div>
+                <div class="auth-field"><label>Email</label><input type="email" id="reg-email" placeholder="you@company.com"></div>
+                <div class="auth-field"><label>Password (8+ chars)</label><input type="password" id="reg-password" placeholder="Choose password"></div>
+                <button onclick="doRegister()" class="auth-submit">Create Account</button>
+            </div>
+            <div id="auth-error" class="auth-error"></div>
+        </div>
+    </div>
+    <nav class="top-nav">
+        <div class="nav-inner">
+            <div class="nav-brand">
+                <img src="/static/logo.png" alt="VoLo Earth Ventures" class="nav-logo">
+                <span class="nav-divider"></span>
+                <span class="nav-title">Deal Intelligence Platform</span>
+                <span class="nav-version">v2.0</span>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="nav-link active" data-tab="pipeline">Deal Pipeline</a>
+                <a href="#" class="nav-link" data-tab="scurves">S-Curve Atlas</a>
+                <a href="#" class="nav-link" data-tab="memo">Investment Memo</a>
+                <a href="#" class="nav-link" data-tab="references">References</a>
+                <a href="#" class="nav-link" data-tab="models">Models</a>
+                <a href="#" class="nav-link" data-tab="developer" id="nav-dev-link">Developer</a>
+            </div>
+            <div class="nav-user">
+                <span id="user-badge" class="nav-user-badge"></span>
+                <button id="logout-btn" onclick="doLogout()" class="nav-logout-btn">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- DEAL PIPELINE TAB — Primary Workflow                         -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <div id="tab-pipeline" class="tab-content active">
+            <!-- Wizard Step Indicator -->
+            <div class="wizard-steps">
+                <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span class="wizard-step-label">Upload</span></div>
+                <div class="wizard-step-line"></div>
+                <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span class="wizard-step-label">Review</span></div>
+                <div class="wizard-step-line"></div>
+                <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span class="wizard-step-label">Configure</span></div>
+                <div class="wizard-step-line"></div>
+                <div class="wizard-step" data-step="4"><span class="wizard-step-num">4</span><span class="wizard-step-label">Report</span></div>
+            </div>
+
+            <!-- Step 1: Upload -->
+            <div id="wiz-step-1" class="wizard-panel">
+                <div class="page-header"><h1>New Deal Analysis</h1><p class="page-subtitle">Upload a pitch deck and/or financial model to begin.</p></div>
+                <div class="upload-grid">
+                    <div class="upload-zone" id="wiz-deck-zone">
+                        <div class="upload-icon">&#128196;</div>
+                        <h3>Pitch Deck</h3>
+                        <p>PDF, PPTX, or DOCX</p>
+                        <input type="file" id="wiz-deck-file" accept=".pdf,.pptx,.ppt,.docx" class="upload-input">
+                        <div id="wiz-deck-name" class="upload-filename"></div>
+                    </div>
+                    <div class="upload-zone" id="wiz-model-zone">
+                        <div class="upload-icon">&#128202;</div>
+                        <h3>Financial Model</h3>
+                        <p>XLSX, XLS, or CSV</p>
+                        <input type="file" id="wiz-model-file" accept=".xlsx,.xls,.xlsm,.csv" class="upload-input">
+                        <div id="wiz-model-name" class="upload-filename"></div>
+                    </div>
+                </div>
+                <div class="upload-alt">
+                    <span>Or extract from URL:</span>
+                    <div class="upload-url-row">
+                        <input type="text" id="wiz-url-input" placeholder="https://company.com" class="upload-url-input">
+                    </div>
+                </div>
+                <div class="wizard-actions">
+                    <button onclick="wizExtractAndNext()" class="btn-primary btn-lg" id="wiz-extract-btn">Extract & Continue</button>
+                </div>
+                <div id="wiz-extract-status" class="wiz-status"></div>
+            </div>
+
+            <!-- Step 2: Review Extraction -->
+            <div id="wiz-step-2" class="wizard-panel" style="display:none;">
+                <div class="page-header"><h1>Review Extracted Data</h1><p class="page-subtitle">Verify and correct AI-extracted fields. Confidence scores indicate extraction quality.</p></div>
+                <div class="review-grid">
+                    <div class="card review-fields-card">
+                        <div class="card-header"><h2>Extracted Fields</h2></div>
+                        <div class="card-body" id="wiz-review-fields"></div>
+                    </div>
+                    <div class="card review-meta-card">
+                        <div class="card-header"><h2>Extraction Details</h2></div>
+                        <div class="card-body" id="wiz-review-meta">
+                            <div id="wiz-review-confidence"></div>
+                            <div id="wiz-review-warnings"></div>
+                            <div id="wiz-review-fm-results"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wizard-actions">
+                    <button onclick="wizGoStep(1)" class="btn-secondary">Back</button>
+                    <button onclick="wizApplyAndConfigure()" class="btn-primary btn-lg">Configure Deal</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Configure Deal -->
+            <div id="wiz-step-3" class="wizard-panel" style="display:none;">
+                <div class="page-header"><h1>Configure Deal Parameters</h1><p class="page-subtitle">VoLo deal terms and simulation parameters. Ownership auto-calculates from check size and pre-money. Risk divisor and carbon defaults auto-derive from TRL and archetype.</p></div>
+                <div class="configure-grid">
+                    <div class="card">
+                        <div class="card-header"><h2>Deal Terms</h2></div>
+                        <div class="card-body">
+                            <div class="form-group"><label>Company Name</label><input type="text" id="wiz-company-name" placeholder="Company name"></div>
+                            <div class="form-group"><label>Technology Description</label><input type="text" id="wiz-tech-desc" placeholder="Brief description of the technology"></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Entry Stage</label><select id="wiz-entry-stage"><option value="Pre-Seed">Pre-Seed</option><option value="Seed" selected>Seed</option><option value="Series A">Series A</option><option value="Series B">Series B</option><option value="Series C">Series C</option></select></div>
+                                <div class="form-group"><label>TRL</label><select id="wiz-trl" onchange="_wizAutoCalcOwnership()"><option value="3">TRL 3</option><option value="4">TRL 4</option><option value="5" selected>TRL 5</option><option value="6">TRL 6</option><option value="7">TRL 7</option><option value="8">TRL 8</option><option value="9">TRL 9</option></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Check Size ($M)</label><input type="number" id="wiz-check-size" value="2.0" step="0.5" min="0.1" oninput="_wizAutoCalcOwnership()"></div>
+                                <div class="form-group"><label>Round Size ($M)</label><input type="number" id="wiz-round-size" value="" step="0.5" min="0.25" placeholder="Total round" oninput="_wizAutoCalcOwnership()"></div>
+                                <div class="form-group"><label>Pre-Money ($M)</label><input type="number" id="wiz-pre-money" value="15" step="1" min="1" oninput="_wizAutoCalcOwnership()"></div>
+                            </div>
+                            <div class="form-group wiz-ownership-row">
+                                <label>Entry Ownership (auto)</label>
+                                <span id="wiz-ownership-display" class="wiz-auto-val">11.76%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h2>Market & Simulation</h2></div>
+                        <div class="card-body">
+                            <div class="form-group"><label>Technology Archetype</label><select id="wiz-archetype" onchange="_wizOnArchetypeChange()"><optgroup label="Renewables"><option value="utility_solar">Utility Solar PV</option><option value="commercial_solar">Commercial Solar</option><option value="onshore_wind">Onshore Wind</option><option value="offshore_wind">Offshore Wind</option><option value="geothermal">Geothermal</option></optgroup><optgroup label="Storage & Grid"><option value="battery_storage_utility">Battery Storage</option><option value="nuclear_smr">Nuclear / SMR</option></optgroup><optgroup label="Other Climate"><option value="ev_electrification">EV / Electrification</option><option value="climate_software">Climate SaaS</option><option value="industrial_decarb">Industrial Decarb</option><option value="ai_ml">AI / ML</option></optgroup><optgroup label="Base Archetypes"><option value="base_capital_intensive">Capital Intensive</option><option value="base_software">Software Only</option><option value="base_sw_hw_hybrid">SW/HW Hybrid</option><option value="base_hard_tech">Hard Tech</option><option value="custom">Custom</option></optgroup></select></div>
+                            <div class="form-row">
+                                <div class="form-group"><label>TAM ($M)</label><input type="number" id="wiz-tam" value="50000" step="100"></div>
+                                <div class="form-group"><label>Sector Profile</label><select id="wiz-sector"><option>Energy + Deep Tech</option><option>Software</option><option>Hardware</option><option>Climate Tech</option></select></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Penetration Low</label><input type="number" id="wiz-pen-low" value="0.01" step="0.005" min="0.001" max="0.5"></div>
+                                <div class="form-group"><label>Penetration High</label><input type="number" id="wiz-pen-high" value="0.05" step="0.005" min="0.001" max="0.5"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>EV/EBITDA Multiple Low (leave blank for comps-derived)</label><input type="number" id="wiz-mult-low" placeholder="Auto from comps" step="0.5"></div>
+                                <div class="form-group"><label>EV/EBITDA Multiple High (leave blank for comps-derived)</label><input type="number" id="wiz-mult-high" placeholder="Auto from comps" step="0.5"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h2>Carbon Model</h2><span class="card-header-note">Auto-fills from archetype. Risk derives from TRL.</span></div>
+                        <div class="card-body">
+                            <div class="form-group"><label>Displaced Resource</label><select id="wiz-displaced-resource"><option value="">-- Select --</option><option value="US electricity">US electricity</option><option value="Global electricity">Global electricity</option><option value="Natural Gas">Natural Gas</option><option value="Natural Gas (CCGT)">Natural Gas (CCGT)</option><option value="Gasoline">Gasoline</option><option value="Diesel">Diesel</option><option value="Limestone">Limestone</option><option value="Limestone calcination">Limestone calcination</option><option value="Nickel">Nickel</option><option value="Polypropylene">Polypropylene</option></select></div>
+                            <div class="form-group">
+                                <label>Volume Projections (Y1-Y10) <span id="wiz-volume-unit-label" style="font-weight:400;color:var(--text-tertiary);font-size:0.82em;"></span></label>
+                                <div class="volume-row" id="wiz-volume-row"></div>
+                            </div>
+                            <div id="wiz-carbon-chain" style="margin:10px 0 6px;padding:10px 14px;background:var(--bg-subtle);border-radius:8px;font-size:0.8rem;color:var(--text-secondary);display:none;">
+                                <strong>Conversion chain:</strong>
+                                <span id="wiz-carbon-chain-text"></span>
+                            </div>
+                            <div class="wiz-advanced-toggle" onclick="document.getElementById('wiz-carbon-adv').classList.toggle('hidden')">Carbon Model Parameters</div>
+                            <div id="wiz-carbon-adv" class="hidden">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Baseline Lifetime Production <span id="wiz-baseline-unit-label" style="font-weight:400;color:var(--text-tertiary);font-size:0.82em;"></span></label>
+                                        <input type="number" id="wiz-baseline-prod" value="1" step="0.01">
+                                        <small id="wiz-baseline-help" style="color:var(--text-tertiary);font-size:0.75rem;margin-top:2px;display:block;"></small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Specific Production Units</label>
+                                        <input type="text" id="wiz-specific-prod-units" value="" placeholder="e.g. MWh/MW/year">
+                                        <small style="color:var(--text-tertiary);font-size:0.75rem;margin-top:2px;display:block;">Unit of displaced resource per volume unit per year</small>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Range Improvement</label>
+                                        <input type="number" id="wiz-range-imp" value="1" step="0.01">
+                                        <small style="color:var(--text-tertiary);font-size:0.75rem;margin-top:2px;display:block;">Multiplier on baseline (1.0 = no change, 1.15 = 15% better)</small>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Unit Definition</label>
+                                        <input type="text" id="wiz-unit-definition" value="" placeholder="e.g. MW installed capacity">
+                                        <small style="color:var(--text-tertiary);font-size:0.75rem;margin-top:2px;display:block;">What each volume unit represents</small>
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>Service Life (years)</label>
+                                        <input type="number" id="wiz-service-life" value="10" min="1" max="50" step="1">
+                                        <small style="color:var(--text-tertiary);font-size:0.75rem;margin-top:2px;display:block;">Expected operating lifetime per unit</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:16px;">
+                        <div class="card-header"><h2>Fund Parameters</h2><span class="card-header-note">For check size optimization.</span></div>
+                        <div class="card-body">
+                            <div class="form-row">
+                                <div class="form-group"><label>Fund Size ($M)</label><input type="number" id="wiz-fund-size" value="135" step="5" min="10"></div>
+                                <div class="form-group"><label>Target # Deals</label><input type="number" id="wiz-n-deals" value="22" step="1" min="5"></div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group"><label>Mgmt Fee (%/yr)</label><input type="number" id="wiz-mgmt-fee" value="2" step="0.25" min="0"></div>
+                                <div class="form-group"><label>Reserve (%)</label><input type="number" id="wiz-reserve" value="45" step="5" min="0"></div>
+                                <div class="form-group"><label>Max Concentration (%)</label><input type="number" id="wiz-max-conc" value="15" step="1" min="5"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wizard-actions">
+                    <button onclick="wizGoStep(2)" class="btn-secondary">Back</button>
+                    <button onclick="wizRunPipeline()" class="btn-primary btn-lg" id="wiz-run-btn">Generate Deal Report</button>
+                </div>
+                <div id="wiz-run-status" class="wiz-status"></div>
+            </div>
+
+            <!-- Step 4: Deal Report -->
+            <div id="wiz-step-4" class="wizard-panel" style="display:none;">
+                <div class="report-actions">
+                    <button onclick="wizGoStep(3)" class="btn-secondary">Back to Configure</button>
+                    <button onclick="wizExportPDF()" class="btn-primary">Export PDF</button>
+                    <button onclick="wizGoStep(1)" class="btn-secondary">New Deal</button>
+                </div>
+                <div id="deal-report" class="deal-report">
+                    <!-- Report rendered by JS -->
+                </div>
+            </div>
+
+            <!-- Saved Reports Section -->
+            <div id="wiz-saved-reports" class="saved-reports-bar">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <h3 style="margin:0;">Recent Reports</h3>
+                    <div style="display:flex;gap:8px;">
+                        <button onclick="wizExportCSV()" class="btn-secondary btn-sm" title="Export all deals as CSV">Export CSV</button>
+                        <button onclick="wizUploadPortfolio()" class="btn-secondary btn-sm" title="Upload portfolio holdings (.csv or .json)">Upload Portfolio</button>
+                    </div>
+                </div>
+                <div id="wiz-reports-list" class="reports-list"></div>
+            </div>
+        </div>
+
+        <!-- S-CURVE ATLAS TAB -->
+        <div id="tab-scurves" class="tab-content">
+            <div class="page-header">
+                <h1>S-Curve Atlas</h1>
+                <p class="page-subtitle">Visualize the Bass diffusion adoption curves for every technology archetype. Each curve shows expected market penetration (% of TAM) over a 25-year horizon with uncertainty bands.</p>
+            </div>
+
+            <div class="atlas-controls">
+                <div class="card">
+                    <div class="card-body" style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+                        <div class="form-group" style="margin:0;flex:1;min-width:200px">
+                            <label for="atlas-view">View</label>
+                            <select id="atlas-view">
+                                <option value="overlay" selected>All Overlaid</option>
+                                <option value="grid">Individual Grid</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin:0;flex:1;min-width:200px">
+                            <label for="atlas-filter">Filter by Maturity</label>
+                            <select id="atlas-filter">
+                                <option value="all" selected>All Stages</option>
+                                <option value="nascent">Nascent</option>
+                                <option value="pre_inflection">Pre-Inflection</option>
+                                <option value="inflection">At Inflection</option>
+                                <option value="early_growth">Early Growth</option>
+                                <option value="growth">Growth</option>
+                            </select>
+                        </div>
+                        <button class="btn-secondary" id="atlas-load-btn" onclick="loadScurveAtlas()">Load S-Curves</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="atlas-placeholder" class="results-placeholder" style="margin-top:24px">
+                <div class="placeholder-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M2 20c2-4 5-14 8-14s4 6 6 6 4-8 6-8"/>
+                    </svg>
+                </div>
+                <p>Click <strong>Load S-Curves</strong> to visualize all technology archetype adoption curves.</p>
+            </div>
+
+            <div id="atlas-content" style="display:none">
+                <!-- Overlay chart (big) -->
+                <div id="atlas-overlay-section">
+                    <div class="card chart-card">
+                        <div class="card-header"><h3>Technology Adoption — All Archetypes</h3></div>
+                        <div class="card-body" style="height:480px">
+                            <canvas id="chart-atlas-overlay"></canvas>
+                        </div>
+                        <div class="card-footer">Shaded: 25th–75th percentile uncertainty band. Line: median (mean p, q). Normalized to % of TAM.</div>
+                    </div>
+                </div>
+
+                <!-- Grid view -->
+                <div id="atlas-grid-section" style="display:none">
+                    <div class="atlas-grid" id="atlas-grid"></div>
+                </div>
+
+                <!-- Parameter comparison table -->
+                <div class="card" style="margin-top:24px">
+                    <div class="card-header"><h3>Bass Diffusion Parameters — All Archetypes</h3></div>
+                    <div class="card-body">
+                        <p class="section-desc">p = innovation coefficient (external influence), q = imitation coefficient (word-of-mouth / cost decline). Higher q → steeper S-curve. Peak adoption year is when the adoption rate is fastest.</p>
+                        <table class="data-table" id="atlas-params-table">
+                            <thead>
+                                <tr>
+                                    <th>Archetype</th>
+                                    <th>p (innovation)</th>
+                                    <th>q (imitation)</th>
+                                    <th>q/p ratio</th>
+                                    <th>Peak Year</th>
+                                    <th>Inflection Year</th>
+                                    <th>Maturity</th>
+                                    <th>25yr Penetration</th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Maturity stage legend -->
+                <div class="card" style="margin-top:16px">
+                    <div class="card-header"><h3>Maturity Stage Definitions</h3></div>
+                    <div class="card-body">
+                        <div class="maturity-legend">
+                            <div class="maturity-item"><span class="maturity-dot nascent"></span><strong>Nascent</strong> — Very early; technology demonstrated but no commercial deployments at scale. High uncertainty.</div>
+                            <div class="maturity-item"><span class="maturity-dot pre-inflection"></span><strong>Pre-Inflection</strong> — Early commercial activity; adoption accelerating but hasn't hit steep growth yet.</div>
+                            <div class="maturity-item"><span class="maturity-dot inflection"></span><strong>At Inflection</strong> — Entering the steepest part of the S-curve. Rapid scaling underway.</div>
+                            <div class="maturity-item"><span class="maturity-dot early-growth"></span><strong>Early Growth</strong> — Past inflection, strong consistent growth, becoming mainstream.</div>
+                            <div class="maturity-item"><span class="maturity-dot growth"></span><strong>Growth</strong> — Mature growth phase. Well-established, approaching saturation.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- REFERENCES TAB -->
+        <div id="tab-references" class="tab-content">
+            <div class="page-header">
+                <h1>Analysis References</h1>
+                <p class="page-subtitle">Data sources, publications, and calibration files used in the VoLo underwriting engine. Review file dates and refresh data from authoritative sources.</p>
+            </div>
+
+            <div class="references-controls">
+                <div class="card">
+                    <div class="card-body" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+                        <div style="flex:1;">
+                            <h3 style="margin:0 0 4px 0;font-size:0.95rem;">Data Sources Status</h3>
+                            <p style="margin:0;font-size:0.82rem;color:var(--text-secondary);">Last checked: <span id="ref-last-checked" style="font-weight:600;">--</span></p>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="refLoadReferences()" class="btn-secondary" id="ref-load-btn">Load References</button>
+                            <button onclick="refRefreshData()" class="btn-primary" id="ref-refresh-btn" disabled>Refresh Data</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="ref-placeholder" class="results-placeholder" style="margin-top:24px">
+                <div class="placeholder-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M4 4h16v16H4z"/>
+                        <path d="M4 10h16M10 4v16"/>
+                    </svg>
+                </div>
+                <p>Click <strong>Load References</strong> to view all data sources and calibration files.</p>
+            </div>
+
+            <div id="ref-content" style="display:none;">
+                <!-- Category tabs -->
+                <div class="ref-tabs">
+                    <button class="ref-tab active" onclick="refSwitchCategory('core')">Core Data</button>
+                    <button class="ref-tab" onclick="refSwitchCategory('adoption')">Adoption Curves</button>
+                    <button class="ref-tab" onclick="refSwitchCategory('valuation')">Valuation</button>
+                    <button class="ref-tab" onclick="refSwitchCategory('carbon')">Carbon</button>
+                    <button class="ref-tab" onclick="refSwitchCategory('research')">Research</button>
+                </div>
+
+                <!-- Core Data Category -->
+                <div id="ref-category-core" class="ref-category active">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Primary Data Sources</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="ref-table">
+                                <thead>
+                                    <tr>
+                                        <th>Data Source</th>
+                                        <th>File / Location</th>
+                                        <th>Last Updated</th>
+                                        <th>Status</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ref-table-core"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Adoption Curves Category -->
+                <div id="ref-category-adoption" class="ref-category" style="display:none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Bass Diffusion & Adoption Calibration</h3>
+                            <p style="margin:8px 0 0 0;font-size:0.82rem;color:var(--text-secondary);">S-curve parameters derived from NREL ATB deployment data</p>
+                        </div>
+                        <div class="card-body">
+                            <table class="ref-table">
+                                <thead>
+                                    <tr>
+                                        <th>Archetype</th>
+                                        <th>Source File</th>
+                                        <th>Last Updated</th>
+                                        <th>Coverage Years</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ref-table-adoption"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Valuation Category -->
+                <div id="ref-category-valuation" class="ref-category" style="display:none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Valuation & Comparable Multiples</h3>
+                            <p style="margin:8px 0 0 0;font-size:0.82rem;color:var(--text-secondary);">EV/EBITDA multiples from Damodaran/NYU database</p>
+                        </div>
+                        <div class="card-body">
+                            <table class="ref-table">
+                                <thead>
+                                    <tr>
+                                        <th>Dataset</th>
+                                        <th>File / Location</th>
+                                        <th>Last Updated</th>
+                                        <th>Industries</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ref-table-valuation"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Carbon Category -->
+                <div id="ref-category-carbon" class="ref-category" style="display:none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Carbon Accounting & Emissions Factors</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="ref-table">
+                                <thead>
+                                    <tr>
+                                        <th>Factor / Source</th>
+                                        <th>Reference</th>
+                                        <th>Last Updated</th>
+                                        <th>Scope</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ref-table-carbon"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Research Category -->
+                <div id="ref-category-research" class="ref-category" style="display:none;">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>Academic & Industry Research</h3>
+                        </div>
+                        <div class="card-body">
+                            <table class="ref-table">
+                                <thead>
+                                    <tr>
+                                        <th>Publication / Authors</th>
+                                        <th>Year</th>
+                                        <th>Citation</th>
+                                        <th>Used For</th>
+                                        <th>Link</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ref-table-research"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Refresh Modal -->
+            <div id="ref-refresh-modal" class="modal" style="display:none;">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2>Refresh Data Sources</h2>
+                        <button onclick="refCloseModal()" class="modal-close">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Select which data sources to refresh from their authoritative origins:</p>
+                        <div id="ref-refresh-options" style="margin-top:16px;"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button onclick="refCloseModal()" class="btn-secondary">Cancel</button>
+                        <button onclick="refExecuteRefresh()" class="btn-primary" id="ref-confirm-refresh-btn">Refresh Selected</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- DEVELOPER TAB (Admin only) -->
+        <div id="tab-developer" class="tab-content">
+            <div class="page-header">
+                <h1>Developer Console</h1>
+                <p class="page-subtitle">Edit engine source files directly. Changes to .py files auto-reload the server (uvicorn --reload).</p>
+            </div>
+            <div class="dev-layout">
+                <div class="dev-sidebar">
+                    <div class="dev-search">
+                        <input type="text" id="dev-search-input" placeholder="Search files..." onkeydown="if(event.key==='Enter')devSearch()">
+                        <button onclick="devSearch()" class="btn-secondary btn-sm" style="margin-top:4px;width:100%;">Search</button>
+                    </div>
+                    <div class="dev-file-tree" id="dev-file-tree">
+                        <div style="padding:16px;color:var(--text-tertiary);font-size:0.82rem;">Click below to load the file tree.</div>
+                    </div>
+                    <button onclick="devLoadTree()" class="btn-secondary btn-sm" style="margin:8px;width:calc(100% - 16px);">Refresh Files</button>
+                </div>
+                <div class="dev-editor-area">
+                    <div class="dev-editor-toolbar">
+                        <span id="dev-current-file" style="font-weight:600;font-size:0.85rem;color:var(--text-primary);">No file open</span>
+                        <div style="display:flex;gap:8px;">
+                            <span id="dev-save-status" style="font-size:0.78rem;color:var(--text-tertiary);"></span>
+                            <button onclick="devSaveFile()" class="btn-primary btn-sm" id="dev-save-btn" disabled>Save</button>
+                        </div>
+                    </div>
+                    <div class="dev-editor-wrap">
+                        <div class="dev-line-numbers" id="dev-line-numbers"></div>
+                        <textarea id="dev-editor" class="dev-editor" spellcheck="false" placeholder="Select a file from the sidebar to begin editing..." disabled></textarea>
+                    </div>
+                    <div id="dev-search-results" class="dev-search-results" style="display:none;"></div>
+                </div>
+                <!-- Coding Agent Panel -->
+                <div class="dev-agent-panel">
+                    <div class="dev-agent-header">
+                        <span class="dev-agent-title">Coding Agent</span>
+                        <span class="dev-agent-badge">Claude</span>
+                        <button onclick="devAgentClear()" class="dev-agent-clear" title="Clear chat">&times;</button>
+                    </div>
+                    <div class="dev-agent-messages" id="dev-agent-messages">
+                        <div class="dev-agent-msg system">I'm your coding assistant. I can read, search, edit, and write files in this project. I'll show you every change I make before it's applied.<br><br>Try: <em>"Add error handling to the /api/simulate endpoint"</em> or <em>"Explain how the Monte Carlo engine works"</em></div>
+                    </div>
+                    <div class="dev-agent-actions" id="dev-agent-actions" style="display:none;"></div>
+                    <div class="dev-agent-input-area">
+                        <textarea id="dev-agent-input" class="dev-agent-input" placeholder="Ask me to read, explain, or modify code..." rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();devAgentSend();}"></textarea>
+                        <button onclick="devAgentSend()" class="dev-agent-send" id="dev-agent-send-btn">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <!-- INVESTMENT MEMO TAB                                           -->
+        <!-- ══════════════════════════════════════════════════════════════ -->
+        <div id="tab-memo" class="tab-content">
+            <div class="page-header">
+                <h1>Investment Memo Generator</h1>
+                <p class="page-subtitle">Assemble data room documents, select a deal report, and generate a comprehensive investment memorandum using AI.</p>
+            </div>
+
+            <div class="memo-layout">
+                <!-- LEFT PANEL: Inputs & Configuration -->
+                <div class="memo-input-panel">
+
+                    <!-- Section 1: Select Deal Report -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-report')">
+                            <h3>1. Select Deal Report</h3>
+                            <span class="memo-section-chevron" id="memo-sec-report-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-report">
+                            <p class="memo-helper-text">Choose a completed deal analysis report to include simulation results, carbon impact, and financial extraction data.</p>
+                            <select id="memo-report-select" onchange="memoOnReportSelect()">
+                                <option value="">— No report selected —</option>
+                            </select>
+                            <div id="memo-report-preview" class="memo-report-preview" style="display:none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Section 2: Data Room (Drive + Manual Upload) -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-docs')">
+                            <h3>2. Data Room Documents</h3>
+                            <span class="memo-section-chevron" id="memo-sec-docs-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-docs">
+                            <!-- Google Drive Library -->
+                            <div class="memo-drive-section">
+                                <div class="memo-drive-header">
+                                    <span class="memo-drive-icon">
+                                        <svg width="18" height="18" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="M6.6 66.85L17.2 78l29.2-50.7L35.8 13z" fill="#0066DA"/><path d="M57.3 78h20.9L49 27.3H28.1z" fill="#00AC47"/><path d="M23.2 78h34.1L86.3 27.3 57.3 0 28.1 27.3z" fill="#EA4335" opacity=".0"/><path d="M57.3 0L28.1 27.3h58.2z" fill="#00832D" opacity=".0"/><path d="M86.3 27.3H28.1L57.3 0l29 27.3z" fill="#2684FC"/><path d="M57.3 78L86.3 27.3H28.1z" fill="#FFBA00"/></svg>
+                                    </span>
+                                    <strong>Google Drive</strong>
+                                    <span class="memo-drive-status" id="memo-drive-status"></span>
+                                </div>
+                                <div class="memo-drive-connect" id="memo-drive-connect">
+                                    <div class="memo-drive-row">
+                                        <select id="memo-library-select" class="memo-select" onchange="driveLibraryChanged()">
+                                            <option value="">Select a deal library...</option>
+                                        </select>
+                                        <button class="btn-sm btn-outline" onclick="driveShowNewLibrary()" title="Link new folder">+</button>
+                                    </div>
+                                    <div id="memo-drive-new" class="memo-drive-new" style="display:none;">
+                                        <input type="text" id="memo-drive-company" placeholder="Company name" class="memo-input-sm">
+                                        <input type="text" id="memo-drive-url" placeholder="Paste Google Drive folder URL" class="memo-input-sm">
+                                        <div class="memo-drive-new-actions">
+                                            <button class="btn-sm btn-primary" onclick="driveCreateLibrary()">Link Folder</button>
+                                            <button class="btn-sm btn-outline" onclick="document.getElementById('memo-drive-new').style.display='none'">Cancel</button>
+                                        </div>
+                                    </div>
+                                    <div id="memo-drive-library-info" style="display:none;">
+                                        <div class="memo-drive-meta" id="memo-drive-meta"></div>
+                                        <button class="btn-sm btn-primary" id="memo-drive-sync-btn" onclick="driveSyncLibrary()">Sync from Drive</button>
+                                        <div class="memo-drive-doc-list" id="memo-drive-doc-list"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="memo-divider"><span>or upload manually</span></div>
+
+                            <!-- Manual Upload -->
+                            <div class="memo-upload-area" id="memo-upload-area">
+                                <div class="memo-upload-dropzone" id="memo-dropzone">
+                                    <div class="memo-upload-icon">&#128206;</div>
+                                    <div class="memo-upload-text">
+                                        Drop files here or <label for="memo-file-input" class="memo-upload-link">browse</label>
+                                    </div>
+                                    <div class="memo-upload-hint">PDF, DOCX, XLSX, PPTX, CSV, TXT (max 50MB each)</div>
+                                    <input type="file" id="memo-file-input" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.pptx,.ppt,.md,.html,.json,.png,.jpg,.jpeg" style="display:none">
+                                </div>
+                            </div>
+                            <div class="memo-doc-category-row" id="memo-category-row" style="display:none;">
+                                <label>Category:</label>
+                                <select id="memo-doc-category">
+                                    <option value="financial_model">Financial Model</option>
+                                    <option value="pitch_deck">Pitch Deck</option>
+                                    <option value="term_sheet">Term Sheet</option>
+                                    <option value="cap_table">Cap Table</option>
+                                    <option value="legal">Legal / Contracts</option>
+                                    <option value="ip_patent">IP / Patents</option>
+                                    <option value="customer_reference">Customer References</option>
+                                    <option value="market_research">Market Research</option>
+                                    <option value="technical_diligence">Technical Diligence</option>
+                                    <option value="team_bios">Team Bios</option>
+                                    <option value="board_materials">Board Materials</option>
+                                    <option value="other" selected>Other</option>
+                                </select>
+                            </div>
+                            <div class="memo-doc-list" id="memo-doc-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Section 3: Reference Links -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-links')">
+                            <h3>3. Reference Links</h3>
+                            <span class="memo-section-chevron" id="memo-sec-links-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-links">
+                            <p class="memo-helper-text">Add URLs to relevant resources (company website, press, patents, etc.).</p>
+                            <div class="memo-links-input-row">
+                                <input type="text" id="memo-link-input" placeholder="https://..." onkeydown="if(event.key==='Enter')memoAddLink()">
+                                <button onclick="memoAddLink()" class="btn-secondary btn-sm">Add</button>
+                            </div>
+                            <div class="memo-link-list" id="memo-link-list"></div>
+                        </div>
+                    </div>
+
+                    <!-- Section 4: Memo Template -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-template')">
+                            <h3>4. Memo Template</h3>
+                            <span class="memo-section-chevron" id="memo-sec-template-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-template">
+                            <p class="memo-helper-text">Select a saved template or paste your own. The LLM will follow this structure.</p>
+                            <div class="memo-template-controls">
+                                <select id="memo-template-select" onchange="memoOnTemplateSelect()">
+                                    <option value="">— Use default structure —</option>
+                                    <option value="__upload__">Upload new template...</option>
+                                </select>
+                                <button onclick="memoSaveTemplate()" class="btn-secondary btn-sm" title="Save current text as template">Save As</button>
+                            </div>
+                            <textarea id="memo-template-text" rows="10" placeholder="Paste your investment memo template here, or select a saved template above...&#10;&#10;The LLM will follow this structure to generate the memo. Include section headers, guidance notes, and any required sections."></textarea>
+                            <div class="memo-template-upload-row" id="memo-template-upload-row" style="display:none;">
+                                <input type="file" id="memo-template-file" accept=".txt,.md,.docx" onchange="memoUploadTemplate()">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Section 5: Additional Instructions -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-instructions')">
+                            <h3>5. Additional Instructions</h3>
+                            <span class="memo-section-chevron" id="memo-sec-instructions-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-instructions">
+                            <textarea id="memo-extra-instructions" rows="4" placeholder="Any additional instructions for the memo writer...&#10;e.g. &quot;Focus on the carbon impact story&quot; or &quot;Highlight the competitive moat&quot;"></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Section 6: Model Selection & Generate -->
+                    <div class="memo-section-card memo-generate-card">
+                        <div class="memo-generate-row">
+                            <div class="memo-model-select">
+                                <label>Model:</label>
+                                <select id="memo-model-select">
+                                    <option value="qwen-rfnt">Refiant qwen-rfnt</option>
+                                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                                    <option value="claude-opus-4-20250514">Claude Opus 4</option>
+                                </select>
+                            </div>
+                            <button onclick="memoGenerate()" class="btn-primary memo-generate-btn" id="memo-generate-btn">
+                                Generate Investment Memo
+                            </button>
+                        </div>
+                        <div id="memo-generate-status" class="memo-generate-status" style="display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- RIGHT PANEL: Output & History -->
+                <div class="memo-output-panel">
+                    <!-- Tab bar: Preview / History -->
+                    <div class="memo-output-tabs">
+                        <button class="memo-output-tab active" data-memo-tab="preview" onclick="memoSwitchOutputTab('preview')">Preview</button>
+                        <button class="memo-output-tab" data-memo-tab="history" onclick="memoSwitchOutputTab('history')">History</button>
+                    </div>
+
+                    <!-- Preview -->
+                    <div class="memo-output-content active" id="memo-output-preview">
+                        <div class="memo-output-empty" id="memo-output-empty">
+                            <div class="memo-output-empty-icon">&#128221;</div>
+                            <p>Generated memos will appear here.</p>
+                            <p class="memo-output-empty-sub">Select a report, upload data room documents, and click <strong>Generate</strong> to create an investment memo.</p>
+                        </div>
+                        <div class="memo-output-actions" id="memo-output-actions" style="display:none;">
+                            <button onclick="memoExportDocx()" class="btn-secondary btn-sm" id="memo-export-docx-btn">Export .docx</button>
+                            <button onclick="memoCopyMarkdown()" class="btn-secondary btn-sm">Copy Markdown</button>
+                            <span class="memo-output-meta" id="memo-output-meta"></span>
+                        </div>
+                        <div class="memo-rendered" id="memo-rendered"></div>
+                    </div>
+
+                    <!-- History -->
+                    <div class="memo-output-content" id="memo-output-history">
+                        <div class="memo-history-list" id="memo-history-list">
+                            <p style="color:var(--text-tertiary);padding:20px;text-align:center;">Loading history...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+<div id="tab-models" class="tab-content">
+  <!-- Header Section -->
+  <div class="bench-header">
+    <div class="bench-header-content">
+      <h2 class="bench-title">Model Benchmark & Comparison</h2>
+      <p class="bench-subtitle">Test inference tasks across models and compare performance</p>
+    </div>
+    <div class="bench-header-actions">
+      <button id="bench-load-keys-btn" class="bench-btn bench-btn-primary" onclick="benchLoadKeys()">
+        Load API Keys
+      </button>
+      <div class="bench-key-status">
+        <div class="bench-key-indicator">
+          <span class="bench-status-dot" id="bench-anthropic-status"></span>
+          <span class="bench-status-label">Anthropic</span>
+        </div>
+        <div class="bench-key-indicator">
+          <span class="bench-status-dot" id="bench-refiant-status"></span>
+          <span class="bench-status-label">Refiant</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Active Model Selection ── -->
+  <div class="bench-model-selection" style="margin:18px 0 24px 0;padding:18px 20px;background:var(--bg-secondary,#f8f9fb);border:1px solid var(--border-color,#e1e4e8);border-radius:10px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div>
+        <h3 style="margin:0 0 2px 0;font-size:15px;font-weight:600;color:var(--text-primary,#1a2332);">Active Model Assignment</h3>
+        <p style="margin:0;font-size:12px;color:var(--text-secondary,#586069);">Choose which model powers each AI task in the platform</p>
+      </div>
+      <span id="model-pref-status" style="font-size:11px;color:var(--text-tertiary,#8b949e);"></span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;">
+      <!-- Pitch Deck Extraction -->
+      <div class="model-pref-card" style="padding:14px 16px;background:var(--bg-primary,#fff);border:1px solid var(--border-color,#e1e4e8);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:18px;">📄</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary,#1a2332);">Pitch Deck Extraction</div>
+            <div style="font-size:11px;color:var(--text-tertiary,#8b949e);">Two-pass structured data extraction from documents</div>
+          </div>
+        </div>
+        <select id="model-pref-extraction" onchange="saveModelPref('extraction', this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--border-color,#e1e4e8);border-radius:6px;font-size:12px;background:var(--bg-primary,#fff);color:var(--text-primary,#1a2332);cursor:pointer;">
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Balanced)</option>
+          <option value="claude-opus-4-20250514">Claude Opus 4 (Strongest)</option>
+          <option value="qwen-rfnt">Refiant qwen-rfnt</option>
+        </select>
+      </div>
+      <!-- Deal Chat Agent -->
+      <div class="model-pref-card" style="padding:14px 16px;background:var(--bg-primary,#fff);border:1px solid var(--border-color,#e1e4e8);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:18px;">💬</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary,#1a2332);">Deal Chat Agent</div>
+            <div style="font-size:11px;color:var(--text-tertiary,#8b949e);">AI advisor with tool-use for deal analysis</div>
+          </div>
+        </div>
+        <select id="model-pref-deal_chat" onchange="saveModelPref('deal_chat', this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--border-color,#e1e4e8);border-radius:6px;font-size:12px;background:var(--bg-primary,#fff);color:var(--text-primary,#1a2332);cursor:pointer;">
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Balanced)</option>
+          <option value="claude-opus-4-20250514">Claude Opus 4 (Strongest)</option>
+          <option value="qwen-rfnt">Refiant qwen-rfnt</option>
+        </select>
+      </div>
+      <!-- Dev Coding Agent -->
+      <div class="model-pref-card" style="padding:14px 16px;background:var(--bg-primary,#fff);border:1px solid var(--border-color,#e1e4e8);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:18px;">🛠️</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary,#1a2332);">Dev Coding Agent</div>
+            <div style="font-size:11px;color:var(--text-tertiary,#8b949e);">AI code assistant with file read/write tools</div>
+          </div>
+        </div>
+        <select id="model-pref-dev_agent" onchange="saveModelPref('dev_agent', this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--border-color,#e1e4e8);border-radius:6px;font-size:12px;background:var(--bg-primary,#fff);color:var(--text-primary,#1a2332);cursor:pointer;">
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Balanced)</option>
+          <option value="claude-opus-4-20250514">Claude Opus 4 (Strongest)</option>
+          <option value="qwen-rfnt">Refiant qwen-rfnt</option>
+        </select>
+      </div>
+      <!-- Memo Generation -->
+      <div class="model-pref-card" style="padding:14px 16px;background:var(--bg-primary,#fff);border:1px solid var(--border-color,#e1e4e8);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-size:18px;">&#128221;</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text-primary,#1a2332);">Investment Memo Generation</div>
+            <div style="font-size:11px;color:var(--text-tertiary,#8b949e);">AI memo writer for investment committee materials</div>
+          </div>
+        </div>
+        <select id="model-pref-memo_generation" onchange="saveModelPref('memo_generation', this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--border-color,#e1e4e8);border-radius:6px;font-size:12px;background:var(--bg-primary,#fff);color:var(--text-primary,#1a2332);cursor:pointer;">
+          <option value="qwen-rfnt" selected>Refiant qwen-rfnt</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (Fast)</option>
+          <option value="claude-sonnet-4-20250514">Claude Sonnet 4 (Balanced)</option>
+          <option value="claude-opus-4-20250514">Claude Opus 4 (Strongest)</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- Model Cards Row -->
+  <div class="bench-models-grid">
+    <!-- Claude Haiku 4.5 -->
+    <div class="bench-model-card bench-model-haiku" id="bench-card-haiku">
+      <div class="bench-model-header">
+        <h3 class="bench-model-name">Claude Haiku 4.5</h3>
+        <span class="bench-provider-badge">Anthropic</span>
+      </div>
+      <p class="bench-model-id">claude-haiku-4-5-20251001</p>
+      <button class="bench-btn bench-btn-secondary" onclick="benchRunAllForModel('haiku')">
+        Run All Tasks
+      </button>
+    </div>
+
+    <!-- Claude Sonnet 4 -->
+    <div class="bench-model-card bench-model-sonnet" id="bench-card-sonnet">
+      <div class="bench-model-header">
+        <h3 class="bench-model-name">Claude Sonnet 4</h3>
+        <span class="bench-provider-badge">Anthropic</span>
+      </div>
+      <p class="bench-model-id">claude-sonnet-4-20250514</p>
+      <button class="bench-btn bench-btn-secondary" onclick="benchRunAllForModel('sonnet')">
+        Run All Tasks
+      </button>
+    </div>
+
+    <!-- Claude Opus 4 -->
+    <div class="bench-model-card bench-model-opus" id="bench-card-opus">
+      <div class="bench-model-header">
+        <h3 class="bench-model-name">Claude Opus 4</h3>
+        <span class="bench-provider-badge">Anthropic</span>
+      </div>
+      <p class="bench-model-id">claude-opus-4-20250514</p>
+      <button class="bench-btn bench-btn-secondary" onclick="benchRunAllForModel('opus')">
+        Run All Tasks
+      </button>
+    </div>
+
+    <!-- Refiant qwen-rfnt -->
+    <div class="bench-model-card bench-model-refiant" id="bench-card-refiant">
+      <div class="bench-model-header">
+        <h3 class="bench-model-name">Refiant qwen-rfnt</h3>
+        <span class="bench-provider-badge">Refiant</span>
+      </div>
+      <p class="bench-model-id">qwen-rfnt</p>
+      <button class="bench-btn bench-btn-secondary" onclick="benchRunAllForModel('refiant')">
+        Run All Tasks
+      </button>
+    </div>
+  </div>
+
+  <!-- Tasks Section -->
+  <div class="bench-tasks-container">
+    <!-- Haiku Tasks -->
+    <div class="bench-model-section">
+      <button class="bench-model-section-header" onclick="document.getElementById('bench-tasks-haiku').classList.toggle('bench-collapsed')">
+        <span class="bench-collapse-icon">▼</span>
+        <h3>Claude Haiku 4.5 — Tasks</h3>
+      </button>
+      <div id="bench-tasks-haiku" class="bench-tasks-list">
+        <!-- Data Extraction Task -->
+        <div class="bench-task-card" id="bench-task-haiku-extract">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Data Extraction</h4>
+              <p class="bench-task-description">Extract structured JSON from XGS Energy financial data</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-haiku-extract-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('haiku', 'extract')">Run</button>
+          <div id="bench-task-haiku-extract-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-haiku-extract-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-haiku-extract-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-haiku-extract-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Deal Agent Task -->
+        <div class="bench-task-card" id="bench-task-haiku-deal">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Deal Agent</h4>
+              <p class="bench-task-description">Tool-use scenario comparison (check size, TRL changes)</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-haiku-deal-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('haiku', 'deal')">Run</button>
+          <div id="bench-task-haiku-deal-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-haiku-deal-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-haiku-deal-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-haiku-deal-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Coding Agent Task -->
+        <div class="bench-task-card" id="bench-task-haiku-code">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Coding Agent</h4>
+              <p class="bench-task-description">Add discount_pct parameter to valuation endpoint</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-haiku-code-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('haiku', 'code')">Run</button>
+          <div id="bench-task-haiku-code-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-haiku-code-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-haiku-code-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-haiku-code-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Chart Generation Task -->
+        <div class="bench-task-card" id="bench-task-haiku-chart">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Chart Generation</h4>
+              <p class="bench-task-description">Create Chart.js fund vs Carta benchmark visualization</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-haiku-chart-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('haiku', 'chart')">Run</button>
+          <div id="bench-task-haiku-chart-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-haiku-chart-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-haiku-chart-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-haiku-chart-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Web Research Task -->
+        <div class="bench-task-card" id="bench-task-haiku-research">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Web Research</h4>
+              <p class="bench-task-description">Research XGS Energy and geothermal industry</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-haiku-research-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('haiku', 'research')">Run</button>
+          <div id="bench-task-haiku-research-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-haiku-research-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-haiku-research-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-haiku-research-response" class="bench-response-content bench-hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sonnet Tasks -->
+    <div class="bench-model-section">
+      <button class="bench-model-section-header" onclick="document.getElementById('bench-tasks-sonnet').classList.toggle('bench-collapsed')">
+        <span class="bench-collapse-icon">▼</span>
+        <h3>Claude Sonnet 4 — Tasks</h3>
+      </button>
+      <div id="bench-tasks-sonnet" class="bench-tasks-list">
+        <!-- Data Extraction Task -->
+        <div class="bench-task-card" id="bench-task-sonnet-extract">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Data Extraction</h4>
+              <p class="bench-task-description">Extract structured JSON from XGS Energy financial data</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-sonnet-extract-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('sonnet', 'extract')">Run</button>
+          <div id="bench-task-sonnet-extract-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-sonnet-extract-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-sonnet-extract-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-sonnet-extract-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Deal Agent Task -->
+        <div class="bench-task-card" id="bench-task-sonnet-deal">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Deal Agent</h4>
+              <p class="bench-task-description">Tool-use scenario comparison (check size, TRL changes)</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-sonnet-deal-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('sonnet', 'deal')">Run</button>
+          <div id="bench-task-sonnet-deal-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-sonnet-deal-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-sonnet-deal-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-sonnet-deal-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Coding Agent Task -->
+        <div class="bench-task-card" id="bench-task-sonnet-code">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Coding Agent</h4>
+              <p class="bench-task-description">Add discount_pct parameter to valuation endpoint</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-sonnet-code-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('sonnet', 'code')">Run</button>
+          <div id="bench-task-sonnet-code-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-sonnet-code-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-sonnet-code-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-sonnet-code-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Chart Generation Task -->
+        <div class="bench-task-card" id="bench-task-sonnet-chart">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Chart Generation</h4>
+              <p class="bench-task-description">Create Chart.js fund vs Carta benchmark visualization</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-sonnet-chart-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('sonnet', 'chart')">Run</button>
+          <div id="bench-task-sonnet-chart-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-sonnet-chart-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-sonnet-chart-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-sonnet-chart-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Web Research Task -->
+        <div class="bench-task-card" id="bench-task-sonnet-research">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Web Research</h4>
+              <p class="bench-task-description">Research XGS Energy and geothermal industry</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-sonnet-research-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('sonnet', 'research')">Run</button>
+          <div id="bench-task-sonnet-research-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-sonnet-research-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-sonnet-research-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-sonnet-research-response" class="bench-response-content bench-hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Opus Tasks -->
+    <div class="bench-model-section">
+      <button class="bench-model-section-header" onclick="document.getElementById('bench-tasks-opus').classList.toggle('bench-collapsed')">
+        <span class="bench-collapse-icon">▼</span>
+        <h3>Claude Opus 4 — Tasks</h3>
+      </button>
+      <div id="bench-tasks-opus" class="bench-tasks-list">
+        <!-- Data Extraction Task -->
+        <div class="bench-task-card" id="bench-task-opus-extract">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Data Extraction</h4>
+              <p class="bench-task-description">Extract structured JSON from XGS Energy financial data</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-opus-extract-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('opus', 'extract')">Run</button>
+          <div id="bench-task-opus-extract-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-opus-extract-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-opus-extract-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-opus-extract-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Deal Agent Task -->
+        <div class="bench-task-card" id="bench-task-opus-deal">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Deal Agent</h4>
+              <p class="bench-task-description">Tool-use scenario comparison (check size, TRL changes)</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-opus-deal-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('opus', 'deal')">Run</button>
+          <div id="bench-task-opus-deal-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-opus-deal-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-opus-deal-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-opus-deal-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Coding Agent Task -->
+        <div class="bench-task-card" id="bench-task-opus-code">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Coding Agent</h4>
+              <p class="bench-task-description">Add discount_pct parameter to valuation endpoint</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-opus-code-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('opus', 'code')">Run</button>
+          <div id="bench-task-opus-code-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-opus-code-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-opus-code-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-opus-code-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Chart Generation Task -->
+        <div class="bench-task-card" id="bench-task-opus-chart">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Chart Generation</h4>
+              <p class="bench-task-description">Create Chart.js fund vs Carta benchmark visualization</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-opus-chart-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('opus', 'chart')">Run</button>
+          <div id="bench-task-opus-chart-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-opus-chart-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-opus-chart-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-opus-chart-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Web Research Task -->
+        <div class="bench-task-card" id="bench-task-opus-research">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Web Research</h4>
+              <p class="bench-task-description">Research XGS Energy and geothermal industry</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-opus-research-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('opus', 'research')">Run</button>
+          <div id="bench-task-opus-research-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-opus-research-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-opus-research-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-opus-research-response" class="bench-response-content bench-hidden"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Refiant Tasks -->
+    <div class="bench-model-section">
+      <button class="bench-model-section-header" onclick="document.getElementById('bench-tasks-refiant').classList.toggle('bench-collapsed')">
+        <span class="bench-collapse-icon">▼</span>
+        <h3>Refiant qwen-rfnt — Tasks</h3>
+      </button>
+      <div id="bench-tasks-refiant" class="bench-tasks-list">
+        <!-- Data Extraction Task -->
+        <div class="bench-task-card" id="bench-task-refiant-extract">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Data Extraction</h4>
+              <p class="bench-task-description">Extract structured JSON from XGS Energy financial data</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-refiant-extract-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('refiant', 'extract')">Run</button>
+          <div id="bench-task-refiant-extract-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-refiant-extract-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-refiant-extract-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-refiant-extract-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Deal Agent Task -->
+        <div class="bench-task-card" id="bench-task-refiant-deal">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Deal Agent</h4>
+              <p class="bench-task-description">Tool-use scenario comparison (check size, TRL changes)</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-refiant-deal-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('refiant', 'deal')">Run</button>
+          <div id="bench-task-refiant-deal-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-refiant-deal-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-refiant-deal-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-refiant-deal-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Coding Agent Task -->
+        <div class="bench-task-card" id="bench-task-refiant-code">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Coding Agent</h4>
+              <p class="bench-task-description">Add discount_pct parameter to valuation endpoint</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-refiant-code-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('refiant', 'code')">Run</button>
+          <div id="bench-task-refiant-code-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-refiant-code-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-refiant-code-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-refiant-code-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Chart Generation Task -->
+        <div class="bench-task-card" id="bench-task-refiant-chart">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Chart Generation</h4>
+              <p class="bench-task-description">Create Chart.js fund vs Carta benchmark visualization</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-refiant-chart-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('refiant', 'chart')">Run</button>
+          <div id="bench-task-refiant-chart-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-refiant-chart-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-refiant-chart-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-refiant-chart-response" class="bench-response-content bench-hidden"></div>
+        </div>
+
+        <!-- Web Research Task -->
+        <div class="bench-task-card" id="bench-task-refiant-research">
+          <div class="bench-task-header">
+            <div class="bench-task-info">
+              <h4 class="bench-task-name">Web Research</h4>
+              <p class="bench-task-description">Research XGS Energy and geothermal industry</p>
+            </div>
+            <div class="bench-task-status" id="bench-task-refiant-research-status">Idle</div>
+          </div>
+          <button class="bench-btn bench-btn-small" onclick="benchRunTask('refiant', 'research')">Run</button>
+          <div id="bench-task-refiant-research-score" class="bench-score-display" style="display:none;"></div>
+          <div class="bench-metrics">
+            <span id="bench-task-refiant-research-metrics"></span>
+          </div>
+          <button class="bench-task-expand-btn" onclick="document.getElementById('bench-task-refiant-research-response').classList.toggle('bench-hidden')">
+            View Response
+          </button>
+          <div id="bench-task-refiant-research-response" class="bench-response-content bench-hidden"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Benchmark Comparison Section -->
+  <div class="bench-comparison-section">
+    <h3 class="bench-comparison-title">Benchmark Comparison</h3>
+
+    <div class="bench-comparison-controls">
+      <div class="bench-control-group">
+        <label class="bench-control-label">Select Models:</label>
+        <div class="bench-checkbox-group">
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-compare-haiku" checked> Haiku 4.5
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-compare-sonnet" checked> Sonnet 4
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-compare-opus" checked> Opus 4
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-compare-refiant" checked> Refiant qwen-rfnt
+          </label>
+        </div>
+      </div>
+
+      <div class="bench-control-group">
+        <label class="bench-control-label">Select Tasks:</label>
+        <div class="bench-checkbox-group">
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-task-extract" checked> Data Extraction
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-task-deal" checked> Deal Agent
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-task-code" checked> Coding Agent
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-task-chart" checked> Chart Generation
+          </label>
+          <label class="bench-checkbox-label">
+            <input type="checkbox" id="bench-task-research" checked> Web Research
+          </label>
+        </div>
+      </div>
+
+      <button class="bench-btn bench-btn-primary" onclick="benchRunComparison()">
+        Run Benchmark
+      </button>
+    </div>
+
+    <div id="bench-comparison-results" class="bench-comparison-results" style="display:none;">
+      <div id="bench-comparison-table"></div>
+      <div id="bench-comparison-rankings" class="bench-rankings"></div>
+    </div>
+  </div>
+</div>
+
+    </main>
+
+    <footer class="site-footer">
+        <p>VoLo Earth Ventures — Quantitative Underwriting Engine v0.1 &middot; All parameters derived from Carta, NREL ATB, Lazard LCOE+</p>
+    </footer>
+
+    <!-- AI Agent Chat -->
+    <button class="chat-toggle" id="chat-toggle" onclick="toggleChat()" title="AI Deal Agent">&#x1F4AC;</button>
+    <div class="chat-panel" id="chat-panel">
+        <div class="chat-header">
+            <div class="chat-header-title">
+                <span>VoLo Deal Agent</span>
+                <span class="chat-mode-badge" style="background:rgba(255,255,255,0.15);">AI</span>
+            </div>
+            <button onclick="clearChat()" style="background:none;border:none;color:rgba(255,255,255,0.7);cursor:pointer;font-size:0.85rem;" title="Clear chat">&times;</button>
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <div class="chat-msg system">I'm your Deal Agent. I can modify deal parameters, run what-if scenarios, explain metrics, and suggest optimal terms. Ask me anything about the current deal.</div>
+        </div>
+        <div class="chat-input-area">
+            <textarea id="chat-input" placeholder="e.g. &quot;What if we increase the check to $5M?&quot;" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+            <button onclick="sendChat()" id="chat-send-btn">Send</button>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=77"></script>
+    <script>
+    // Inject info-tip icons into form labels based on associated input IDs
+    document.addEventListener('DOMContentLoaded', function() {
+        const _LABEL_TIPS = {
+            'wiz-entry-stage': 'entry_stage',
+            'wiz-trl': 'trl',
+            'wiz-check-size': 'check_size',
+            'wiz-round-size': 'round_size',
+            'wiz-pre-money': 'pre_money',
+            'wiz-archetype': 'archetype',
+            'wiz-tam': 'tam',
+            'wiz-pen-low': 'penetration_low',
+            'wiz-pen-high': 'penetration_high',
+            'wiz-mult-low': 'ev_ebitda_low',
+            'wiz-mult-high': 'ev_ebitda_high',
+            'wiz-sector': 'sector_profile',
+            'wiz-fund-size': 'fund_size',
+            'wiz-n-deals': 'n_deals',
+            'wiz-mgmt-fee': 'mgmt_fee',
+            'wiz-reserve': 'reserve_pct',
+            'wiz-max-conc': 'max_concentration',
+            'wiz-displaced-resource': 'displaced_resource',
+            'wiz-baseline-prod': 'baseline_production',
+            'wiz-range-imp': 'range_improvement',
+            'wiz-service-life': 'service_life',
+        };
+
+        for (const [inputId, glossaryKey] of Object.entries(_LABEL_TIPS)) {
+            const input = document.getElementById(inputId);
+            if (!input) continue;
+            // Find the label — either via for-attribute or parent .form-group > label
+            let label = document.querySelector(`label[for="${inputId}"]`);
+            if (!label) {
+                const group = input.closest('.form-group');
+                if (group) label = group.querySelector('label');
+            }
+            if (!label) continue;
+            const tip = infoTip(glossaryKey);
+            if (tip) label.insertAdjacentHTML('beforeend', tip);
+        }
+
+        // Also add tip to the ownership display label
+        const ownerLabel = document.querySelector('.wiz-ownership-row label');
+        if (ownerLabel) ownerLabel.insertAdjacentHTML('beforeend', infoTip('entry_ownership'));
+
+        // Add tip to volume projections label
+        const volLabel = document.querySelector('#wiz-volume-row')?.closest('.form-group')?.querySelector('label');
+        if (volLabel) volLabel.insertAdjacentHTML('beforeend', infoTip('volume_projections'));
+
+        // Add tips to section card headers
+        const headerTips = {
+            'Deal Terms': 'Core investment parameters — check size, valuation, and ownership stake.',
+            'Market & Simulation': 'Market sizing and Monte Carlo simulation parameters that drive the adoption S-curve and revenue cone projections.',
+            'Carbon Model': 'Avoided emissions calculation based on deployed units displacing carbon-intensive incumbents. Auto-fills from the selected technology archetype.',
+            'Fund Parameters': 'VoLo fund-level constraints used for check size optimization and portfolio concentration analysis.',
+        };
+        document.querySelectorAll('.card-header h2').forEach(h2 => {
+            const text = h2.textContent.trim();
+            if (headerTips[text]) {
+                h2.insertAdjacentHTML('beforeend', infoTip(null, headerTips[text]));
+            }
+        });
+    });
+    </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.venv
+__pycache__
+*.pyc
+.env
+.git
+.gitignore
+*.md
+data/fm_output/*
+rvm_replit/
+Joe Files/
+experimental/

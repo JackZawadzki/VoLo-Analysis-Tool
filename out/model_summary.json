@@ -1,0 +1,178 @@
+{
+  "company_id": "test",
+  "outputs": {
+    "revenue": {
+      "output_cell": "Consolidated Forecast (A)!S16",
+      "fiscal_year": 2035,
+      "revenue_type": "UNKNOWN",
+      "top_inputs": [
+        {
+          "cell": "'Inputs'!F26",
+          "label": "$000/MW",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P81",
+          "label": "",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F25",
+          "label": "year",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!L139",
+          "label": "",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F44",
+          "label": "% p.a.",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F13",
+          "label": "MW",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F21",
+          "label": "MW",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P83",
+          "label": "",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F36",
+          "label": "% Capex",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Inputs'!F37",
+          "label": "$000/MW/yr",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P84",
+          "label": "",
+          "elasticity_revenue": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P55",
+          "label": "186599.99999999997",
+          "elasticity_revenue": 0
+        }
+      ]
+    },
+    "ebitda": {
+      "output_cell": "Consolidated Forecast (A)!F57",
+      "fiscal_year": 2045,
+      "revenue_type": null,
+      "top_inputs": [
+        {
+          "cell": "'Inputs'!F26",
+          "label": "$000/MW",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!N81",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F25",
+          "label": "year",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!L139",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F44",
+          "label": "% p.a.",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P81",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F13",
+          "label": "MW",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F21",
+          "label": "MW",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P83",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F36",
+          "label": "% Capex",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Inputs'!F37",
+          "label": "$000/MW/yr",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P84",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!P55",
+          "label": "186599.99999999997",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!N55",
+          "label": "81799.99999999999",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!N83",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!N84",
+          "label": "",
+          "elasticity_ebitda": 0
+        },
+        {
+          "cell": "'Consolidated Forecast (A)'!S55",
+          "label": "417799.9999999999",
+          "elasticity_ebitda": 0
+        }
+      ]
+    }
+  },
+  "verified_statements": [
+    "Revenue output cell is Consolidated Forecast (A)!S16 (FY2035).",
+    "Top revenue upstream input is 'Inputs'!F26 (label '$000/MW').",
+    "Ebitda output cell is Consolidated Forecast (A)!F57 (FY2045).",
+    "Top ebitda upstream input is 'Inputs'!F26 (label '$000/MW')."
+  ],
+  "evidence": {
+    "graph_stats": {
+      "nodes": 14107,
+      "edges": 22952
+    },
+    "leaf_inputs_count": 1396,
+    "notes": []
+  }
+}

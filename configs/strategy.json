@@ -1,0 +1,69 @@
+{
+  "fund_size": 130000000,
+  "mgmt_fee_pct": 21.0,
+  "reserve_pct": 30.0,
+  "reserve_conc": 1.0,
+  "recycle_pct": 0.0,
+  "nc": 20,
+  "years": 10,
+  "seed": 424242,
+  "mode": "ev_ebitda",
+  "min_check": 500000,
+  "prelaunch_check_discount": 0.3,
+  "ownership_cap": 0.6,
+  "initial_ownership_target": 0.1,
+  "nav_cost_floor": 0.8,
+  "ev_rev": {
+    "mean_sw": 6.0,
+    "mean_hw": 3.5,
+    "log_sigma": 0.7,
+    "sigma_scale": 1.2
+  },
+  "ev_ebitda": {
+    "mean_sw": 16.0,
+    "mean_hw": 11.0,
+    "log_sigma": 0.55,
+    "sigma_scale": 1.1,
+    "ebitda_margin_start": 0.05,
+    "ebitda_margin_end": 0.25,
+    "ebitda_margin_ramp_years": 5
+  },
+  "mark_stage_mult": [
+    0.6,
+    0.6,
+    0.7,
+    0.9,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "growth": {
+    "mscale_sw": 1.4,
+    "mscale_hw": 0.8
+  },
+  "failure_model": {
+    "ycl_base_fail_p0": 0.57,
+    "ycl_slopes": {
+      "software": {
+        "pos": 0.06,
+        "neg": -0.05
+      },
+      "hardware": {
+        "pos": 0.07,
+        "neg": -0.04
+      }
+    },
+    "stage_base_fail": {
+      "prelaunch": 0.1,
+      "early": 0.05,
+      "growth": 0.03
+    },
+    "stage_thresholds_years_since_launch": {
+      "prelaunch_max": -0.1,
+      "early_max": 2.0
+    }
+  }
+}
