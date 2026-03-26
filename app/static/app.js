@@ -7557,10 +7557,22 @@ function _memoInjectCharts(container, report) {
         const entryOwn = ov.entry_ownership_pct || 0;
         const checkM = ov.check_size_millions || 0;
 
-        // ─ Block A: Carbon Hero Cards ─────────────────────────────────────────
+        // ─ Block A: Carbon Hero Cards + Methodology Overview ─────────────────
         insertInline(carbonH2, `<div class="memo-chart-context memo-carbon-hero-block">
             <p class="memo-chart-label">RVM Carbon Impact Summary — Section 4</p>
-            <p class="memo-chart-caption">VoLo Return Validation Model carbon assessment. Lifecycle tCO2 is the company-level impact across the 10-year volume forecast. Attribution applies VoLo's ${fmt(entryOwn,1)}% entry ownership and TRL-based risk haircut.</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                VoLo's carbon impact model measures <strong>avoided CO₂</strong> — the emissions that do not occur because this company's technology replaces a more carbon-intensive conventional alternative.
+                The core question is: for every unit of the company's product deployed, how much of the conventional resource does it displace, and what is the carbon intensity of that displaced resource?
+            </p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                <strong>Step 1 — Volume:</strong> The annual volume forecast (in deployable units, e.g. MW of solar capacity or tonnes of refining throughput) represents how much of the company's asset gets built each year.
+                <strong>Step 2 — Baseline lifetime production:</strong> Each unit, over its service life, produces a total quantity of the relevant resource (e.g. 1 MW of solar × 25 yr × 0.25 capacity factor = 2,190 MWh). This quantity is the baseline against which carbon displacement is measured.
+                <strong>Step 3 — CI improvement factor:</strong> The new technology has a lower carbon intensity than the conventional alternative by this factor. For example, factor 1.4 means the new tech emits 1/1.4 ≈ 71% of what conventional does, so <em>(1 − 1/1.4) ≈ 28.6%</em> of conventional emissions are avoided per unit of resource produced.
+                <strong>Step 4 — Displaced volume per unit:</strong> Multiplying the baseline lifetime production by the displacement fraction gives the net resource displaced per deployed unit.
+                <strong>Step 5 — Annual impact:</strong> Each year, the cumulative fleet of deployed units displaces resource × the carbon intensity of that resource in that year (declining over time as the grid decarbonizes).
+                Embodied carbon (manufacturing-phase emissions from producing the units themselves) is subtracted to arrive at a net lifecycle figure.
+                Finally, lifecycle tCO₂ is attributed to VoLo by ownership percentage, then risk-adjusted downward based on the company's technology readiness level.
+            </p>
             <div class="memo-rvm-hero">
                 <div class="memo-rvm-hero-card accent">
                     <div class="memo-rvm-hero-num">${fmt(co.company_tonnes, 0)}</div>
@@ -7633,70 +7645,90 @@ function _memoInjectCharts(container, report) {
             });
         }
 
+        // Build a worked-example sentence to make the numbers concrete
+        const _jdNum = ci.jd != null ? Number(ci.jd) : null;
+        const _ciY1Num = (ci.operating_ci_series || [])[0];
+        const _exampleVol = (cInp.year_volumes || [])[0];
+        const _exampleOp = (ci.annual_operating || [])[0];
+        const _workedExample = (_jdNum != null && _ciY1Num != null && _exampleVol != null && _exampleOp != null)
+            ? `Worked example (Year 1): ${Number(_exampleVol).toLocaleString(undefined,{maximumFractionDigits:1})} ${unitDef}s deployed × ${_jdNum.toLocaleString(undefined,{maximumFractionDigits:2})} ${specProdUnits} displaced/unit × ${_ciY1Num.toFixed(4)} tCO₂/${specProdUnits||'unit'} CI = <strong>${Number(_exampleOp).toLocaleString(undefined,{maximumFractionDigits:0})} tCO₂</strong> avoided in Year 1.`
+            : '';
+
         insertInline(carbonH2, `<div class="memo-chart-context">
             <p class="memo-chart-label">Displacement Chain Calculation</p>
-            <p class="memo-chart-caption">Step-by-step derivation of avoided CO₂ per the VoLo RVM methodology (cols JA–LK in original Fund I spreadsheet):</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 8px;">
+                The displacement chain converts a unit of deployed product into an annual avoided-CO₂ figure using four inputs that any analyst can verify independently.
+                The chain runs: <em>deployed units → resource produced per unit over its life (JA) → fraction of conventional CI displaced (derived from JC) → displaced resource volume per unit (JD) → multiply by fleet size and by the CI of the displaced resource in each year → annual operating avoided CO₂ (JO)</em>.
+                Embodied carbon (the CO₂ cost of manufacturing the units themselves) is then subtracted.
+            </p>
+            ${_workedExample ? `<p style="font-size:0.84rem;background:#f0f4ec;border-left:3px solid #5B7744;padding:6px 10px;margin:0 0 10px;border-radius:0 4px 4px 0;">${_workedExample}</p>` : ''}
             <table class="memo-rvm-table memo-carbon-chain-table">
-                <thead><tr><th>Step</th><th>Formula</th><th>Value</th><th>Notes</th></tr></thead>
+                <thead><tr><th>Input / Step</th><th>Formula</th><th>Value for this Deal</th><th>How to Reproduce</th></tr></thead>
                 <tbody>
                     <tr>
-                        <td><strong>Unit</strong></td>
+                        <td><strong>Unit (product)</strong></td>
                         <td>—</td>
                         <td>${unitDef}</td>
-                        <td>One deployable unit of the company's product</td>
+                        <td>One commercially deployable unit of the company's product. The volume forecast counts how many of these are built each year. Define this based on what the company sells (e.g. one solar panel system, one refinery module, one EV charger).</td>
                     </tr>
                     <tr>
                         <td><strong>Service Life</strong></td>
                         <td>—</td>
                         <td>${svcLife} yrs</td>
-                        <td>Expected operational lifespan per unit</td>
+                        <td>Expected operational lifespan of one unit. Used to construct the carbon intensity time series for the years each cohort of units is in operation — earlier vintages get earlier-year CI values, later vintages get later-year values. Source: manufacturer specs or industry standard.</td>
                     </tr>
                     <tr>
-                        <td><strong>Baseline Lifetime Prod (JA)</strong></td>
+                        <td><strong>JA — Baseline Lifetime Production</strong></td>
                         <td>—</td>
                         <td>${baselifeProd} ${specProdUnits}</td>
-                        <td>Total production of the displaced resource per unit over its service life</td>
+                        <td>Total quantity of the <em>displaced resource</em> that one unit produces (or processes) over its full service life. This bridges "unit of product" to "unit of resource" — because carbon intensity is a property of the resource (e.g. electricity, nickel, heat), not the product itself. Example: 1 MW solar × 25 yr × 0.25 CF × 8,760 hr = 54,750 MWh. Source: engineering specs × service life.</td>
                     </tr>
                     <tr>
-                        <td><strong>CI Improvement Factor (JC)</strong></td>
+                        <td><strong>JC — CI Improvement Factor</strong></td>
                         <td>—</td>
                         <td>${rangeImp}</td>
-                        <td>How many times lower the technology's carbon intensity is vs. conventional. Factor 1.4 → 1/1.4 ≈ 71% of conventional CI → 28.6% displaced. Factor 1000 → near-zero-CI (solar/wind/nuclear).</td>
+                        <td>How many times lower the new technology's carbon intensity is compared to the conventional alternative it displaces. The displacement fraction is derived as <em>(1 − 1/JC)</em>. Examples: JC = 1.4 → new tech has CI = conventional/1.4, so 1 − 1/1.4 = 28.6% of conventional CI is avoided. JC = 1000 → near-zero-CI technology (solar, wind, nuclear) displacing ~100% of conventional CI. JC = 1.111 → 10% improvement. Source: published lifecycle assessments or engineering analysis of the specific technology vs. its incumbent.</td>
                     </tr>
-                    <tr>
-                        <td><strong>Displaced Vol/Unit (JD)</strong></td>
+                    <tr style="background:rgba(91,119,68,0.05);">
+                        <td><strong>JD — Displaced Volume / Unit</strong></td>
                         <td>(1 − 1/JC) × JA</td>
                         <td>${jd} ${specProdUnits}</td>
-                        <td>Net resource displaced per deployed unit over its life</td>
+                        <td>Net quantity of the displaced resource that is NOT emitted because this unit exists, over the unit's full service life. This is the key per-unit displacement quantity — it encodes both how much resource the unit handles (JA) and how much cleaner it is vs. conventional (JC). Multiply JD by the number of units deployed in a year to get that year's total displaced resource.</td>
                     </tr>
                     <tr>
                         <td><strong>Displaced Resource</strong></td>
                         <td>—</td>
                         <td>${dispRes}</td>
-                        <td>Carbon-intensive resource or energy source being replaced</td>
+                        <td>The carbon-intensive resource or energy form being replaced (e.g. grid electricity, natural gas, coal-refined nickel, diesel). This determines which carbon intensity time series to look up. The CI of this resource — not the product itself — is what drives the tCO₂ calculation.</td>
                     </tr>
                     <tr>
-                        <td><strong>CI Year 1 (JE)</strong></td>
-                        <td>CarbonIntensityDB lookup</td>
-                        <td>${ciY1 != null ? ciY1.toFixed(4) : 'N/A'} tCO₂/unit</td>
-                        <td>${ciNote}</td>
+                        <td><strong>JE — Carbon Intensity, Year 1</strong></td>
+                        <td>CI database lookup</td>
+                        <td>${ciY1 != null ? ciY1.toFixed(4) : 'N/A'} tCO₂/${specProdUnits||'unit'}</td>
+                        <td>${ciDeclines
+                            ? `Declines from ${ciSeries[0]?.toFixed(4)} → ${ciSeries[ciSeries.length-1]?.toFixed(4)} tCO₂/${specProdUnits||'unit'} over the model horizon as the underlying grid or supply chain decarbonizes. The declining series is why service life matters — a unit deployed in Year 1 gets Year 1 through Year N CI values; a unit deployed in Year 5 gets Year 5 through Year N+4 values. Source: NREL ATB, EPA eGRID, IEA, or commodity-specific LCA databases.`
+                            : `Flat at ${ciSeries[0]?.toFixed(4)} tCO₂/${specProdUnits||'unit'} across the model horizon (this resource's carbon intensity is not projected to change materially). Source: EPA, IEA, or commodity LCA.`
+                        }</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.05);">
+                        <td><strong>JO — Annual Operating Impact</strong></td>
+                        <td>Σ cohorts: JD × Vol_deployed_yr × CI_yr</td>
+                        <td colspan="2">Calculated year-by-year — see table below. For each calendar year, sum across all in-service unit cohorts: (JD per unit) × (units deployed in that cohort's launch year) × (CI in that calendar year). The CI used is specific to each year, so earlier-CI-year values apply to units deployed early in the forecast.</td>
                     </tr>
                     <tr>
-                        <td><strong>Annual Op. Impact (JO)</strong></td>
-                        <td>JD × Vol_yr × CI_yr</td>
-                        <td colspan="2">See year-by-year table below</td>
+                        <td><strong>Embodied Carbon</strong></td>
+                        <td>${embDisp ? '(1 − 1/JC_emb) × baseline_prod_emb × CI_emb_yr × Vol_yr' : '—'}</td>
+                        <td>${embDisp ? `${embDisp} (displaced resource for embodied)` : 'Not modeled for this deal'}</td>
+                        <td>${totalEmb !== '0'
+                            ? `Manufacturing-phase CO₂: the emissions generated in producing (not operating) the units themselves. Calculated the same way as operating impact but using the embodied CI improvement factor and the upstream resource's CI. Total embodied across the forecast: ${totalEmb} tCO₂. This reduces the net carbon benefit.`
+                            : `Embodied carbon (manufacturing-phase emissions) is not modeled for this archetype, either because the upstream manufacturing process is negligible relative to operating impact, or because data is not available. For completeness, a future version should include an LCA-sourced embodied CO₂ per unit.`
+                        }</td>
                     </tr>
-                    <tr>
-                        <td><strong>Embodied Carbon (KP)</strong></td>
-                        <td>${embDisp ? 'KE × CI_yr × Vol_yr' : '—'}</td>
-                        <td>${embDisp ? embDisp : 'Not modeled'}</td>
-                        <td>Manufacturing / upstream carbon; ${totalEmb !== '0' ? `total ${totalEmb} tCO₂` : 'zero in this model'}</td>
-                    </tr>
-                    <tr style="background:rgba(91,119,68,0.08);font-weight:700;">
-                        <td><strong>Total Lifecycle (LL)</strong></td>
-                        <td>Σ (Operating + Embodied)</td>
+                    <tr style="background:rgba(91,119,68,0.10);font-weight:700;">
+                        <td><strong>LL — Total Lifecycle tCO₂</strong></td>
+                        <td>Σ (Annual Operating + Annual Embodied)</td>
                         <td>${totalLc} tCO₂</td>
-                        <td>Operating ${totalOp} + Embodied ${totalEmb} tCO₂</td>
+                        <td>Sum of all annual operating avoided CO₂ (${totalOp} tCO₂) plus embodied CO₂ (${totalEmb} tCO₂) across the 10-year volume forecast. This is the company-level gross avoided CO₂ — before ownership attribution or risk adjustment. To replicate: build a spreadsheet with the year-by-year table below, compute each row's lifecycle tCO₂, and sum.</td>
                     </tr>
                 </tbody>
             </table>
@@ -7705,18 +7737,26 @@ function _memoInjectCharts(container, report) {
         // ─ Block C: Year-by-Year Impact Table + Annual Bar Chart ─────────────
         if (volRows) {
             insertInline(carbonH2, `<div class="memo-chart-context">
-                <p class="memo-chart-label">Annual Carbon Impact by Year</p>
-                <p class="memo-chart-caption">Annual operating and embodied carbon impact across the 10-year volume forecast (commercial launch ${launchYr}). Operating impact = JD × units deployed × CI for that year.</p>
+                <p class="memo-chart-label">Year-by-Year Carbon Impact (Commercial Launch ${launchYr})</p>
+                <p style="font-size:0.84rem;line-height:1.6;margin:0 0 8px;">
+                    Each row represents one calendar year of the 10-year volume forecast.
+                    <strong>Units</strong> = new ${unitDef}s deployed that year (from the volume forecast — this is the annual asset deployment figure, not a cumulative total).
+                    <strong>CI (tCO₂/${specProdUnits||'unit'})</strong> = the carbon intensity of the displaced resource <em>in that specific year</em>, sourced from a declining time series that reflects grid or supply chain decarbonization over time.
+                    <strong>Operating tCO₂</strong> = JD × Units_yr × CI_yr, where JD is the per-unit lifetime displaced volume calculated above.
+                    Note that this is a simplified single-cohort approximation — in the full model, each year's newly deployed cohort operates for its full service life, so Year 5 CI applies to units deployed in Year 1 through Year 5; the year-by-year table below approximates this using the CI for the deployment year.
+                    <strong>Embodied tCO₂</strong> = manufacturing-phase emissions from producing the units deployed that year (negative impact on net carbon benefit).
+                    <strong>Lifecycle tCO₂</strong> = Operating − Embodied (net avoided CO₂ for that year's deployments).
+                </p>
                 <div class="memo-chart-row">
                     <div class="memo-carbon-table-wrap">
                         <table class="memo-rvm-table">
                             <thead><tr>
                                 <th>Year</th>
-                                <th style="text-align:right;">Units</th>
-                                <th style="text-align:right;">CI (tCO₂/unit)</th>
+                                <th style="text-align:right;">Units Deployed</th>
+                                <th style="text-align:right;">CI (tCO₂/${specProdUnits||'unit'})</th>
                                 <th style="text-align:right;">Operating tCO₂</th>
                                 <th style="text-align:right;">Embodied tCO₂</th>
-                                <th style="text-align:right;">Lifecycle tCO₂</th>
+                                <th style="text-align:right;">Net Lifecycle tCO₂</th>
                             </tr></thead>
                             <tbody>${volRows}</tbody>
                         </table>
@@ -7737,53 +7777,74 @@ function _memoInjectCharts(container, report) {
         const tpdRisk = co.risk_adj_tpd != null ? Number(co.risk_adj_tpd).toFixed(5) : 'N/A';
 
         insertInline(carbonH2, `<div class="memo-chart-context">
-            <p class="memo-chart-label">VoLo Attribution Waterfall</p>
-            <p class="memo-chart-caption">Step-down from company-level lifecycle tCO₂ to VoLo's risk-adjusted carbon efficiency metric (t/$).</p>
+            <p class="memo-chart-label">VoLo Attribution Waterfall — From Company tCO₂ to t/$</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                The company-level lifecycle tCO₂ (from the displacement chain above) represents the gross avoided CO₂ <em>attributed to the entire company</em>.
+                To determine VoLo's share and assess carbon capital efficiency, we apply two adjustments:
+            </p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                <strong>Ownership attribution:</strong> VoLo only "owns" a fraction of the company's carbon impact equal to its equity ownership stake.
+                At entry, VoLo holds ${fmt(entryOwn,1)}% of the company, so VoLo's pro-rata tCO₂ = total lifecycle tCO₂ × ${fmt(entryOwn,1)}%.
+                This is analogous to how carbon accounting standards (GHG Protocol, equity method) attribute scope 1/2/3 emissions proportionally to ownership.
+            </p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                <strong>TRL risk haircut:</strong> Early-stage companies may never reach commercial scale — their technology might fail, the market may not develop, or the projected volumes may not materialize.
+                The risk divisor discounts the carbon impact to reflect this probability-weighted uncertainty.
+                TRL 1–4 (laboratory / concept stage) uses a 6× divisor (only ~17% expected to realize full impact).
+                TRL 5–6 (prototype / pilot validated) uses 3× (~33%).
+                TRL 7–9 (commercial or near-commercial) uses 1× (full credit).
+                As the company de-risks and advances its TRL, this divisor should be reduced.
+            </p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                <strong>t/$ metric:</strong> Dividing risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
+                This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales.
+                Typical VoLo portfolio range: 0.005–0.10 t/$. Higher is better, but extremely high values should be interrogated for model assumptions.
+            </p>
             <div class="memo-chart-row" style="align-items:flex-start; gap: 20px;">
                 <table class="memo-rvm-table" style="flex:1.4;">
-                    <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Explanation</th></tr></thead>
+                    <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Why This Step</th></tr></thead>
                     <tbody>
                         <tr>
-                            <td><strong>① Lifecycle tCO₂</strong></td>
-                            <td>Σ annual lifecycle</td>
+                            <td><strong>① Company Lifecycle tCO₂</strong></td>
+                            <td>Σ annual lifecycle (above)</td>
                             <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
-                            <td>Company-level total across 10-year forecast</td>
+                            <td>Gross avoided CO₂ at 100% company scale across 10-year volume forecast. Starting point before any investor-level adjustments.</td>
                         </tr>
                         <tr>
-                            <td><strong>② VoLo Pro-Rata</strong></td>
-                            <td>① × ${fmt(entryOwn,1)}% ownership</td>
+                            <td><strong>② VoLo Pro-Rata tCO₂</strong></td>
+                            <td>① × ${fmt(entryOwn,1)}% entry ownership</td>
                             <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
-                            <td>VoLo's attributable share at entry ownership</td>
+                            <td>VoLo's proportional share of company-level impact at the entry ownership stake. Uses entry (not diluted) ownership because we are measuring impact at the time of investment commitment.</td>
                         </tr>
                         <tr>
-                            <td><strong>③ Risk Divisor</strong></td>
-                            <td>÷ ${riskDiv}</td>
-                            <td style="text-align:right;">${riskDivLabel}</td>
-                            <td>${riskSrc}. Reduce to 1× if TRL reaches 7+.</td>
+                            <td><strong>③ TRL Risk Divisor</strong></td>
+                            <td>÷ ${riskDiv} (${riskDivLabel})</td>
+                            <td style="text-align:right;">${riskSrc ? riskSrc : 'TRL-based'}</td>
+                            <td>Probability-weighted haircut for technology and execution risk. A TRL 3 company has much higher probability of never reaching the projected volume than a TRL 8 company. Divisor: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Update this as the company advances.</td>
                         </tr>
                         <tr style="background:rgba(91,119,68,0.08);">
-                            <td><strong>④ Risk-Adj tCO₂</strong></td>
+                            <td><strong>④ Risk-Adjusted tCO₂</strong></td>
                             <td>② ÷ ${riskDiv}</td>
                             <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
-                            <td>Expected avoided CO₂ accounting for execution risk</td>
+                            <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. This is the figure to use when comparing carbon impact across portfolio companies at different technology maturities.</td>
                         </tr>
                         <tr>
-                            <td><strong>⑤ t/$ (raw)</strong></td>
-                            <td>② ÷ $${fmt(checkM,2)}M</td>
+                            <td><strong>⑤ t/$ Unadjusted</strong></td>
+                            <td>② ÷ $${fmt(checkM,2)}M check</td>
                             <td style="text-align:right;">${tpdRaw}</td>
-                            <td>Unadjusted tCO₂ per dollar invested</td>
+                            <td>Raw carbon capital efficiency before TRL risk adjustment. Shows the theoretical maximum efficiency if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential.</td>
                         </tr>
-                        <tr style="background:rgba(91,119,68,0.08);">
-                            <td><strong>⑥ t/$ (risk-adj)</strong></td>
-                            <td>④ ÷ $${fmt(checkM,2)}M</td>
+                        <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
+                            <td><strong>⑥ t/$ Risk-Adjusted</strong></td>
+                            <td>④ ÷ $${fmt(checkM,2)}M check</td>
                             <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
-                            <td>Risk-adjusted carbon efficiency — VoLo's primary carbon KPI</td>
+                            <td>VoLo's primary carbon KPI. Risk-adjusted tonnes of CO₂ avoided per dollar invested. To replicate: take ④ (risk-adj tCO₂) and divide by the check size in dollars. Higher = more carbon impact per dollar. Compare across deals using this metric, not raw company tCO₂.</td>
                         </tr>
                     </tbody>
                 </table>
                 ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>` : ''}
             </div>
-            <p class="memo-chart-note">Risk divisor is TRL-derived: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Typical VoLo portfolio range: 0.005–0.10 t/$.</p>
+            <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) divide by the TRL risk divisor, (4) divide by check size in dollars. The result is t/$. All inputs are shown explicitly in this memo.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
 
         // Grid Carbon Intensity Trajectory chart removed from memo
