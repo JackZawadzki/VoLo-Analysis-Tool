@@ -71,6 +71,8 @@ from .routes.extraction import router as extraction_router
 from .routes.deal_pipeline import router as deal_pipeline_router
 from .routes.memo import router as memo_router
 from .routes.drive import router as drive_router
+from .routes.dd_analysis import router as dd_analysis_router
+from .routes.fund_deployment import router as fund_deployment_router
 
 app.include_router(auth_router)
 app.include_router(resources_router)
@@ -78,6 +80,8 @@ app.include_router(extraction_router)
 app.include_router(deal_pipeline_router)
 app.include_router(memo_router)
 app.include_router(drive_router)
+app.include_router(dd_analysis_router)
+app.include_router(fund_deployment_router)
 
 # Load data on startup
 DATA_STORE = {}
@@ -695,6 +699,7 @@ async def chat_endpoint(req: ChatRequest, user: CurrentUser = Depends(get_curren
     import anthropic
 
     # Resolve model from user preferences
+    from .engine.llm_utils import make_llm_client
     prefs = get_model_preferences(user.id)
     chat_model = prefs.get("deal_chat", MODEL_DEFAULTS["deal_chat"])
     is_refiant = chat_model.startswith("qwen")
@@ -703,12 +708,11 @@ async def chat_endpoint(req: ChatRequest, user: CurrentUser = Depends(get_curren
         api_key = os.environ.get("REFIANT_API_KEY", "")
         if not api_key:
             return JSONResponse(content={"error": "REFIANT_API_KEY not configured"}, status_code=500)
-        client = anthropic.Anthropic(api_key=api_key, base_url="https://api.refiant.ai/v1")
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             return JSONResponse(content={"error": "ANTHROPIC_API_KEY not configured"}, status_code=500)
-        client = anthropic.Anthropic(api_key=api_key)
+    client = make_llm_client(is_refiant, api_key)
 
     messages = []
     if req.conversation_history:
@@ -1083,6 +1087,7 @@ async def dev_chat_endpoint(req: DevChatRequest, user: CurrentUser = Depends(get
     import anthropic
 
     # Resolve model from user preferences
+    from .engine.llm_utils import make_llm_client
     prefs = get_model_preferences(user.id)
     dev_model_pref = prefs.get("dev_agent", MODEL_DEFAULTS["dev_agent"])
     is_refiant = dev_model_pref.startswith("qwen")
@@ -1091,12 +1096,11 @@ async def dev_chat_endpoint(req: DevChatRequest, user: CurrentUser = Depends(get
         api_key = os.environ.get("REFIANT_API_KEY", "")
         if not api_key:
             return JSONResponse(content={"error": "REFIANT_API_KEY not configured"}, status_code=500)
-        client = anthropic.Anthropic(api_key=api_key, base_url="https://api.refiant.ai/v1")
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             return JSONResponse(content={"error": "ANTHROPIC_API_KEY not configured"}, status_code=500)
-        client = anthropic.Anthropic(api_key=api_key)
+    client = make_llm_client(is_refiant, api_key)
 
     # Build messages from history
     messages = []

@@ -328,3 +328,163 @@ def validate_extraction(result: dict) -> dict:
         result["_validation_warnings"] = warnings
 
     return result
+
+
+# ── Deal terms extraction from prior IC memos ────────────────────────────────
+
+_DEAL_TERMS_SCHEMA = """{
+  "company_name": "string or null - company name",
+  "check_size_m": "number or null - investment check size in millions USD",
+  "pre_money_m": "number or null - pre-money valuation in millions USD",
+  "post_money_m": "number or null - post-money valuation in millions USD",
+  "round_size_m": "number or null - total round size in millions USD",
+  "ownership_pct": "number or null - ownership percentage acquired (0-100)",
+  "entry_stage": "Pre-Seed|Seed|Series A|Series B|Series C|Growth or null",
+  "investment_date": "string or null - date of investment (YYYY-MM-DD or YYYY)",
+  "fund_year": "integer or null - fund year at time of investment (1-indexed)",
+  "board_seat": "boolean or null - whether a board seat was obtained",
+  "pro_rata_rights": "boolean or null - whether pro-rata rights were secured",
+  "liquidation_preference": "string or null - liquidation preference terms (e.g. 1x non-participating)",
+  "key_commitments": "[strings] or null - specific commitments or milestones company agreed to",
+  "revenue_at_investment": "number or null - revenue at time of investment (in millions USD)",
+  "arr_at_investment": "number or null - ARR at time of investment (in millions USD)",
+  "confidence": {"overall": "float 0-1", "fields": {"field_name": "float 0-1"}},
+  "notes": "string - any caveats about extracted values"
+}"""
+
+_DEAL_TERMS_FEW_SHOT = """Example extraction from a prior IC memo:
+{
+  "company_name": "CleanGrid Technologies",
+  "check_size_m": 3.0,
+  "pre_money_m": 25.0,
+  "post_money_m": 30.0,
+  "round_size_m": 5.0,
+  "ownership_pct": 10.0,
+  "entry_stage": "Seed",
+  "investment_date": "2023-06",
+  "fund_year": 2,
+  "board_seat": true,
+  "pro_rata_rights": true,
+  "liquidation_preference": "1x non-participating preferred",
+  "key_commitments": [
+    "Achieve 5 pilot deployments by Q4 2024",
+    "Reach $1M ARR within 18 months",
+    "Complete UL certification for residential product",
+    "Hire VP Engineering and VP Sales"
+  ],
+  "revenue_at_investment": 0.1,
+  "arr_at_investment": null,
+  "confidence": {"overall": 0.85, "fields": {"check_size_m": 0.95, "pre_money_m": 0.90, "round_size_m": 0.80, "entry_stage": 1.0}},
+  "notes": "Check size explicitly stated on page 2. Pre-money derived from stated post-money minus round size. Revenue figure from executive summary."
+}"""
+
+
+def extract_deal_terms(text: str, source_name: str = "IC Memo", model: str = None) -> dict:
+    """
+    Extract prior investment deal terms from an IC memo or investment document.
+
+    Returns structured deal terms including check size, valuation, ownership,
+    stage, and key commitments.
+    """
+    _model = model or "claude-haiku-4-5-20251001"
+    _is_refiant = _model.startswith("qwen")
+
+    if _is_refiant:
+        api_key = os.environ.get("REFIANT_API_KEY", "")
+        if not api_key:
+            raise ValueError("REFIANT_API_KEY not set")
+        base_url = "https://api.refiant.ai/v1"
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not set")
+        base_url = None
+
+    # Truncate text to fit context
+    max_chars = 60000
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n\n[... truncated ...]"
+
+    system_prompt = (
+        "You are a financial document analyst specializing in venture capital investment memos. "
+        "Extract INVESTOR-SIDE deal terms from this investment committee memo. "
+        "Focus on: check size, valuation, ownership, stage, round size, and any "
+        "specific commitments or milestones the portfolio company agreed to meet. "
+        "Return ONLY valid JSON matching the schema below. "
+        "If a value cannot be found, use null. "
+        "Convert all monetary values to millions USD."
+    )
+
+    user_msg = (
+        f"Extract deal terms from this document.\n\n"
+        f"Source: {source_name}\n\n"
+        f"Output JSON schema:\n{_DEAL_TERMS_SCHEMA}\n\n"
+        f"Example:\n{_DEAL_TERMS_FEW_SHOT}\n\n"
+        f"Document text:\n{text}"
+    )
+
+    try:
+        if _is_refiant:
+            import openai
+            client = openai.OpenAI(api_key=api_key, base_url=base_url)
+            resp = client.chat.completions.create(
+                model=_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                max_tokens=2000,
+                temperature=0.0,
+            )
+            raw = resp.choices[0].message.content.strip()
+        else:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model=_model,
+                max_tokens=2000,
+                temperature=0.0,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            raw = resp.content[0].text.strip()
+
+        # Parse JSON from response (handle markdown code fences)
+        if raw.startswith("```"):
+            raw = re.sub(r"^```\w*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        result = json.loads(raw)
+
+        # Validate and clean numeric fields
+        for field in ["check_size_m", "pre_money_m", "post_money_m", "round_size_m",
+                       "ownership_pct", "revenue_at_investment", "arr_at_investment"]:
+            val = result.get(field)
+            if val is not None:
+                try:
+                    result[field] = float(val)
+                except (TypeError, ValueError):
+                    result[field] = None
+
+        if result.get("fund_year") is not None:
+            try:
+                result["fund_year"] = int(result["fund_year"])
+            except (TypeError, ValueError):
+                result["fund_year"] = None
+
+        # Derive missing values where possible
+        if result.get("post_money_m") and result.get("round_size_m") and not result.get("pre_money_m"):
+            result["pre_money_m"] = result["post_money_m"] - result["round_size_m"]
+        if result.get("pre_money_m") and result.get("round_size_m") and not result.get("post_money_m"):
+            result["post_money_m"] = result["pre_money_m"] + result["round_size_m"]
+        if result.get("check_size_m") and result.get("post_money_m") and not result.get("ownership_pct"):
+            result["ownership_pct"] = round(result["check_size_m"] / result["post_money_m"] * 100, 2)
+
+        result["_extraction_source"] = source_name
+        return result
+
+    except json.JSONDecodeError as e:
+        logger.warning("Deal terms extraction JSON parse failed: %s", e)
+        return {"error": f"JSON parse error: {e}", "_extraction_source": source_name}
+    except Exception as e:
+        logger.warning("Deal terms extraction failed: %s", e)
+        return {"error": str(e), "_extraction_source": source_name}

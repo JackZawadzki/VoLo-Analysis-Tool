@@ -38,7 +38,7 @@ const _GLOSSARY = {
     displaced_resource: "The carbon-intensive resource or energy source that this technology replaces (e.g., natural gas, diesel, grid electricity). Determines the baseline carbon intensity used in avoided emissions calculations.",
     volume_projections: "Projected number of units deployed per year (Y1-Y10). Combined with the carbon displacement chain to calculate annual avoided CO₂ emissions. Can be auto-filled from the financial model extraction.",
     baseline_production: "Lifetime production output per unit in the displaced resource's units. For example, annual MWh generation per MW of installed solar capacity.",
-    range_improvement: "Multiplier on baseline production reflecting the new technology's efficiency advantage. 1.0 = same output as incumbent, 1.15 = 15% more efficient.",
+    range_improvement: "CI improvement factor: how many times lower the new technology's carbon intensity is vs. conventional. E.g. 1.4 → new tech has 1/1.4 ≈ 71% of conventional CI, so 28.6% is displaced. Use 1000 for near-zero-CI technologies (solar, wind, nuclear).",
     service_life: "Expected operating lifetime per unit in years. Determines cumulative avoided emissions over the full deployment horizon.",
 
     // ── Hero Metrics (Report) ──────────────────────────────
@@ -123,6 +123,41 @@ const _GLOSSARY = {
     // ── EV at Exit Sub-sections ──────────────────────────
     ev_distribution: "Distribution of enterprise values at exit across successful Monte Carlo paths. Shows the range of plausible exit sizes — from P25 (modest) to P90 (strong) outcomes.",
     ev_buildup: "Mean-path decomposition showing how EV is constructed: exit revenue × EBITDA margin = exit EBITDA × EV/EBITDA multiple = enterprise value.",
+
+    // ── DD Financial Analysis ──────────────────────────────
+    dd_revenue_y1: "Projected revenue in the first commercial year ($M). For pre-revenue companies, this is revenue in the first year after commercial launch — use 'Time to Commercial Launch' to shift the start date.",
+    dd_revenue_cagr: "Compound Annual Growth Rate of revenue over the projection period. The model applies a decaying CAGR: growth starts at this rate and converges toward the terminal growth rate by the final year, reflecting natural market saturation.",
+    dd_proj_years: "Number of years to project the P&L forward from the first commercial year. Longer horizons capture more of the terminal value but introduce greater uncertainty. Typical range: 7-12 years.",
+    dd_custom_rev: "Override the CAGR-based revenue trajectory with specific year-by-year revenue figures from customer interviews, bottoms-up analysis, or management projections. Leave blank to use the CAGR model.",
+    dd_time_to_launch: "Years until the company begins generating meaningful commercial revenue. Accounts for product development, testing, regulatory certification, manufacturing ramp, and initial sales cycles. During this period, the company burns cash with near-zero revenue. This shifts the entire revenue model and S-curve forward in time.",
+    dd_gm_start: "Gross margin in Year 1 of commercial operations. Early-stage companies often have lower margins due to small-scale production, supplier pricing, and yield inefficiencies.",
+    dd_gm_end: "Target gross margin at maturity. As the company scales, unit economics improve through manufacturing learning curves, supply chain optimization, and volume discounts. The model linearly interpolates from start to end.",
+    dd_rd_start: "R&D spending as a percentage of revenue at the start of the projection. Early-stage companies typically invest heavily in product development relative to revenue.",
+    dd_rd_end: "Target R&D spend as a percentage of revenue at scale. Even at maturity, climate-tech companies maintain meaningful R&D for next-gen products. The model linearly converges from start to end.",
+    dd_sm_start: "Sales & Marketing as a percentage of revenue in Year 1. High initial spend reflects customer acquisition costs, channel development, and market education for new technologies.",
+    dd_sm_end: "Target S&M spend as a percentage of revenue at scale. Decreases as brand recognition, repeat customers, and channel efficiency improve.",
+    dd_ga_start: "General & Administrative costs as a percentage of revenue in Year 1. Includes executive team, finance, legal, HR. High as % of revenue early because fixed costs are spread over low revenue.",
+    dd_ga_end: "Target G&A as a percentage of revenue at scale. Fixed-cost leverage means G&A grows slower than revenue, driving operating leverage.",
+    dd_da_pct: "Depreciation & Amortization as a percentage of revenue. Reflects the capital intensity of the business — hardware/manufacturing companies have higher D&A than software.",
+    dd_exit_type: "Whether the exit valuation is based on a revenue multiple (EV/Revenue) or an EBITDA multiple (EV/EBITDA). Pre-revenue or early-revenue companies typically use revenue multiples; profitable companies use EBITDA.",
+    dd_exit_mult: "The multiple applied to the exit-year metric (Revenue or EBITDA) to calculate Enterprise Value at exit. Derived from public comparables for the sector — check the Valuation Context section of the deal report.",
+    dd_discount: "Discount rate (WACC) used for the DCF valuation. For early-stage ventures, this is typically 25-40% reflecting high execution risk, illiquidity, and small-company premiums. Decreases for later-stage, de-risked companies.",
+    dd_terminal_g: "Perpetual growth rate applied after the projection period for the terminal value calculation. Should not exceed long-run GDP growth (2-4%). Higher rates dramatically inflate the terminal value.",
+    dd_tax: "Effective corporate tax rate. Most early-stage companies have zero effective tax due to NOL carryforwards. As the company becomes profitable, taxes reduce NOPAT and free cash flow.",
+    dd_capex: "Capital expenditure as a percentage of revenue. Hardware and manufacturing businesses need 8-15%; software companies need 2-5%. Drives the gap between EBITDA and free cash flow.",
+    dd_nwc: "Net working capital requirement as a percentage of revenue. Represents cash tied up in inventory, receivables, and payables. Changes in NWC consume (or release) cash as the business grows.",
+    dd_dilution_rounds: "Number of future equity funding rounds expected between now and exit. Each round dilutes existing investors. Typical: 2-3 rounds for Seed, 1-2 for Series A, 0-1 for Series B+.",
+    dd_dilution_pct: "Dilution per future funding round as a percentage of post-money. New investors typically take 15-25% of the company in each round. Compounds multiplicatively across rounds.",
+
+    // ── DD Fundraising Timeline ──────────────────────────────
+    dd_fundraising_plan: "Model future fundraising rounds and potential bridge financing between rounds. Bridges add extra dilution (typically 5-12% via convertible notes) and extend the timeline, both of which reduce the investor's IRR.",
+    dd_round_label: "Name of the planned fundraising round (e.g., Series A, Series B). Used for display in the dilution waterfall and return calculations.",
+    dd_round_year: "Expected year (from time of investment) when this round closes. If a bridge is needed first, the actual timeline may extend by the bridge delay period.",
+    dd_round_dilution: "Percentage of the company sold to new investors in this priced round. Typical ranges: Seed 15-25%, Series A 18-25%, Series B 15-20%, Series C+ 10-18%.",
+    dd_needs_bridge: "Whether the company will need bridge financing before this round. Bridges are common when milestones take longer than expected — the company needs runway but hasn't hit metrics for the next priced round.",
+    dd_bridge_dilution: "Additional dilution from the bridge note/SAFE. Convertible bridges typically add 5-12% dilution through discount rates, valuation caps, or warrant coverage. This dilution hits existing investors BEFORE the priced round.",
+    dd_bridge_delay: "Extra time (in years) added to the fundraising timeline when a bridge is needed. Typically 0.3-1.0 years. This extends the total hold period, which directly reduces IRR even if MOIC is unchanged.",
+    dd_dilution_waterfall: "Shows how your ownership percentage changes through each fundraising event (bridges and priced rounds). Entry ownership starts at check_size / post_money, then each event multiplicatively reduces it.",
 };
 
 /**
@@ -608,11 +643,9 @@ async function doLogin() {
 }
 
 async function doRegister() {
-    console.log('doRegister called');
     const u = document.getElementById('reg-username').value.trim();
     const e = document.getElementById('reg-email').value.trim();
     const p = document.getElementById('reg-password').value;
-    console.log('doRegister values:', {u, e, pLen: p.length});
     if (!u || !e || p.length < 8) return _authError('Fill all fields (password 8+ chars)');
     try {
         const r = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, email:e, password:p})});
@@ -693,10 +726,16 @@ function wizGoStep(n) {
         s.classList.toggle('active', sn === n);
         s.classList.toggle('completed', sn < n);
     });
+    // Scroll the pipeline tab back to the top so the new step is visible
+    const _pipelineTab = document.getElementById('tab-pipeline');
+    if (_pipelineTab) _pipelineTab.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (n === 1) {
         // Clear saved inputs when starting a new deal
         _wizSavedInputs = null;
         _wizReportId = null;
+        // Show loaded-data banner if FM or extraction data is already in memory
+        _wizUpdateLoadedBanner();
     }
     if (n === 3) {
         _wizPopulateVolumes();
@@ -706,6 +745,63 @@ function wizGoStep(n) {
             wizRestoreConfig(_wizSavedInputs);
         }
     }
+}
+
+// Navigate backward to a step already visited, WITHOUT clearing any state.
+// Called by clicking completed step indicators. Only allows going back (n < _wizStep).
+function wizNavBack(n) {
+    if (n >= _wizStep || n < 1) return; // can only go back, not forward
+    _wizStep = n;
+    for (let i = 1; i <= 4; i++) {
+        const panel = document.getElementById(`wiz-step-${i}`);
+        if (panel) panel.style.display = i === n ? '' : 'none';
+    }
+    document.querySelectorAll('.wizard-step').forEach(s => {
+        const sn = parseInt(s.dataset.step);
+        s.classList.toggle('active', sn === n);
+        s.classList.toggle('completed', sn < n);
+    });
+    const _pipelineTab = document.getElementById('tab-pipeline');
+    if (_pipelineTab) _pipelineTab.scrollTop = 0;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Re-apply config if navigating back to step 3
+    if (n === 3) {
+        _wizPopulateVolumes();
+        if (_wizSavedInputs) wizRestoreConfig(_wizSavedInputs);
+    }
+    // Show loaded-data banner if navigating back to step 1
+    if (n === 1) _wizUpdateLoadedBanner();
+}
+
+// Show or hide the "data already in memory" banner on step 1
+function _wizUpdateLoadedBanner() {
+    const banner = document.getElementById('wiz-loaded-banner');
+    if (!banner) return;
+    const hasDeck = !!((_wizExtraction) && (_wizExtraction._source || _wizExtraction.name || _wizExtraction.revenue_projections));
+    const hasFm   = !!(_wizFmData && _wizFmData.has_data);
+    if (hasDeck || hasFm) {
+        const parts = [];
+        if (hasDeck) {
+            const src = _wizExtraction._source || _wizExtraction.name || 'deck';
+            parts.push(`Deck: ${src}`);
+        }
+        if (hasFm) {
+            const fm = _wizFmData;
+            const fmName = fm.model_summary?.file_name || fm.model_summary?.company_name || 'financial model';
+            parts.push(`Model: ${fmName}`);
+        }
+        document.getElementById('wiz-loaded-banner-text').textContent = `Data already loaded — ${parts.join(' · ')}`;
+        banner.style.display = 'flex';
+    } else {
+        banner.style.display = 'none';
+    }
+}
+
+// Skip upload step when data is already in memory
+function wizSkipUpload() {
+    if (!_wizExtraction && !_wizFmData) { showToast('No data in memory — please upload files.'); return; }
+    wizPopulateReview();
+    wizGoStep(2);
 }
 
 function wizLoadResources() {
@@ -746,7 +842,111 @@ async function wizLoadReport(rid) {
         if (_wizSavedInputs) wizRestoreConfig(_wizSavedInputs);
         wizRenderReport(_wizReport);
         wizGoStep(4);
+        setTimeout(() => wizRunQAReview(d.id, null), 800);
     } catch(e) { showToast('Failed to load report'); }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   QA REVIEW — auto-runs after report generation/load
+   ═══════════════════════════════════════════════════════════ */
+
+let _qaFindings = [];
+
+async function wizRunQAReview(reportId, memoMarkdown) {
+    if (!reportId) return;
+
+    // Show spinner state
+    const banner  = document.getElementById('qa-banner');
+    const summary = document.getElementById('qa-banner-summary');
+    const spinner = document.getElementById('qa-spinner');
+    const panel   = document.getElementById('qa-panel');
+    if (!banner) return;
+
+    banner.style.display = 'flex';
+    banner.className = 'qa-banner qa-scanning';
+    summary.textContent = '';
+    spinner.style.display = 'inline';
+    if (panel) panel.style.display = 'none';
+
+    try {
+        // Try to get memo text from the open memo editor if available
+        let memo = memoMarkdown || '';
+        if (!memo) {
+            const memoEl = document.querySelector('.memo-section-content');
+            if (memoEl) memo = memoEl.innerText || '';
+        }
+
+        const resp = await fetch(`/api/deal-pipeline/report/${reportId}/qa-review`, {
+            method: 'POST',
+            headers: _rvmHeaders(),
+            body: JSON.stringify({ memo_markdown: memo, run_llm: !!memo }),
+        });
+        const data = await resp.json();
+        _qaFindings = data.findings || [];
+        const s = data.summary || {};
+
+        spinner.style.display = 'none';
+
+        if (s.total === 0) {
+            banner.className = 'qa-banner qa-clean';
+            summary.innerHTML = '<span class="qa-ok-icon">&#10003;</span> No issues found — all checks passed.';
+            document.querySelector('.qa-toggle-btn') && (document.querySelector('.qa-toggle-btn').style.display = 'none');
+            return;
+        }
+
+        // Build severity summary chips
+        let chips = [];
+        if (s.errors   > 0) chips.push(`<span class="qa-chip qa-chip-error">${s.errors} error${s.errors>1?'s':''}</span>`);
+        if (s.warnings > 0) chips.push(`<span class="qa-chip qa-chip-warn">${s.warnings} warning${s.warnings>1?'s':''}</span>`);
+        if (s.infos    > 0) chips.push(`<span class="qa-chip qa-chip-info">${s.infos} note${s.infos>1?'s':''}</span>`);
+
+        banner.className = s.errors > 0 ? 'qa-banner qa-has-errors' : 'qa-banner qa-has-warnings';
+        summary.innerHTML = `QA Review: ${chips.join(' ')} across this report`;
+        const toggleBtn = document.querySelector('.qa-toggle-btn');
+        if (toggleBtn) { toggleBtn.style.display = ''; toggleBtn.textContent = 'View Findings'; }
+
+        _wizRenderQAPanel(_qaFindings);
+
+    } catch(e) {
+        spinner.style.display = 'none';
+        banner.className = 'qa-banner qa-scan-error';
+        summary.textContent = 'QA review unavailable.';
+    }
+}
+
+function wizToggleQAPanel() {
+    const panel = document.getElementById('qa-panel');
+    const btn   = document.querySelector('.qa-toggle-btn');
+    if (!panel) return;
+    const visible = panel.style.display !== 'none';
+    panel.style.display = visible ? 'none' : 'block';
+    if (btn) btn.textContent = visible ? 'View Findings' : 'Hide Findings';
+}
+
+function _wizRenderQAPanel(findings) {
+    const panel = document.getElementById('qa-panel');
+    if (!panel) return;
+
+    const _icon = sev => sev === 'error' ? '&#10007;' : sev === 'warning' ? '&#9888;' : '&#9432;';
+    const _cat  = cat => ({'number_discrepancy':'# Discrepancy','internal_consistency':'Inconsistency','logic':'Logic Check','missing_section':'Missing Data'}[cat] || cat);
+
+    const rows = findings.map(f => `
+        <div class="qa-finding qa-finding-${f.severity}">
+            <div class="qa-finding-header">
+                <span class="qa-finding-icon">${_icon(f.severity)}</span>
+                <span class="qa-finding-title">${f.title}</span>
+                <span class="qa-finding-cat">${_cat(f.category)}</span>
+                <span class="qa-finding-loc">${f.location || ''}</span>
+            </div>
+            <div class="qa-finding-detail">${f.detail}</div>
+        </div>`).join('');
+
+    panel.innerHTML = `
+        <div class="qa-panel-header">
+            <strong>QA Findings</strong>
+            <span style="color:var(--text-tertiary);font-size:0.78rem;margin-left:8px;">${findings.length} item${findings.length!==1?'s':''} — errors first</span>
+        </div>
+        ${rows}`;
 }
 
 /**
@@ -764,6 +964,12 @@ function wizRestoreConfig(inp) {
     _s('wiz-check-size', inp.check_size_millions);
     _s('wiz-pre-money', inp.pre_money_millions);
     _s('wiz-round-size', inp.round_size_m);
+    // Restore entry year; fall back to volume.commercial_launch_yr for old saved reports
+    const restoredEntryYear = inp.entry_year || inp.volume?.commercial_launch_yr;
+    if (restoredEntryYear && restoredEntryYear >= 2010 && restoredEntryYear <= 2040) {
+        _s('wiz-entry-year', restoredEntryYear);
+    }
+    _wizUpdateVolumeLabels();
 
     // Market & simulation
     _s('wiz-archetype', inp.archetype);
@@ -810,6 +1016,10 @@ function wizRestoreConfig(inp) {
     _s('wiz-mgmt-fee', inp.mgmt_fee_pct);
     _s('wiz-reserve', inp.reserve_pct);
     _s('wiz-max-conc', inp.max_concentration_pct);
+    // Restore fund vintage year (master anchor for all chart X-axes)
+    if (inp.fund_vintage_year && inp.fund_vintage_year >= 2010 && inp.fund_vintage_year <= 2040) {
+        _s('wiz-fund-vintage-year', inp.fund_vintage_year);
+    }
 
     // Founder projections (review step fields, if they exist)
     if (inp.founder_revenue_projections) {
@@ -827,7 +1037,13 @@ function wizRestoreConfig(inp) {
     _wizAutoCalcOwnership();
 
     // Store extraction & financial model data if present
-    if (inp.extraction_confidence) _wizExtraction = { confidence: inp.extraction_confidence, _source: inp.extraction_source };
+    if (inp.extraction_data) {
+        // Full extraction persisted — restore entirely so Review step shows all fields
+        _wizExtraction = inp.extraction_data;
+    } else if (inp.extraction_confidence) {
+        // Legacy reports: only confidence + source were saved
+        _wizExtraction = { confidence: inp.extraction_confidence, _source: inp.extraction_source };
+    }
     if (inp.financial_model) _wizFmData = inp.financial_model;
 }
 
@@ -857,11 +1073,13 @@ async function wizExtractAndNext() {
             const r = await fetch('/api/extract', {method: 'POST', headers, body: fd});
             let d;
             try { d = await r.json(); } catch(_) { d = {detail: 'Server error (HTTP ' + r.status + ')'}; }
-            if (r.ok && d && !d.detail) {
+            if (r.ok && d && !d.detail && !d.error) {
                 _wizExtraction = d;
                 extractionOk = true;
             } else {
-                let errMsg = (d && d.detail) ? d.detail : 'Extraction failed (HTTP ' + r.status + ')';
+                let errMsg = (d && d.detail) ? d.detail
+                           : (d && d.error)  ? d.error
+                           : 'Extraction failed (HTTP ' + r.status + ')';
                 if (errMsg.includes('ANTHROPIC_API_KEY')) {
                     errMsg = 'ANTHROPIC_API_KEY is not set. Add it to volo-engine/.env and restart the server.';
                 } else if (r.status === 401) {
@@ -875,7 +1093,11 @@ async function wizExtractAndNext() {
         }
 
         if (modelFile) {
-            status.textContent = 'Extracting financial model (this may take 20-30 seconds)...';
+            const modelExt = ('.' + modelFile.name.split('.').pop()).toLowerCase();
+            const isVision = _IMAGE_EXTS.has(modelExt);
+            status.textContent = isVision
+                ? '✦ Vision AI: reading financial model screenshot (15-25 seconds)...'
+                : 'Extracting financial model (this may take 20-30 seconds)...';
             const mfd = new FormData();
             mfd.append('file', modelFile);
             const mHeaders = {};
@@ -1039,6 +1261,26 @@ function _wizMergeFmIntoExtraction() {
     const fin = _wizFmData.financials;
     const allYears = _wizFmData.fiscal_years || [];
     const years = allYears.filter(y => y >= 2020 && y <= 2045);
+
+    // Auto-suggest Investment Year from FM's first fiscal year.
+    // Rule: only pull entry_year EARLIER (toward current year), never push it further into
+    // the future.  A company's FM may start in 2029 (commercial launch) while VoLo invests
+    // in 2026 — we must not overwrite a valid near-term entry_year with a far-future FM start.
+    const entryYrEl = document.getElementById('wiz-entry-year');
+    if (entryYrEl && years.length) {
+        const currentYear = new Date().getFullYear();
+        const firstFutureYear = years.find(y => y >= currentYear) || years[years.length - 1];
+        const existingEntry = parseInt(entryYrEl.value || 0);
+        const entryIsValid = existingEntry >= 2010 && existingEntry <= 2040;
+        // Only auto-set if:
+        //  (a) no valid entry year is set yet, OR
+        //  (b) FM's first year is EARLIER than the currently set entry year
+        //      (meaning the FM covers earlier history — pull the anchor back, never forward)
+        if (firstFutureYear && (!entryIsValid || firstFutureYear < existingEntry)) {
+            entryYrEl.value = firstFutureYear;
+            _wizUpdateVolumeLabels();
+        }
+    }
 
     if ((!d.revenue_projections || !d.revenue_projections.length) && fin.revenue && years.length) {
         d.revenue_projections = years.map(y => {
@@ -1319,6 +1561,32 @@ function _wizPopulateVolumes() {
         inp.placeholder = `Y${i + 1}`;
         row.appendChild(inp);
     }
+    // After building inputs, apply calendar year labels
+    _wizUpdateVolumeLabels();
+}
+
+function _wizGetEntryYear() {
+    const v = parseInt(document.getElementById('wiz-entry-year')?.value || 0);
+    return (v >= 2010 && v <= 2040) ? v : new Date().getFullYear();
+}
+
+function _wizGetFundVintageYear() {
+    const v = parseInt(document.getElementById('wiz-fund-vintage-year')?.value || 0);
+    return (v >= 2010 && v <= 2040) ? v : _wizGetEntryYear();
+}
+
+function _wizUpdateVolumeLabels() {
+    // Re-label volume input placeholders with actual calendar years
+    const startYear = _wizGetEntryYear();
+    for (let i = 0; i < 10; i++) {
+        const el = document.getElementById(`wiz-vol-${i}`);
+        if (el) el.placeholder = String(startYear + i);
+    }
+    // Update the year-range hint next to the section label
+    const lbl = document.getElementById('wiz-volume-unit-label');
+    if (lbl && !lbl.dataset.customText) {
+        lbl.textContent = `(${startYear}–${startYear + 9})`;
+    }
 }
 
 function _wizAutoCalcOwnership() {
@@ -1332,24 +1600,156 @@ function _wizAutoCalcOwnership() {
     if (owEl) owEl.textContent = own + '%';
 }
 
+let _wizPriorCount = 1;  // how many prior rounds are active
+
+function _wizInvestTypeChanged() {
+    const sel = document.getElementById('wiz-investment-type');
+    const panel = document.getElementById('wiz-followon-panel');
+    if (panel) panel.style.display = sel?.value === 'followon' ? 'block' : 'none';
+    _wizUpdateExposure();
+}
+
+function _wizSetPriorCount(n) {
+    _wizPriorCount = n;
+    const btn1 = document.getElementById('wiz-prior-btn-1');
+    const btn2 = document.getElementById('wiz-prior-btn-2');
+    if (btn1) btn1.classList.toggle('btn-prior-active', n === 1);
+    if (btn2) btn2.classList.toggle('btn-prior-active', n === 2);
+    const card2 = document.getElementById('wiz-prior-card-2');
+    if (card2) card2.style.display = n >= 2 ? '' : 'none';
+    _wizUpdateExposure();
+}
+
+function _wizPriorTypeChanged(idx) {
+    const type = document.getElementById(`wiz-prior-${idx}-type`)?.value || 'priced';
+    const pricedDiv = document.getElementById(`wiz-prior-${idx}-priced`);
+    const convDiv   = document.getElementById(`wiz-prior-${idx}-conv`);
+    if (pricedDiv) pricedDiv.style.display = type === 'priced' ? '' : 'none';
+    if (convDiv)   convDiv.style.display   = type !== 'priced' ? '' : 'none';
+    _wizUpdateExposure();
+}
+
+function _wizConvOwnership(checkM, capM, discPct, preMoney) {
+    /* Returns ownership fraction for a convertible at the current priced round.
+       Investor gets the more-favourable (lower) price. */
+    const capPre  = (capM  > 0) ? capM  : Infinity;
+    const discPre = (discPct > 0) ? preMoney * (1 - discPct / 100) : Infinity;
+    let effPre = Math.min(capPre, discPre);
+    if (!isFinite(effPre) || effPre <= 0) effPre = preMoney;
+    return effPre > 0 ? checkM / effPre : 0;
+}
+
+function _wizUpdateExposure() {
+    const preMoney = parseFloat(document.getElementById('wiz-pre-money')?.value || 0);
+    let totalPrior = 0;
+
+    for (let i = 1; i <= _wizPriorCount; i++) {
+        const check   = parseFloat(document.getElementById(`wiz-prior-${i}-check`)?.value || 0);
+        const type    = document.getElementById(`wiz-prior-${i}-type`)?.value || 'priced';
+        const preview = document.getElementById(`wiz-prior-${i}-preview`);
+
+        if (check > 0) {
+            totalPrior += check;
+            let ownershipPct = null;
+
+            if (type === 'priced') {
+                const pre = parseFloat(document.getElementById(`wiz-prior-${i}-premoney`)?.value || 0);
+                const rnd = parseFloat(document.getElementById(`wiz-prior-${i}-roundsize`)?.value || 0);
+                if (pre > 0) {
+                    const post = pre + (rnd > 0 ? rnd : check);
+                    ownershipPct = (check / post * 100).toFixed(1);
+                    if (preview) {
+                        preview.textContent = `→ ${ownershipPct}% at entry`;
+                        preview.style.display = '';
+                    }
+                }
+            } else if (preMoney > 0) {
+                const cap  = parseFloat(document.getElementById(`wiz-prior-${i}-cap`)?.value  || 0) || 0;
+                const disc = parseFloat(document.getElementById(`wiz-prior-${i}-discount`)?.value || 0) || 0;
+                ownershipPct = (_wizConvOwnership(check, cap, disc, preMoney) * 100).toFixed(1);
+                const termStr = cap && disc ? `cap $${cap}M / ${disc}% disc`
+                              : cap         ? `cap $${cap}M`
+                              : disc        ? `${disc}% disc`
+                              : 'face value';
+                if (preview) {
+                    preview.textContent = `→ ${ownershipPct}% at current round (${termStr})`;
+                    preview.style.display = '';
+                }
+            }
+        } else if (preview) {
+            preview.style.display = 'none';
+        }
+    }
+
+    const currentCheck = parseFloat(document.getElementById('wiz-check-size')?.value || 0);
+    const totalExp     = totalPrior + currentCheck;
+    const summaryEl    = document.getElementById('wiz-exposure-summary');
+    if (summaryEl) summaryEl.style.display = totalPrior > 0 ? '' : 'none';
+    const priorEl   = document.getElementById('wiz-prior-total');
+    const currEl    = document.getElementById('wiz-current-total');
+    const totalEl   = document.getElementById('wiz-total-exp');
+    if (priorEl)   priorEl.textContent   = totalPrior   > 0 ? `$${totalPrior.toFixed(2)}M`   : '—';
+    if (currEl)    currEl.textContent    = currentCheck > 0 ? `$${currentCheck.toFixed(2)}M`  : '—';
+    if (totalEl)   totalEl.textContent   = totalExp     > 0 ? `$${totalExp.toFixed(2)}M`      : '—';
+}
+
+async function _wizExtractDealTerms() {
+    const btn = document.getElementById('wiz-extract-terms-btn');
+    const status = document.getElementById('wiz-extract-terms-status');
+    const sessionId = _memo?.sessionId;
+    if (!sessionId) {
+        if (status) status.textContent = 'Upload a prior IC memo in the Investment Memo tab first.';
+        return;
+    }
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = 'Extracting deal terms...';
+    try {
+        const r = await fetch(`/api/memo/documents/extract-deal-terms?session_id=${sessionId}`, {
+            method: 'POST', headers: _rvmHeaders()
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Extraction failed');
+
+        // Fill in form fields from extracted terms
+        // Populate Prior Investment 1 fields
+        if (d.check_size_m) document.getElementById('wiz-prior-1-check').value = d.check_size_m;
+        if (d.pre_money_m)  document.getElementById('wiz-prior-1-premoney').value = d.pre_money_m;
+        if (d.round_size_m) document.getElementById('wiz-prior-1-roundsize').value = d.round_size_m;
+        if (d.entry_stage)  document.getElementById('wiz-prior-1-stage').value = d.entry_stage;
+        if (d.fund_year)    document.getElementById('wiz-prior-1-year').value = d.fund_year;
+        _wizUpdateExposure();
+
+        const conf = d.confidence?.overall ? ` (${(d.confidence.overall * 100).toFixed(0)}% confidence)` : '';
+        if (status) status.textContent = `Extracted from ${d._source_documents?.join(', ') || 'memo'}${conf}`;
+        if (status) status.style.color = '#5B7744';
+    } catch (e) {
+        if (status) { status.textContent = e.message; status.style.color = '#dc2626'; }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 const _CARBON_DEFAULTS = {
-    utility_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1500, range_improvement:1.15, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
-    commercial_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1200, range_improvement:1.10, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
-    residential_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1100, range_improvement:1.05, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
-    onshore_wind: {displaced_resource:'US electricity', baseline_lifetime_prod:2500, range_improvement:1.0, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:20},
-    offshore_wind: {displaced_resource:'Global electricity', baseline_lifetime_prod:3800, range_improvement:1.0, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
-    geothermal: {displaced_resource:'US electricity', baseline_lifetime_prod:7000, range_improvement:1.0, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:30},
-    battery_storage_utility: {displaced_resource:'Natural Gas (CCGT)', baseline_lifetime_prod:2000, range_improvement:0.85, unit_definition:'MWh storage capacity', specific_production_units:'MWh displaced/MWh/year', service_life:15},
-    nuclear_smr: {displaced_resource:'Global electricity', baseline_lifetime_prod:8000, range_improvement:1.0, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:40},
-    ev_electrification: {displaced_resource:'Gasoline', baseline_lifetime_prod:12000, range_improvement:0.85, unit_definition:'vehicles', specific_production_units:'L gasoline displaced/vehicle/year', service_life:12},
-    climate_software: {displaced_resource:'US electricity', baseline_lifetime_prod:50, range_improvement:1.0, unit_definition:'enterprise customers', specific_production_units:'MWh saved/customer/year', service_life:10},
-    industrial_decarb: {displaced_resource:'Natural Gas', baseline_lifetime_prod:500, range_improvement:1.0, unit_definition:'industrial installations', specific_production_units:'MMBtu displaced/unit/year', service_life:15},
-    ai_ml: {displaced_resource:'US electricity', baseline_lifetime_prod:10, range_improvement:1.0, unit_definition:'enterprise deployments', specific_production_units:'MWh optimized/deployment/year', service_life:5},
-    base_capital_intensive: {displaced_resource:'Natural Gas', baseline_lifetime_prod:500, range_improvement:1.0, unit_definition:'industrial installations', specific_production_units:'MMBtu displaced/unit/year', service_life:15},
-    base_software: {displaced_resource:'US electricity', baseline_lifetime_prod:50, range_improvement:1.0, unit_definition:'enterprise customers', specific_production_units:'MWh saved/customer/year', service_life:10},
-    base_sw_hw_hybrid: {displaced_resource:'Natural Gas (CCGT)', baseline_lifetime_prod:2000, range_improvement:0.85, unit_definition:'MWh storage capacity', specific_production_units:'MWh displaced/MWh/year', service_life:15},
-    base_hard_tech: {displaced_resource:'Global electricity', baseline_lifetime_prod:8000, range_improvement:1.0, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:40},
-    custom: {displaced_resource:'US electricity', baseline_lifetime_prod:100, range_improvement:1.0, unit_definition:'units', specific_production_units:'', service_life:10},
+    // range_improvement = CI improvement factor (how many times lower the new tech's CI is vs conventional).
+    // Displacement fraction = 1 − 1/factor.  Use 1000 for near-zero-CI techs (solar, wind, nuclear).
+    // Efficiency gains >1× absorbed into baseline_lifetime_prod (e.g. solar 1.15× → baseline×1.15).
+    utility_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1725, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
+    commercial_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1320, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
+    residential_solar: {displaced_resource:'US electricity', baseline_lifetime_prod:1155, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
+    onshore_wind: {displaced_resource:'US electricity', baseline_lifetime_prod:2500, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:20},
+    offshore_wind: {displaced_resource:'Global electricity', baseline_lifetime_prod:3800, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:25},
+    geothermal: {displaced_resource:'US electricity', baseline_lifetime_prod:7000, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:30},
+    battery_storage_utility: {displaced_resource:'Natural Gas (CCGT)', baseline_lifetime_prod:2000, range_improvement:6.667, unit_definition:'MWh storage capacity', specific_production_units:'MWh displaced/MWh/year', service_life:15},
+    nuclear_smr: {displaced_resource:'Global electricity', baseline_lifetime_prod:8000, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:40},
+    ev_electrification: {displaced_resource:'Gasoline', baseline_lifetime_prod:12000, range_improvement:6.667, unit_definition:'vehicles', specific_production_units:'L gasoline displaced/vehicle/year', service_life:12},
+    climate_software: {displaced_resource:'US electricity', baseline_lifetime_prod:50, range_improvement:1000, unit_definition:'enterprise customers', specific_production_units:'MWh saved/customer/year', service_life:10},
+    industrial_decarb: {displaced_resource:'Natural Gas', baseline_lifetime_prod:500, range_improvement:1000, unit_definition:'industrial installations', specific_production_units:'MMBtu displaced/unit/year', service_life:15},
+    ai_ml: {displaced_resource:'US electricity', baseline_lifetime_prod:10, range_improvement:1000, unit_definition:'enterprise deployments', specific_production_units:'MWh optimized/deployment/year', service_life:5},
+    base_capital_intensive: {displaced_resource:'Natural Gas', baseline_lifetime_prod:500, range_improvement:1000, unit_definition:'industrial installations', specific_production_units:'MMBtu displaced/unit/year', service_life:15},
+    base_software: {displaced_resource:'US electricity', baseline_lifetime_prod:50, range_improvement:1000, unit_definition:'enterprise customers', specific_production_units:'MWh saved/customer/year', service_life:10},
+    base_sw_hw_hybrid: {displaced_resource:'Natural Gas (CCGT)', baseline_lifetime_prod:2000, range_improvement:6.667, unit_definition:'MWh storage capacity', specific_production_units:'MWh displaced/MWh/year', service_life:15},
+    base_hard_tech: {displaced_resource:'Global electricity', baseline_lifetime_prod:8000, range_improvement:1000, unit_definition:'MW installed capacity', specific_production_units:'MWh/MW/year', service_life:40},
+    custom: {displaced_resource:'US electricity', baseline_lifetime_prod:100, range_improvement:1.4, unit_definition:'units', specific_production_units:'', service_life:10},
 };
 
 function _wizOnArchetypeChange() {
@@ -1457,9 +1857,11 @@ async function wizRunPipeline() {
         exit_multiple_low: multLow ? parseFloat(multLow) : null,
         exit_multiple_high: multHigh ? parseFloat(multHigh) : null,
         n_simulations: 5000,
+        entry_year: _wizGetEntryYear(),
+        fund_vintage_year: _wizGetFundVintageYear(),
         volume: {
             year_volumes: vols,
-            commercial_launch_yr: 2024,
+            commercial_launch_yr: _wizGetEntryYear(),
             unit_definition: document.getElementById('wiz-unit-definition')?.value || '',
             unit_service_life_yrs: parseInt(document.getElementById('wiz-service-life')?.value || 10),
         },
@@ -1485,12 +1887,46 @@ async function wizRunPipeline() {
         } : null,
         extraction_source: _wizExtraction?._source || null,
         extraction_confidence: _wizExtraction?.confidence || null,
+        extraction_data: _wizExtraction ? ((() => {
+            // Persist full extraction object so deck/FM data survives report reload
+            try { return JSON.parse(JSON.stringify(_wizExtraction)); } catch(_) { return null; }
+        })()) : null,
         fund_size_m: parseFloat(document.getElementById('wiz-fund-size')?.value || 135),
         n_deals: parseInt(document.getElementById('wiz-n-deals')?.value || 22),
         mgmt_fee_pct: parseFloat(document.getElementById('wiz-mgmt-fee')?.value || 2),
         reserve_pct: parseFloat(document.getElementById('wiz-reserve')?.value || 45),
         max_concentration_pct: parseFloat(document.getElementById('wiz-max-conc')?.value || 15),
         round_size_m: parseFloat(document.getElementById('wiz-round-size')?.value || 0) || null,
+        // Follow-on optimization parameters
+        investment_type: document.getElementById('wiz-investment-type')?.value || 'first',
+        followon_round_size_m_actual: parseFloat(document.getElementById('wiz-fo-round-size')?.value || 0) || null,
+        followon_fund_year: parseInt(document.getElementById('wiz-fo-fund-year')?.value || 0) || null,
+        prior_investments: (() => {
+            const invType = document.getElementById('wiz-investment-type')?.value;
+            if (invType !== 'followon') return null;
+            const items = [];
+            for (let i = 1; i <= _wizPriorCount; i++) {
+                const check = parseFloat(document.getElementById(`wiz-prior-${i}-check`)?.value || 0);
+                if (!check || check <= 0) continue;
+                const type  = document.getElementById(`wiz-prior-${i}-type`)?.value || 'priced';
+                const stage = document.getElementById(`wiz-prior-${i}-stage`)?.value || 'Seed';
+                const year  = parseInt(document.getElementById(`wiz-prior-${i}-year`)?.value || 1);
+                const inv   = { type, check_m: check, stage, year };
+                if (type === 'priced') {
+                    const pre = parseFloat(document.getElementById(`wiz-prior-${i}-premoney`)?.value || 0);
+                    const rnd = parseFloat(document.getElementById(`wiz-prior-${i}-roundsize`)?.value || 0);
+                    inv.pre_money_m  = pre  > 0 ? pre  : null;
+                    inv.round_size_m = rnd  > 0 ? rnd  : null;
+                } else {
+                    const cap  = parseFloat(document.getElementById(`wiz-prior-${i}-cap`)?.value  || 0);
+                    const disc = parseFloat(document.getElementById(`wiz-prior-${i}-discount`)?.value || 0);
+                    inv.cap_m        = cap  > 0 ? cap  : null;
+                    inv.discount_pct = disc > 0 ? disc : null;
+                }
+                items.push(inv);
+            }
+            return items.length > 0 ? items : null;
+        })(),
         save: true,
     };
 
@@ -1509,6 +1945,8 @@ async function wizRunPipeline() {
         wizGoStep(4);
         wizLoadReports();
         showToast('Deal report generated');
+        // Auto-run QA review after a short delay so the report renders first
+        setTimeout(() => wizRunQAReview(d.report_id, null), 800);
     } catch(e) {
         status.className = 'wiz-status error';
         status.textContent = e.message;
@@ -1660,7 +2098,8 @@ function wizRenderReport(r) {
         <table class="rpt-table"><thead><tr><th>Year</th><th>Founder ($M) ${infoTip('founder_projections')}</th><th>Sim Median ($M) ${infoTip('sim_median')}</th><th>Sim P25 ${infoTip('sim_p25')}</th><th>Sim P75 ${infoTip('sim_p75')}</th><th>Divergence ${infoTip('divergence')}</th><th>In Band ${infoTip('in_band')}</th></tr></thead><tbody>`;
         (fComp.revenue.year_by_year || []).forEach(y => {
             const cls = y.in_band ? '' : (y.divergence_pct > 0 ? ' class="rpt-above"' : ' class="rpt-below"');
-            html += `<tr${cls}><td>Y${y.year}</td><td class="rpt-num">${fmt(y.founder,1)}</td><td class="rpt-num">${fmt(y.simulated_median,1)}</td><td class="rpt-num">${fmt(y.simulated_p25,1)}</td><td class="rpt-num">${fmt(y.simulated_p75,1)}</td><td class="rpt-num">${y.divergence_pct > 0 ? '+' : ''}${fmt(y.divergence_pct,1)}%</td><td>${y.in_band ? 'Yes' : 'No'}</td></tr>`;
+            const yearLbl = y.calendar_year || `Y${y.year}`;
+            html += `<tr${cls}><td>${yearLbl}</td><td class="rpt-num">${fmt(y.founder,1)}</td><td class="rpt-num">${fmt(y.simulated_median,1)}</td><td class="rpt-num">${fmt(y.simulated_p25,1)}</td><td class="rpt-num">${fmt(y.simulated_p75,1)}</td><td class="rpt-num">${y.divergence_pct > 0 ? '+' : ''}${fmt(y.divergence_pct,1)}%</td><td>${y.in_band ? 'Yes' : 'No'}</td></tr>`;
         });
         html += '</tbody></table>';
     }
@@ -2228,31 +2667,56 @@ function _wizRenderCharts(r) {
         if (ctxRev) {
             const med = revTraj.median || revTraj.p50 || [];
             const n = med.length;
-            const labels = Array.from({length:n}, (_,i) => `Y${i}`);
+            // Anchor X-axis to fund_vintage_year (Year 1 of fund); pad MC data with nulls for deal_offset_years
+            const entryYr = r.deal_overview?.entry_year || new Date().getFullYear();
+            const fundVintageYr = r.deal_overview?.fund_vintage_year || entryYr;
+            const dealOffset = r.deal_overview?.deal_offset_years || 0;
+            const totalN = dealOffset + n;
+            const labels = Array.from({length: totalN}, (_, i) => String(fundVintageYr + i));
+            // Helper: prepend dealOffset nulls to an MC array
+            const padMC = arr => arr ? [...new Array(dealOffset).fill(null), ...arr] : null;
             const datasets = [];
-            if (revTraj.p90) datasets.push({label:'P90',data:revTraj.p90,borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:true,pointRadius:0,order:6});
-            if (revTraj.p75) datasets.push({label:'P75',data:revTraj.p75,borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:true,pointRadius:0,borderWidth:1,order:5});
-            datasets.push({label:'Sim Median',data:med,borderColor:BLU,fill:false,pointRadius:0,borderWidth:2.5,tension:0.3,order:2});
-            if (revTraj.p25) datasets.push({label:'P25',data:revTraj.p25,borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:'-1',pointRadius:0,borderWidth:1,order:4});
-            if (revTraj.p10) datasets.push({label:'P10',data:revTraj.p10,borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:'-1',pointRadius:0,order:6});
+            if (revTraj.p90) datasets.push({label:'P90',data:padMC(revTraj.p90),borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:true,pointRadius:0,order:6});
+            if (revTraj.p75) datasets.push({label:'P75',data:padMC(revTraj.p75),borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:true,pointRadius:0,borderWidth:1,order:5});
+            datasets.push({label:'Sim Median',data:padMC(med),borderColor:BLU,fill:false,pointRadius:0,borderWidth:2.5,tension:0.3,order:2});
+            if (revTraj.p25) datasets.push({label:'P25',data:padMC(revTraj.p25),borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:'-1',pointRadius:0,borderWidth:1,order:4});
+            if (revTraj.p10) datasets.push({label:'P10',data:padMC(revTraj.p10),borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:'-1',pointRadius:0,order:6});
 
             if (fComp.has_data && fComp.revenue?.year_by_year?.length) {
-                const founderData = new Array(n).fill(null);
-                fComp.revenue.year_by_year.forEach(y => { if (y.year < n) founderData[y.year] = y.founder; });
+                // Authoritative calendar years from r.financial_model.fiscal_years (same source as FM summary table)
+                const _rptFm = r.financial_model || {};
+                const _rptFmFiscalYrs = (_rptFm.has_data && _rptFm.fiscal_years?.length)
+                    ? _rptFm.fiscal_years.filter(y => !entryYr || y >= entryYr)
+                    : null;
+                const founderData = new Array(totalN).fill(null);
+                fComp.revenue.year_by_year.forEach((y, i) => {
+                    const calYr = (_rptFmFiscalYrs && i < _rptFmFiscalYrs.length)
+                        ? _rptFmFiscalYrs[i]
+                        : (y.calendar_year || (entryYr + i));
+                    const t = calYr - fundVintageYr;
+                    if (t >= 0 && t < totalN) founderData[t] = y.founder;
+                });
                 datasets.push({label:'Founder Projection (Base)',data:founderData,borderColor:'#dc2626',backgroundColor:'#dc2626',fill:false,pointRadius:5,pointStyle:'circle',borderWidth:3,tension:0.2,order:1});
             }
 
             const scenarioRev = fComp.scenario_revenue || {};
+            const scStartYr = fComp.scenario_start_year || entryYr;
             if (scenarioRev.bear) {
-                const bearData = new Array(n).fill(null);
-                scenarioRev.bear.forEach((v, i) => { if (i < n && v) bearData[i] = v; });
+                const bearData = new Array(totalN).fill(null);
+                scenarioRev.bear.forEach((v, i) => {
+                    const t = (scStartYr - fundVintageYr) + i;
+                    if (t >= 0 && t < totalN && v) bearData[t] = v;
+                });
                 if (bearData.some(v => v != null)) {
                     datasets.push({label:'Bear Case',data:bearData,borderColor:'#dc3545',backgroundColor:'transparent',fill:false,pointRadius:3,pointStyle:'triangle',borderWidth:2,borderDash:[6,3],tension:0.2,order:1});
                 }
             }
             if (scenarioRev.bull) {
-                const bullData = new Array(n).fill(null);
-                scenarioRev.bull.forEach((v, i) => { if (i < n && v) bullData[i] = v; });
+                const bullData = new Array(totalN).fill(null);
+                scenarioRev.bull.forEach((v, i) => {
+                    const t = (scStartYr - fundVintageYr) + i;
+                    if (t >= 0 && t < totalN && v) bullData[t] = v;
+                });
                 if (bullData.some(v => v != null)) {
                     datasets.push({label:'Bull Case',data:bullData,borderColor:'#007bff',backgroundColor:'transparent',fill:false,pointRadius:3,pointStyle:'triangle',borderWidth:2,borderDash:[6,3],tension:0.2,order:1});
                 }
@@ -2263,7 +2727,7 @@ function _wizRenderCharts(r) {
                 options: chartOpts({
                     plugins:{legend:{position:'bottom',labels:{font:chartFont,usePointStyle:true,filter:it=>!['P10','P90'].includes(it.text)}}},
                     scales:{
-                        x:{title:{display:true,text:'Years from Investment',font:chartFont},ticks:{font:chartFont}},
+                        x:{title:{display:true,text:'Calendar Year',font:chartFont},ticks:{font:chartFont,maxRotation:45,autoSkip:true,maxTicksLimit:10}},
                         y:{title:{display:true,text:'Revenue ($M)',font:chartFont},beginAtZero:true,ticks:{font:chartFont}}
                     }
                 })
@@ -2343,19 +2807,28 @@ function _wizRenderCharts(r) {
     if (ci.annual_operating?.length) {
         const ctx5 = document.getElementById('rpt-carbon-chart');
         if (ctx5) {
-            const labels = ci.annual_operating.map((_, i) => `Y${i+1}`);
+            // Anchor carbon chart to fund_vintage_year with null-padding (same as revenue cone and memo chart)
+            const _rptCarbonEntryYr = r.deal_overview?.entry_year || new Date().getFullYear();
+            const _rptCarbonFundYr  = r.deal_overview?.fund_vintage_year || _rptCarbonEntryYr;
+            const _rptCarbonLaunchYr = carbon.carbon_inputs?.commercial_launch_yr || _rptCarbonEntryYr;
+            const _rptCarbonOff = Math.max(0, _rptCarbonLaunchYr - _rptCarbonFundYr);
+            const _rptOpArr = ci.annual_operating || [];
+            const _rptEmbArr = ci.annual_embodied || [];
+            const _rptTotalLen = _rptCarbonOff + _rptOpArr.length;
+            const labels = Array.from({length: _rptTotalLen}, (_, i) => String(_rptCarbonFundYr + i));
+            const _rptPadC = arr => arr ? [...new Array(_rptCarbonOff).fill(null), ...arr] : [];
             _wizReportCharts.carbon = new Chart(ctx5, {
                 type: 'bar',
                 data: {
                     labels,
                     datasets: [
-                        {label: 'Operating', data: ci.annual_operating, backgroundColor: _c(34,87,122,0.75), borderRadius: 3},
-                        {label: 'Embodied', data: ci.annual_embodied || [], backgroundColor: _c(163,190,140,0.75), borderRadius: 3},
+                        {label: 'Operating', data: _rptPadC(_rptOpArr), backgroundColor: _c(34,87,122,0.75), borderRadius: 3},
+                        {label: 'Embodied', data: _rptPadC(_rptEmbArr), backgroundColor: _c(163,190,140,0.75), borderRadius: 3},
                     ]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    scales: {x: {stacked: true, ticks: {font: chartFont}}, y: {stacked: true, title: {display: true, text: 'tCO2', font: chartFont}}},
+                    scales: {x: {stacked: true, ticks: {font: chartFont, maxRotation: 45, autoSkip: true, maxTicksLimit: 12}}, y: {stacked: true, title: {display: true, text: 'tCO2', font: chartFont}}},
                     plugins: {legend: {position: 'top', labels: {font: chartFont}}}
                 }
             });
@@ -2563,7 +3036,7 @@ async function wizUploadPortfolio() {
         try {
             const r = await fetch('/api/deal-pipeline/upload-portfolio', {
                 method: 'POST',
-                headers: {'Authorization': `Bearer ${localStorage.getItem('volo_token')}`},
+                headers: {'Authorization': `Bearer ${localStorage.getItem('rvm_token')}`},
                 body: fd,
             });
             const data = await r.json();
@@ -2586,14 +3059,36 @@ function showToast(msg) {
 }
 
 // File input display
+const _IMAGE_EXTS = new Set(['.png','.jpg','.jpeg','.webp']);
 ['wiz-deck-file', 'wiz-model-file'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.addEventListener('change', () => {
+    if (!el) return;
+    el.addEventListener('change', () => {
         const nameEl = document.getElementById(id.replace('-file', '-name'));
-        const zone = document.getElementById(id.replace('-file', '-zone'));
-        if (el.files.length) {
-            if (nameEl) nameEl.textContent = el.files[0].name;
-            if (zone) zone.classList.add('has-file');
+        const zone   = document.getElementById(id.replace('-file', '-zone'));
+        if (!el.files.length) return;
+        const file = el.files[0];
+        const ext  = ('.' + file.name.split('.').pop()).toLowerCase();
+        if (nameEl) nameEl.textContent = file.name;
+        if (zone)   zone.classList.add('has-file');
+
+        // Image-specific: show thumbnail + Vision AI badge (model dropzone only)
+        if (id === 'wiz-model-file' && _IMAGE_EXTS.has(ext) && zone) {
+            zone.querySelectorAll('.wiz-img-preview, .wiz-vision-badge').forEach(e => e.remove());
+            const reader = new FileReader();
+            reader.onload = ev => {
+                const img = document.createElement('img');
+                img.src = ev.target.result;
+                img.className = 'wiz-img-preview';
+                img.style.cssText = 'max-height:90px;max-width:100%;margin-top:6px;border-radius:4px;object-fit:contain;display:block';
+                zone.appendChild(img);
+            };
+            reader.readAsDataURL(file);
+            const badge = document.createElement('span');
+            badge.className = 'wiz-vision-badge';
+            badge.textContent = '✦ Vision AI extraction';
+            badge.style.cssText = 'display:inline-block;margin-top:6px;padding:2px 9px;background:#f0f4ef;color:#3B5249;border:1px solid #5B7744;border-radius:12px;font-size:11px;font-weight:600';
+            zone.appendChild(badge);
         }
     });
 });
@@ -5038,7 +5533,7 @@ document.addEventListener('DOMContentLoaded', () => {
    ═══════════════════════════════════════════════════════════════════════════════ */
 
 const _memo = {
-    sessionId: '',
+    sessionId: localStorage.getItem('rvm_memo_session') || '',
     documents: [],
     links: [],
     templates: [],
@@ -5058,6 +5553,79 @@ function memoToggleSection(id) {
     el.style.display = open ? 'none' : 'block';
     const chev = document.getElementById(id + '-chev');
     if (chev) chev.innerHTML = open ? '&#9654;' : '&#9660;';
+}
+
+// ── Investment Type Toggle (First vs Follow-on) ─────────────────────────────
+function memoInvTypeChanged() {
+    const val = document.querySelector('input[name="memo-inv-type"]:checked')?.value || 'first';
+    const panel = document.getElementById('memo-followon-panel');
+    if (panel) panel.style.display = val === 'followon' ? 'block' : 'none';
+}
+
+// Follow-on file upload handlers
+function _memoFollowonInit() {
+    // Original IC Memo upload
+    const memoDZ = document.getElementById('memo-followon-memo-dropzone');
+    const memoIn = document.getElementById('memo-followon-memo-input');
+    if (memoDZ && memoIn && !memoDZ._initDone) {
+        memoDZ._initDone = true;
+        memoDZ.addEventListener('click', (e) => { if (e.target.tagName !== 'LABEL') memoIn.click(); });
+        memoDZ.addEventListener('dragover', (e) => { e.preventDefault(); memoDZ.classList.add('dragover'); });
+        memoDZ.addEventListener('dragleave', () => memoDZ.classList.remove('dragover'));
+        memoDZ.addEventListener('drop', (e) => { e.preventDefault(); memoDZ.classList.remove('dragover'); _memoFollowonUpload(e.dataTransfer.files, 'prior_ic_memo'); });
+        memoIn.addEventListener('change', () => { _memoFollowonUpload(memoIn.files, 'prior_ic_memo'); memoIn.value = ''; });
+    }
+    // Board Reports upload
+    const boardDZ = document.getElementById('memo-followon-board-dropzone');
+    const boardIn = document.getElementById('memo-followon-board-input');
+    if (boardDZ && boardIn && !boardDZ._initDone) {
+        boardDZ._initDone = true;
+        boardDZ.addEventListener('click', (e) => { if (e.target.tagName !== 'LABEL') boardIn.click(); });
+        boardDZ.addEventListener('dragover', (e) => { e.preventDefault(); boardDZ.classList.add('dragover'); });
+        boardDZ.addEventListener('dragleave', () => boardDZ.classList.remove('dragover'));
+        boardDZ.addEventListener('drop', (e) => { e.preventDefault(); boardDZ.classList.remove('dragover'); _memoFollowonUpload(e.dataTransfer.files, 'board_report'); });
+        boardIn.addEventListener('change', () => { _memoFollowonUpload(boardIn.files, 'board_report'); boardIn.value = ''; });
+    }
+}
+
+async function _memoFollowonUpload(files, category) {
+    if (!files || !files.length) return;
+    if (!_memo.sessionId) _memo.sessionId = crypto.randomUUID().replace(/-/g,'').substring(0,12);
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    fd.append('session_id', _memo.sessionId);
+    fd.append('category', category);
+    try {
+        const r = await fetch('/api/memo/documents/upload', { method:'POST', headers: { 'Authorization': `Bearer ${_rvmToken}` }, body: fd });
+        if (!r.ok) { const d = await r.json(); alert(d.detail || 'Upload failed'); return; }
+        const data = await r.json();
+        _memo.sessionId = data.session_id;
+        localStorage.setItem('rvm_memo_session', _memo.sessionId);
+        _memoFollowonRefreshLists();
+    } catch (e) { alert('Upload error: ' + e.message); }
+}
+
+async function _memoFollowonRefreshLists() {
+    if (!_memo.sessionId) return;
+    try {
+        const r = await fetch(`/api/memo/documents/${_memo.sessionId}`, { headers: _rvmHeaders() });
+        if (!r.ok) return;
+        const docs = await r.json();
+        const memoList = document.getElementById('memo-followon-memo-list');
+        const boardList = document.getElementById('memo-followon-board-list');
+        if (memoList) memoList.innerHTML = docs.filter(d => d.category === 'prior_ic_memo').map(d => _memoDocItemHtml(d)).join('');
+        if (boardList) boardList.innerHTML = docs.filter(d => d.category === 'board_report').map(d => _memoDocItemHtml(d)).join('');
+        // Also refresh the main doc list
+        memoRefreshDocList();
+    } catch(e) {}
+}
+
+function _memoDocItemHtml(d) {
+    const icons = { pdf:'&#128196;', docx:'&#128196;', xlsx:'&#128202;', pptx:'&#128202;', csv:'&#128202;', txt:'&#128196;' };
+    const ext = (d.file_name || d.file || '').split('.').pop().toLowerCase();
+    const icon = icons[ext] || '&#128196;';
+    const size = d.file_size ? (d.file_size > 1048576 ? (d.file_size/1048576).toFixed(1)+'MB' : (d.file_size/1024).toFixed(0)+'KB') : '';
+    return `<div class="memo-doc-item"><span class="memo-doc-icon">${icon}</span><div class="memo-doc-info"><div class="memo-doc-name">${d.file_name || d.file}</div><div class="memo-doc-meta">${size}</div></div><button class="memo-doc-remove" onclick="memoRemoveDoc(${d.id})">&times;</button></div>`;
 }
 
 // ── Output tab switching ────────────────────────────────────────────────────
@@ -5221,8 +5789,10 @@ async function memoSaveTemplate() {
 function memoInitUpload() {
     const dropzone = document.getElementById('memo-dropzone');
     const fileInput = document.getElementById('memo-file-input');
-    if (!dropzone || !fileInput) return;
+    if (!dropzone || !fileInput || dropzone._initDone) return;
+    dropzone._initDone = true;
 
+    dropzone.addEventListener('click', (e) => { if (e.target.tagName !== 'LABEL' && e.target.tagName !== 'INPUT') fileInput.click(); });
     dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
     dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
     dropzone.addEventListener('drop', (e) => {
@@ -5261,7 +5831,8 @@ async function memoUploadFiles(files) {
         if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
         const data = await r.json();
         _memo.sessionId = data.session_id;
-        memoRefreshDocList();
+        localStorage.setItem('rvm_memo_session', _memo.sessionId);
+        await memoRefreshDocList();
         if (statusEl) { statusEl.textContent = `${data.documents.length} file(s) uploaded successfully.`; statusEl.className = 'memo-generate-status success'; }
     } catch (e) {
         console.error(e);
@@ -5273,11 +5844,11 @@ async function memoRefreshDocList() {
     if (!_memo.sessionId) return;
     try {
         const r = await fetch(`/api/memo/documents/${_memo.sessionId}`, { headers: _rvmHeaders() });
-        if (!r.ok) return;
+        if (!r.ok) { console.error('memoRefreshDocList failed:', r.status, r.statusText); return; }
         _memo.documents = await r.json();
         memoRenderDocList();
     } catch (e) {
-        console.error(e);
+        console.error('memoRefreshDocList error:', e);
     }
 }
 
@@ -5287,26 +5858,62 @@ function memoRenderDocList() {
     if (!_memo.documents.length) { list.innerHTML = ''; return; }
 
     const fmtSize = (b) => b > 1024*1024 ? (b/1024/1024).toFixed(1)+'MB' : (b/1024).toFixed(0)+'KB';
+    const IMAGE_EXTS = new Set(['.png','.jpg','.jpeg','.gif','.webp','.svg']);
     const iconMap = {
-        '.pdf':'&#128196;', '.docx':'&#128196;', '.doc':'&#128196;',
-        '.xlsx':'&#128202;', '.xls':'&#128202;', '.csv':'&#128202;',
-        '.pptx':'&#128218;', '.ppt':'&#128218;',
-        '.txt':'&#128221;', '.md':'&#128221;', '.html':'&#127760;',
-        '.png':'&#128247;', '.jpg':'&#128247;', '.jpeg':'&#128247;',
+        '.pdf':'📄', '.docx':'📄', '.doc':'📄',
+        '.xlsx':'📊', '.xls':'📊', '.csv':'📊',
+        '.pptx':'📖', '.ppt':'📖',
+        '.txt':'📝', '.md':'📝', '.html':'🌐',
+        '.png':'🖼', '.jpg':'🖼', '.jpeg':'🖼', '.gif':'🖼', '.webp':'🖼',
     };
 
     list.innerHTML = _memo.documents.map(d => {
-        const icon = iconMap[d.file_type] || '&#128196;';
+        const ext = (d.file_type || '').toLowerCase();
+        const isImage = IMAGE_EXTS.has(ext);
+        const icon = iconMap[ext] || '📄';
         const cat = (d.doc_category || 'other').replace(/_/g, ' ');
-        return `<div class="memo-doc-item">
-            <span class="memo-doc-icon">${icon}</span>
+        const token = localStorage.getItem('rvm_token') || '';
+        const thumb = isImage
+            ? `<img src="/api/memo/documents/${d.id}/view?token=${encodeURIComponent(token)}"
+                   class="memo-doc-thumb" alt="${_escHtml(d.file_name)}"
+                   onerror="this.style.display='none'">`
+            : `<span class="memo-doc-icon">${icon}</span>`;
+        return `<div class="memo-doc-item${isImage ? ' memo-doc-item-image' : ''}">
+            ${thumb}
             <div class="memo-doc-info">
-                <span class="memo-doc-name">${d.file_name}</span>
+                <span class="memo-doc-name">${_escHtml(d.file_name)}</span>
                 <span class="memo-doc-meta">${fmtSize(d.file_size)} · ${cat}</span>
             </div>
-            <button class="memo-doc-remove" onclick="memoRemoveDoc(${d.id})" title="Remove">&times;</button>
+            <button class="memo-doc-remove" onclick="memoRemoveDoc(${d.id})" title="Remove document">&times;</button>
         </div>`;
     }).join('');
+}
+
+async function memoReprocessImages() {
+    const btn = document.getElementById('memo-reprocess-btn');
+    const status = document.getElementById('memo-reprocess-status');
+    const sessionId = _memo?.sessionId;
+    if (!sessionId) { if (status) status.textContent = 'Upload documents first.'; return; }
+    if (btn) btn.disabled = true;
+    if (status) { status.textContent = 'Extracting...'; status.style.color = '#666'; }
+    try {
+        const r = await fetch(`/api/memo/documents/reprocess-images?session_id=${sessionId}`, {
+            method: 'POST', headers: _rvmHeaders()
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Failed');
+        if (status) {
+            status.textContent = d.images_added > 0
+                ? `${d.images_added} image(s) extracted from ${d.pdfs_processed} PDF(s)`
+                : `No new images found in ${d.pdfs_processed} PDF(s)`;
+            status.style.color = d.images_added > 0 ? '#5B7744' : '#666';
+        }
+        await memoRefreshDocList();
+    } catch (e) {
+        if (status) { status.textContent = e.message; status.style.color = '#dc2626'; }
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 async function memoRemoveDoc(docId) {
@@ -5365,8 +5972,14 @@ async function memoGenerate() {
     memoSwitchOutputTab('preview');
 
     // Build progress tracker — estimate passes based on doc count
+    const invType = document.querySelector('input[name="memo-inv-type"]:checked')?.value || 'first';
     const nDocs = _memo.documents.length;
-    const nDataSections = 9;
+    const isFollowon = invType === 'followon';
+    const sectionNames = ['Company Overview','Market','Business Model','Team','Traction',
+                          'Competitive Position','Carbon Impact','Technology, IP & Moat',
+                          'Financing Overview & Exit Planning'];
+    if (isFollowon) sectionNames.push('Portfolio Tracking Scorecard');
+    const nDataSections = sectionNames.length;
     const nSynthesisSections = 4;  // Investment Overview, Opportunities, Risks, Recommendation
     const totalSteps = nDocs + nDataSections + nSynthesisSections;
     let currentStep = 0;
@@ -5377,9 +5990,6 @@ async function memoGenerate() {
             progressStages.push(`Pass 1 — Extracting facts from "${_memo.documents[i]?.file_name || 'document ' + (i+1)}" (${i+1}/${nDocs})`);
         }
     }
-    const sectionNames = ['Company Overview','Market','Business Model','Team','Traction',
-                          'Competitive Position','Carbon Impact','Technology, IP & Moat',
-                          'Financing Overview & Exit Planning'];
     sectionNames.forEach((s, i) => progressStages.push(`Pass 2 — Writing: ${s} (${i+1}/${nDataSections})`));
     progressStages.push('Pass 3 — Synthesizing: Investment Overview');
     progressStages.push('Pass 3 — Synthesizing: High Level Opportunities');
@@ -5422,14 +6032,20 @@ async function memoGenerate() {
         company_name: '',
         links: _memo.links,
         model_override: model,
+        investment_type: invType,
     };
 
     try {
+        const abortCtrl = new AbortController();
+        const fetchTimeout = setTimeout(() => abortCtrl.abort(), 20 * 60 * 1000); // 20 min timeout
         const r = await fetch('/api/memo/generate', {
             method: 'POST',
             headers: { ..._rvmHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
+            signal: abortCtrl.signal,
+            keepalive: false,
         });
+        clearTimeout(fetchTimeout);
 
         if (!r.ok) {
             const err = await r.json().catch(() => ({ detail: r.statusText }));
@@ -5450,9 +6066,30 @@ async function memoGenerate() {
         if (empty) empty.style.display = 'none';
         if (actions) actions.style.display = 'flex';
 
+        // Store memo state for section-level editing
+        _memo.currentMemoId = data.id;
+        _memo.sections = data.sections || {};
+        _memo.reportData = data.report_data || null;
+
         // Store citations metadata and bind click handlers
         _memo.citations = data.citations || {};
         _memoCitationsBind(rendered);
+
+        // Wrap sections FIRST so the section-content divs exist before charts are injected
+        if (rendered && data.sections) {
+            _memoWrapSections(rendered, data.sections);
+        }
+
+        // Inject data room images into memo sections
+        if (data.image_docs && data.image_docs.length > 0 && rendered) {
+            _memoInjectImages(rendered, data.image_docs);
+        }
+
+        // Inject pipeline charts LAST — DOM is stable, canvases won't be reparented
+        if (data.report_data && rendered) {
+            _memoInjectCharts(rendered, data.report_data);
+            _memoInjectDealCard(rendered, data.report_data);
+        }
 
         // Show pipeline stats
         const pl = data.pipeline || {};
@@ -5482,19 +6119,35 @@ function _memoCitationsBind(container) {
     const existing = document.getElementById('memo-cite-popover');
     if (existing) existing.remove();
 
-    // Create popover element
+    // Create rich source viewer popover
     const popover = document.createElement('div');
     popover.id = 'memo-cite-popover';
     popover.className = 'memo-cite-popover hidden';
     popover.innerHTML = `
         <div class="memo-cite-popover-header">
-            <span class="memo-cite-popover-badge"></span>
-            <span class="memo-cite-popover-title"></span>
-            <button class="memo-cite-popover-close" onclick="this.parentElement.parentElement.classList.add('hidden')">&times;</button>
+            <div class="memo-cite-popover-header-left">
+                <span class="memo-cite-popover-badge"></span>
+                <span class="memo-cite-popover-title"></span>
+            </div>
+            <div class="memo-cite-popover-header-right">
+                <a class="memo-cite-view-btn" href="#" target="_blank" style="display:none;">Open Document</a>
+                <button class="memo-cite-popover-close" onclick="this.closest('.memo-cite-popover').classList.add('hidden')">&times;</button>
+            </div>
         </div>
-        <div class="memo-cite-popover-category"></div>
-        <div class="memo-cite-popover-excerpt"></div>`;
+        <div class="memo-cite-popover-meta">
+            <span class="memo-cite-popover-category"></span>
+            <span class="memo-cite-popover-stats"></span>
+        </div>
+        <div class="memo-cite-page-nav" style="display:none;">
+            <button class="memo-cite-page-btn" onclick="_memoCitePagePrev()">&#9664; Prev</button>
+            <span class="memo-cite-page-label">Page 1</span>
+            <button class="memo-cite-page-btn" onclick="_memoCitePageNext()">Next &#9654;</button>
+        </div>
+        <div class="memo-cite-popover-content"></div>`;
     document.body.appendChild(popover);
+
+    // Track current page state
+    window._memoCiteState = { pages: [], currentPage: 0 };
 
     // Bind click handlers to all citation spans
     container.querySelectorAll('.memo-cite').forEach(el => {
@@ -5507,18 +6160,52 @@ function _memoCitationsBind(container) {
             const badge = popover.querySelector('.memo-cite-popover-badge');
             const title = popover.querySelector('.memo-cite-popover-title');
             const category = popover.querySelector('.memo-cite-popover-category');
-            const excerpt = popover.querySelector('.memo-cite-popover-excerpt');
+            const stats = popover.querySelector('.memo-cite-popover-stats');
+            const content = popover.querySelector('.memo-cite-popover-content');
+            const pageNav = popover.querySelector('.memo-cite-page-nav');
+            const viewBtn = popover.querySelector('.memo-cite-view-btn');
 
             badge.textContent = `[${cite.number}]`;
             title.textContent = cite.file_name;
             category.textContent = cite.category;
-            excerpt.textContent = cite.excerpt || 'No preview available.';
 
-            // Position near the clicked citation
+            // Stats
+            const charCount = cite.total_chars ? `${Math.round(cite.total_chars / 1000)}K chars` : '';
+            const pageCount = cite.total_pages ? `${cite.total_pages} page${cite.total_pages > 1 ? 's' : ''}` : '';
+            stats.textContent = [pageCount, charCount].filter(Boolean).join(' · ');
+
+            // View document button
+            if (cite.doc_id && cite.file_type === '.pdf') {
+                viewBtn.href = `/api/memo/documents/${cite.doc_id}/view?token=${_rvmToken}`;
+                viewBtn.style.display = 'inline-block';
+            } else if (cite.doc_id) {
+                viewBtn.href = `/api/memo/documents/${cite.doc_id}/view?token=${_rvmToken}`;
+                viewBtn.style.display = 'inline-block';
+            } else {
+                viewBtn.style.display = 'none';
+            }
+
+            // Pages
+            const pages = cite.pages || [];
+            window._memoCiteState = { pages, currentPage: 0 };
+
+            if (pages.length > 1) {
+                pageNav.style.display = 'flex';
+                _memoCiteRenderPage(0);
+            } else if (pages.length === 1) {
+                pageNav.style.display = 'none';
+                const p = pages[0];
+                content.innerHTML = `<pre class="memo-cite-text">${_escHtml(p.text)}${p.truncated ? '\n\n[... content truncated ...]' : ''}</pre>`;
+            } else {
+                pageNav.style.display = 'none';
+                content.innerHTML = '<p class="memo-cite-empty">No extracted text available for this document.</p>';
+            }
+
+            // Position — show as side panel on right
             const rect = el.getBoundingClientRect();
             const scrollTop = window.scrollY || document.documentElement.scrollTop;
-            popover.style.top = (rect.bottom + scrollTop + 8) + 'px';
-            popover.style.left = Math.max(12, Math.min(rect.left, window.innerWidth - 420)) + 'px';
+            popover.style.top = Math.max(80, rect.top + scrollTop - 40) + 'px';
+            popover.style.left = Math.max(12, Math.min(rect.left + 30, window.innerWidth - 560)) + 'px';
             popover.classList.remove('hidden');
         });
     });
@@ -5531,10 +6218,154 @@ function _memoCitationsBind(container) {
     });
 }
 
+function _memoCiteRenderPage(idx) {
+    const state = window._memoCiteState;
+    if (!state || !state.pages.length) return;
+    idx = Math.max(0, Math.min(idx, state.pages.length - 1));
+    state.currentPage = idx;
+
+    const p = state.pages[idx];
+    const popover = document.getElementById('memo-cite-popover');
+    if (!popover) return;
+
+    const content = popover.querySelector('.memo-cite-popover-content');
+    const label = popover.querySelector('.memo-cite-page-label');
+
+    const pageLabel = p.page ? `Page ${p.page}` : `Section ${idx + 1}`;
+    label.textContent = `${pageLabel} of ${state.pages.length}`;
+    content.innerHTML = `<pre class="memo-cite-text">${_escHtml(p.text)}${p.truncated ? '\n\n[... content truncated ...]' : ''}</pre>`;
+}
+
+function _memoCitePagePrev() {
+    const state = window._memoCiteState;
+    if (state && state.currentPage > 0) _memoCiteRenderPage(state.currentPage - 1);
+}
+
+function _memoCitePageNext() {
+    const state = window._memoCiteState;
+    if (state && state.currentPage < state.pages.length - 1) _memoCiteRenderPage(state.currentPage + 1);
+}
+
+function _escHtml(s) {
+    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ── Export & Copy ───────────────────────────────────────────────────────────
 function memoExportDocx() {
     if (!_memo.currentMemoId) return;
     window.open(`/api/memo/history/${_memo.currentMemoId}/docx?token=${_rvmToken}`, '_blank');
+}
+
+async function memoPrintPDF() {
+    const rendered = document.getElementById('memo-rendered');
+    if (!rendered || !rendered.innerHTML.trim()) { showToast('No memo loaded'); return; }
+
+    // 1. Clone memo so we never mutate the live DOM
+    const clone = rendered.cloneNode(true);
+
+    // 2. Replace every live <canvas> with a PNG snapshot in the clone
+    const liveCanvases  = Array.from(rendered.querySelectorAll('canvas'));
+    const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
+    liveCanvases.forEach((canvas, i) => {
+        try {
+            const dataUrl = canvas.toDataURL('image/png');
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.style.width    = Math.min(canvas.offsetWidth,  680) + 'px';
+            img.style.height   = Math.min(canvas.offsetHeight, 280) + 'px';
+            img.style.maxWidth = '100%';
+            img.style.display  = 'block';
+            if (cloneCanvases[i]) cloneCanvases[i].replaceWith(img);
+        } catch(e) { if (cloneCanvases[i]) cloneCanvases[i].remove(); }
+    });
+
+    // 3. Strip interactive chrome (toolbars, edit panels, remove buttons, citations)
+    clone.querySelectorAll(
+        '.memo-section-toolbar,.memo-sect-btn,.memo-edit-panel,' +
+        '.memo-revise-panel,.memo-history-panel,.memo-image-remove,' +
+        'sup[data-cite],.memo-citation-chip'
+    ).forEach(el => el.remove());
+
+    const companyName = document.getElementById('memo-output-meta')
+        ?.textContent?.split('·')[0]?.trim() || 'Investment Memo';
+
+    // 4. Open a clean print window — no app chrome at all
+    const win = window.open('', '_blank', 'width=900,height=700');
+    win.document.write(`<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>${companyName} — VoLo Earth Ventures</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{font-family:Georgia,serif;font-size:10.5pt;color:#1a1a1a;background:#fff;max-width:780px;margin:0 auto;padding:28px 32px}
+h1{font-size:20pt;margin-bottom:4pt}
+h2{font-size:13pt;margin-top:22pt;margin-bottom:6pt;border-bottom:1px solid #ccc;padding-bottom:4pt;page-break-after:avoid}
+h3{font-size:11pt;margin-top:14pt;page-break-after:avoid}
+p,li{font-size:10pt;line-height:1.6;margin-top:4pt}
+ul,ol{margin:4pt 0 4pt 18pt}
+table{width:100%;border-collapse:collapse;font-size:9pt;margin:10pt 0;page-break-inside:avoid}
+th,td{border:1px solid #ddd;padding:4pt 6pt;text-align:left}
+th{background:#f5f5f5;font-weight:600}
+img{max-width:100%;height:auto;display:block;margin:6pt auto}
+blockquote{border-left:3px solid #5B7744;margin:8pt 0 8pt 10pt;padding-left:10pt;color:#555;font-style:italic}
+code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;border-radius:2pt}
+/* Chart containers */
+.memo-chart-inline{page-break-inside:avoid;margin:12pt 0}
+.memo-chart-context{background:#fafaf9;border:1px solid #eee;padding:10pt;border-radius:4pt;margin:10pt 0;page-break-inside:avoid}
+.memo-chart-label{font-size:9pt;font-weight:700;text-transform:uppercase;color:#5B7744;letter-spacing:.05em;margin-bottom:4pt}
+.memo-chart-caption,.memo-chart-note{font-size:8.5pt;color:#666;margin:4pt 0}
+.memo-chart-row{display:flex;gap:12pt}
+.memo-chart-wrap{flex:1;overflow:hidden}
+.memo-chart-wrap img{width:100%;max-height:220pt;object-fit:contain}
+/* Hero cards */
+.memo-rvm-hero{display:flex;gap:8pt;flex-wrap:wrap;margin:10pt 0}
+.memo-rvm-hero-card{border:1px solid #ccc;padding:6pt 10pt;border-radius:4pt;flex:1;min-width:80pt;text-align:center}
+.memo-rvm-hero-card.accent{background:#f0f4ef;border-color:#5B7744}
+.memo-rvm-hero-num{font-size:15pt;font-weight:700;color:#3B5249}
+.memo-rvm-hero-lbl{font-size:8pt;font-weight:600;text-transform:uppercase;color:#888;margin-top:2pt}
+/* Deal card — full fidelity */
+.memo-deal-card{border:1px solid #e5e7eb;border-radius:8pt;padding:14pt;margin:12pt 0;page-break-inside:avoid;background:#fff}
+.memo-dc-tags{display:flex;flex-wrap:wrap;gap:6pt;margin-bottom:12pt}
+.memo-dc-tag{background:#fff;border:1px solid #e5e7eb;border-radius:20pt;padding:3pt 10pt;font-size:9pt;color:#555;font-weight:500}
+.memo-dc-terms{display:flex;flex-wrap:wrap;gap:8pt;margin-bottom:12pt}
+.memo-dc-term{background:#fff;border:1px solid #e5e7eb;border-radius:7pt;padding:8pt 12pt;min-width:90pt;flex:1}
+.memo-dc-label{display:block;font-size:7.5pt;font-weight:600;letter-spacing:.06em;color:#888;text-transform:uppercase;margin-bottom:3pt}
+.memo-dc-val{font-size:14pt;font-weight:700;color:#1a1a1a}
+.memo-dc-hero{display:flex;gap:8pt;flex-wrap:wrap}
+.memo-dc-hero-card{flex:1;min-width:90pt;background:#fff;border:1px solid #e5e7eb;border-radius:7pt;padding:10pt 12pt;text-align:center}
+.memo-dc-hero-card.accent{background:#f0f4ef;border-color:#5B7744}
+.memo-dc-hero-num{font-size:18pt;font-weight:700;color:#1a1a1a;line-height:1.1}
+.memo-dc-hero-card.accent .memo-dc-hero-num{color:#3B5249}
+.memo-dc-hero-lbl{font-size:7.5pt;font-weight:600;letter-spacing:.06em;color:#888;text-transform:uppercase;margin-top:3pt}
+/* Images */
+.memo-image-figure{page-break-inside:avoid;max-width:65%;margin:12pt auto;text-align:center}
+.memo-image-embed{max-width:100%;height:auto}
+.memo-image-caption{font-size:8pt;color:#888;margin-top:3pt}
+/* Section wrappers */
+.memo-section-wrapper{page-break-inside:avoid}
+.memo-section-content{display:block!important;visibility:visible!important}
+/* Variance table */
+.rpt-table td,.rpt-table th{border:1px solid #ddd;padding:3pt 5pt;font-size:9pt}
+/* Footer */
+footer{margin-top:28pt;padding-top:5pt;border-top:1px solid #ccc;font-size:8pt;color:#888;text-align:center}
+@page{size:A4;margin:18mm 16mm 20mm 16mm}
+@media print{body{padding:0}.memo-section-wrapper,.memo-chart-inline,.memo-deal-card,.memo-chart-context{page-break-inside:avoid}}
+</style></head><body>
+${clone.innerHTML}
+<footer>VoLo Earth Ventures — Confidential &amp; Proprietary</footer>
+</body></html>`);
+    win.document.close();
+
+    // 5. Wait for all images (data room photos, chart PNGs) to finish loading
+    const allImgs = Array.from(win.document.querySelectorAll('img'));
+    await Promise.all(allImgs.map(img =>
+        img.complete ? Promise.resolve() :
+        new Promise(res => { img.onload = res; img.onerror = res; })
+    ));
+    await new Promise(r => setTimeout(r, 400));
+
+    // 6. Trigger print dialog
+    win.focus();
+    win.print();
 }
 
 function memoCopyMarkdown() {
@@ -5574,27 +6405,57 @@ async function memoLoadHistory() {
 }
 
 async function memoLoadHistoryItem(id) {
+    // Ensure memo tab is visible
+    switchTab('memo');
+
+    const rendered = document.getElementById('memo-rendered');
+    const empty = document.getElementById('memo-output-empty');
+    const actions = document.getElementById('memo-output-actions');
+    const meta = document.getElementById('memo-output-meta');
+
+    // Show loading state
+    if (rendered) rendered.innerHTML = '<p style="padding:24px;color:var(--text-tertiary)">Loading memo…</p>';
+    if (empty) empty.style.display = 'none';
+    if (actions) actions.style.display = 'none';
+    memoSwitchOutputTab('preview');
+
     try {
         const r = await fetch(`/api/memo/history/${id}`, { headers: _rvmHeaders() });
-        if (!r.ok) return;
+        if (!r.ok) {
+            let detail = `Error ${r.status}`;
+            try { const d = await r.json(); detail = d.detail || detail; } catch {}
+            if (rendered) rendered.innerHTML = `<p style="padding:24px;color:#dc2626">Failed to load memo: ${detail}</p>`;
+            return;
+        }
         const data = await r.json();
 
         _memo.currentMemoId = data.id;
         _memo.currentMemoMd = data.memo_markdown;
+        _memo.sections = data.sections || {};
+        _memo.reportData = data.report_data || null;
 
-        const rendered = document.getElementById('memo-rendered');
-        const empty = document.getElementById('memo-output-empty');
-        const actions = document.getElementById('memo-output-actions');
-        const meta = document.getElementById('memo-output-meta');
-
-        if (rendered) rendered.innerHTML = data.memo_html;
-        if (empty) empty.style.display = 'none';
+        if (rendered) rendered.innerHTML = data.memo_html || '<p style="padding:24px;color:var(--text-tertiary)">No content.</p>';
         if (actions) actions.style.display = 'flex';
-        if (meta) meta.textContent = `${data.model_used} · ${(data.input_token_count + data.output_token_count).toLocaleString()} tokens · ${data.created_at?.substring(0,16).replace('T',' ')}`;
+        if (meta) meta.textContent = `${data.model_used} · ${((data.input_token_count || 0) + (data.output_token_count || 0)).toLocaleString()} tokens · ${data.created_at?.substring(0,16).replace('T',' ')}`;
 
-        memoSwitchOutputTab('preview');
+        // Bind citation handlers
+        _memoCitationsBind(rendered);
+        // Wrap sections FIRST so section-content divs exist before charts are injected
+        if (rendered) {
+            _memoWrapSections(rendered, data.sections);
+        }
+        // Inject data room images
+        if (data.image_docs && data.image_docs.length > 0 && rendered) {
+            _memoInjectImages(rendered, data.image_docs);
+        }
+        // Inject pipeline charts LAST — DOM is stable, canvases won't be reparented
+        if (data.report_data && rendered) {
+            _memoInjectCharts(rendered, data.report_data);
+            _memoInjectDealCard(rendered, data.report_data);
+        }
     } catch (e) {
-        console.error(e);
+        console.error('memoLoadHistoryItem error:', e);
+        if (rendered) rendered.innerHTML = `<p style="padding:24px;color:#dc2626">Unexpected error: ${e.message}</p>`;
     }
 }
 
@@ -5753,6 +6614,1647 @@ async function driveSyncLibrary() {
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+//  SECTION-LEVEL REVIEW & REVISION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _MEMO_SECTION_KEYS = {
+    'investment overview': 'investment_overview',
+    'high level opportunities': 'high_level_opportunities',
+    'high level risks': 'high_level_risks',
+    'company overview': 'company_overview',
+    'market': 'market',
+    'business model': 'business_model',
+    'financials': 'financials',
+    'team': 'team',
+    'traction': 'traction',
+    'competitive position': 'competitive_position',
+    'carbon impact': 'carbon_impact',
+    'technology': 'technology_ip_moat',
+    'financing overview': 'financing_overview',
+    'fund return model': 'fund_return_model',
+    'portfolio tracking scorecard': 'portfolio_tracking_scorecard',
+    'investment recommendation': 'investment_recommendation',
+};
+
+function _memoMatchSectionKey(h2Text) {
+    const lower = h2Text.toLowerCase().trim();
+    for (const [match, key] of Object.entries(_MEMO_SECTION_KEYS)) {
+        if (lower.includes(match)) return key;
+    }
+    return null;
+}
+
+function _memoWrapSections(container, sections) {
+    const h2s = Array.from(container.querySelectorAll('h2'));
+    for (const h2 of h2s) {
+        const sectionKey = _memoMatchSectionKey(h2.textContent);
+        // Wrap any recognised section H2 — even if sections[sectionKey] is empty
+        // (happens when memo was loaded from history or sections_json was not fully saved)
+        if (!sectionKey) continue;
+
+        // Collect all elements belonging to this section (until next H2)
+        const sectionEls = [];
+        let sibling = h2.nextElementSibling;
+        while (sibling && sibling.tagName !== 'H2') {
+            sectionEls.push(sibling);
+            sibling = sibling.nextElementSibling;
+        }
+
+        // Create wrapper
+        const wrapper = document.createElement('div');
+        wrapper.className = 'memo-section-wrapper';
+        wrapper.dataset.sectionKey = sectionKey;
+
+        // Create toolbar
+        const toolbar = document.createElement('div');
+        toolbar.className = 'memo-section-toolbar';
+        toolbar.innerHTML = `
+            <div class="memo-section-toolbar-left">
+                <span class="memo-section-key-badge">${sectionKey.replace(/_/g, ' ')}</span>
+            </div>
+            <div class="memo-section-toolbar-right">
+                <button class="memo-sect-btn memo-sect-btn-edit" onclick="_memoStartDirectEdit('${sectionKey}')" title="Edit text directly">Edit</button>
+                <button class="memo-sect-btn memo-sect-btn-revise" onclick="_memoStartRevise('${sectionKey}')" title="Give LLM revision instructions">Revise</button>
+                <button class="memo-sect-btn memo-sect-btn-history" onclick="_memoShowHistory('${sectionKey}')" title="View revision history">History</button>
+            </div>
+        `;
+
+        // Create content wrapper
+        const content = document.createElement('div');
+        content.className = 'memo-section-content';
+        content.id = `memo-sect-content-${sectionKey}`;
+
+        // Create revise panel (hidden)
+        const revisePanel = document.createElement('div');
+        revisePanel.className = 'memo-revise-panel';
+        revisePanel.id = `memo-revise-panel-${sectionKey}`;
+        revisePanel.style.display = 'none';
+        revisePanel.innerHTML = `
+            <textarea class="memo-revise-input" id="memo-revise-input-${sectionKey}" placeholder="e.g. 'Make the tone more positive', 'Add more detail about the competitive moat', 'Incorporate the attached board report data'..." rows="3"></textarea>
+            <div class="memo-revise-actions">
+                <button class="memo-sect-btn memo-sect-btn-revise" onclick="_memoSubmitRevise('${sectionKey}')">Revise Section</button>
+                <button class="memo-sect-btn" onclick="_memoCancelRevise('${sectionKey}')">Cancel</button>
+                <span class="memo-revise-status" id="memo-revise-status-${sectionKey}"></span>
+            </div>
+        `;
+
+        // Create edit panel (hidden)
+        const editPanel = document.createElement('div');
+        editPanel.className = 'memo-edit-panel';
+        editPanel.id = `memo-edit-panel-${sectionKey}`;
+        editPanel.style.display = 'none';
+        editPanel.innerHTML = `
+            <textarea class="memo-edit-textarea" id="memo-edit-textarea-${sectionKey}" rows="15"></textarea>
+            <div class="memo-edit-actions">
+                <button class="memo-sect-btn memo-sect-btn-edit" onclick="_memoSaveDirectEdit('${sectionKey}')">Save Changes</button>
+                <button class="memo-sect-btn" onclick="_memoCancelDirectEdit('${sectionKey}')">Cancel</button>
+                <span class="memo-edit-status" id="memo-edit-status-${sectionKey}"></span>
+            </div>
+        `;
+
+        // Create history panel (hidden)
+        const historyPanel = document.createElement('div');
+        historyPanel.className = 'memo-history-panel';
+        historyPanel.id = `memo-history-panel-${sectionKey}`;
+        historyPanel.style.display = 'none';
+
+        // Insert wrapper before h2, then move h2 + content into it
+        h2.parentNode.insertBefore(wrapper, h2);
+        wrapper.appendChild(toolbar);
+        wrapper.appendChild(h2);
+        wrapper.appendChild(content);
+        for (const el of sectionEls) {
+            content.appendChild(el);
+        }
+        wrapper.appendChild(revisePanel);
+        wrapper.appendChild(editPanel);
+        wrapper.appendChild(historyPanel);
+    }
+}
+
+function _memoStartRevise(sectionKey) {
+    // Hide any other open panels
+    document.querySelectorAll('.memo-revise-panel, .memo-edit-panel, .memo-history-panel').forEach(p => p.style.display = 'none');
+    const panel = document.getElementById(`memo-revise-panel-${sectionKey}`);
+    if (panel) {
+        panel.style.display = 'block';
+        const input = document.getElementById(`memo-revise-input-${sectionKey}`);
+        if (input) input.focus();
+    }
+}
+
+function _memoCancelRevise(sectionKey) {
+    const panel = document.getElementById(`memo-revise-panel-${sectionKey}`);
+    if (panel) panel.style.display = 'none';
+}
+
+async function _memoSubmitRevise(sectionKey) {
+    const input = document.getElementById(`memo-revise-input-${sectionKey}`);
+    const status = document.getElementById(`memo-revise-status-${sectionKey}`);
+    const instructions = input?.value?.trim();
+    if (!instructions) { if (status) status.textContent = 'Enter revision instructions'; return; }
+
+    const memoId = _memo.currentMemoId;
+    if (!memoId) { if (status) status.textContent = 'No memo loaded'; return; }
+
+    if (status) { status.textContent = 'Revising section...'; status.style.color = '#607D8B'; }
+
+    try {
+        const r = await fetch('/api/memo/revise-section', {
+            method: 'POST',
+            headers: _rvmHeaders(),
+            body: JSON.stringify({
+                memo_id: memoId,
+                section_key: sectionKey,
+                instructions: instructions,
+            }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Revision failed');
+
+        // Update stored section text
+        _memo.sections[sectionKey] = d.new_text;
+
+        // Update the rendered content
+        const contentEl = document.getElementById(`memo-sect-content-${sectionKey}`);
+        if (contentEl) {
+            // Parse the section_html and extract inner content (skip the H2)
+            const temp = document.createElement('div');
+            temp.innerHTML = d.section_html;
+            const newH2 = temp.querySelector('h2');
+            if (newH2) newH2.remove();
+            contentEl.innerHTML = temp.innerHTML;
+        }
+
+        // Re-inject charts if we have report data
+        if (_memo.reportData) {
+            const rendered = document.getElementById('memo-rendered');
+            if (rendered) { _memoInjectCharts(rendered, _memo.reportData); _memoInjectDealCard(rendered, _memo.reportData); }
+        }
+
+        if (status) { status.textContent = `Revised (${d.model_used}, ${(d.tokens_in + d.tokens_out).toLocaleString()} tokens)`; status.style.color = '#5B7744'; }
+        if (input) input.value = '';
+
+        // Hide panel after short delay
+        setTimeout(() => {
+            const panel = document.getElementById(`memo-revise-panel-${sectionKey}`);
+            if (panel) panel.style.display = 'none';
+        }, 2000);
+
+    } catch (e) {
+        if (status) { status.textContent = e.message; status.style.color = '#dc2626'; }
+    }
+}
+
+function _memoStartDirectEdit(sectionKey) {
+    document.querySelectorAll('.memo-revise-panel, .memo-edit-panel, .memo-history-panel').forEach(p => p.style.display = 'none');
+    const panel = document.getElementById(`memo-edit-panel-${sectionKey}`);
+    const textarea = document.getElementById(`memo-edit-textarea-${sectionKey}`);
+    if (panel && textarea) {
+        // Prefer stored markdown; fall back to rendered text from DOM
+        const stored = _memo.sections[sectionKey];
+        if (stored) {
+            textarea.value = stored;
+        } else {
+            const contentEl = document.getElementById(`memo-sect-content-${sectionKey}`);
+            textarea.value = contentEl ? contentEl.innerText : '';
+        }
+        panel.style.display = 'block';
+        textarea.focus();
+    }
+}
+
+function _memoCancelDirectEdit(sectionKey) {
+    const panel = document.getElementById(`memo-edit-panel-${sectionKey}`);
+    if (panel) panel.style.display = 'none';
+}
+
+async function _memoSaveDirectEdit(sectionKey) {
+    const textarea = document.getElementById(`memo-edit-textarea-${sectionKey}`);
+    const status = document.getElementById(`memo-edit-status-${sectionKey}`);
+    const newText = textarea?.value;
+    if (newText == null) return;
+
+    const memoId = _memo.currentMemoId;
+    if (!memoId) { if (status) status.textContent = 'No memo loaded'; return; }
+
+    if (status) { status.textContent = 'Saving...'; status.style.color = '#607D8B'; }
+
+    try {
+        const r = await fetch('/api/memo/edit-section', {
+            method: 'POST',
+            headers: _rvmHeaders(),
+            body: JSON.stringify({
+                memo_id: memoId,
+                section_key: sectionKey,
+                new_text: newText,
+            }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || 'Save failed');
+
+        _memo.sections[sectionKey] = d.new_text;
+
+        const contentEl = document.getElementById(`memo-sect-content-${sectionKey}`);
+        if (contentEl) {
+            const temp = document.createElement('div');
+            temp.innerHTML = d.section_html;
+            const newH2 = temp.querySelector('h2');
+            if (newH2) newH2.remove();
+            contentEl.innerHTML = temp.innerHTML;
+        }
+
+        if (status) { status.textContent = 'Saved'; status.style.color = '#5B7744'; }
+        setTimeout(() => {
+            const panel = document.getElementById(`memo-edit-panel-${sectionKey}`);
+            if (panel) panel.style.display = 'none';
+        }, 1500);
+
+    } catch (e) {
+        if (status) { status.textContent = e.message; status.style.color = '#dc2626'; }
+    }
+}
+
+async function _memoShowHistory(sectionKey) {
+    document.querySelectorAll('.memo-revise-panel, .memo-edit-panel, .memo-history-panel').forEach(p => p.style.display = 'none');
+    const panel = document.getElementById(`memo-history-panel-${sectionKey}`);
+    if (!panel) return;
+
+    const memoId = _memo.currentMemoId;
+    if (!memoId) { panel.innerHTML = '<p>No memo loaded</p>'; panel.style.display = 'block'; return; }
+
+    panel.innerHTML = '<p style="color:var(--text-secondary);font-size:0.85rem;">Loading history...</p>';
+    panel.style.display = 'block';
+
+    try {
+        const r = await fetch(`/api/memo/revisions/${memoId}/${sectionKey}`, { headers: _rvmHeaders() });
+        const revisions = await r.json();
+        if (!r.ok) throw new Error('Failed to load history');
+
+        if (!revisions.length) {
+            panel.innerHTML = '<p style="color:var(--text-secondary);font-size:0.85rem;padding:8px 0;">No revisions yet for this section.</p>';
+            return;
+        }
+
+        let html = '<div class="memo-history-list">';
+        html += `<div class="memo-history-header"><span>${revisions.length} revision${revisions.length > 1 ? 's' : ''}</span><button class="memo-sect-btn" onclick="this.closest(\'.memo-history-panel\').style.display=\'none\'">Close</button></div>`;
+        for (const rev of revisions) {
+            const typeLabel = rev.revision_type === 'llm' ? '🤖 LLM Revision' : '✏️ Manual Edit';
+            const time = new Date(rev.created_at + 'Z').toLocaleString();
+            html += `<div class="memo-history-item">
+                <div class="memo-history-item-header">
+                    <span class="memo-history-type">${typeLabel}</span>
+                    <span class="memo-history-by">${rev.revised_by}</span>
+                    <span class="memo-history-time">${time}</span>
+                </div>
+                ${rev.instructions ? `<div class="memo-history-instructions">"${rev.instructions}"</div>` : ''}
+                ${rev.model_used ? `<div class="memo-history-model">${rev.model_used} · ${(rev.tokens_in + rev.tokens_out).toLocaleString()} tokens</div>` : ''}
+            </div>`;
+        }
+        html += '</div>';
+        panel.innerHTML = html;
+    } catch (e) {
+        panel.innerHTML = `<p style="color:#dc2626;font-size:0.85rem;">${e.message}</p>`;
+    }
+}
+
+
+//  MEMO CHART INJECTION — Embed deal pipeline charts into rendered memo sections
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const _memoChartInstances = [];
+
+
+function _memoInjectDealCard(container, report) {
+    if (!report) return;
+    const ov = report.deal_overview || {};
+    const hero = report.hero_metrics || {};
+
+    if (!ov.company_name) return;
+
+    const fmt1 = (v) => v != null ? Number(v).toFixed(1) : 'N/A';
+    const pct1 = (v) => v != null ? (v * 100).toFixed(1) + '%' : 'N/A';
+
+    // Build the card HTML — mirrors the deal report cover block
+    const archLabel = (s) => (s||'').replace(/_/g,' ').replace(/\w/g, c => c.toUpperCase());
+    const tags = [ov.entry_stage, archLabel(ov.archetype), ov.trl_label ? `TRL ${ov.trl} (${ov.trl_label})` : null]
+        .filter(Boolean).map(t => `<span class="memo-dc-tag">${t}</span>`).join('');
+
+    const html = `
+    <div class="memo-deal-card">
+        <div class="memo-dc-tags">${tags}</div>
+        <div class="memo-dc-terms">
+            <div class="memo-dc-term"><span class="memo-dc-label">CHECK SIZE</span><span class="memo-dc-val">$${fmt1(ov.check_size_millions)}M</span></div>
+            <div class="memo-dc-term"><span class="memo-dc-label">ROUND SIZE</span><span class="memo-dc-val">$${fmt1(ov.round_size_millions)}M</span></div>
+            <div class="memo-dc-term"><span class="memo-dc-label">PRE-MONEY</span><span class="memo-dc-val">$${fmt1(ov.pre_money_millions)}M</span></div>
+            <div class="memo-dc-term"><span class="memo-dc-label">POST-MONEY</span><span class="memo-dc-val">$${fmt1(ov.post_money_millions)}M</span></div>
+            <div class="memo-dc-term"><span class="memo-dc-label">ENTRY OWNERSHIP</span><span class="memo-dc-val">${fmt1(ov.entry_ownership_pct)}%</span></div>
+        </div>
+        <div class="memo-dc-hero">
+            <div class="memo-dc-hero-card accent"><div class="memo-dc-hero-num">${fmt1(hero.expected_moic)}x</div><div class="memo-dc-hero-lbl">EXPECTED MOIC</div></div>
+            <div class="memo-dc-hero-card"><div class="memo-dc-hero-num">${pct1(hero.p_gt_3x)}</div><div class="memo-dc-hero-lbl">P(&gt;3X)</div></div>
+            <div class="memo-dc-hero-card"><div class="memo-dc-hero-num">${pct1(hero.expected_irr)}</div><div class="memo-dc-hero-lbl">EXPECTED IRR</div></div>
+            <div class="memo-dc-hero-card"><div class="memo-dc-hero-num">${pct1(hero.survival_rate)}</div><div class="memo-dc-hero-lbl">SURVIVAL RATE</div></div>
+        </div>
+    </div>`;
+
+    // Find the Investment Overview H2
+    let targetH2 = null;
+    for (const h2 of container.querySelectorAll('h2')) {
+        if (h2.textContent.toLowerCase().includes('investment overview')) {
+            targetH2 = h2;
+            break;
+        }
+    }
+    if (!targetH2) return;
+
+    // Insert immediately after the H2, before any paragraph text
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    targetH2.after(div.firstElementChild);
+}
+
+function _memoInjectCharts(container, report) {
+    // Destroy any previous chart instances
+    _memoChartInstances.forEach(c => { try { c.destroy(); } catch(e) {} });
+    _memoChartInstances.length = 0;
+
+    const r = report;
+    const sim = r.simulation || {};
+    const carbon = r.carbon_impact || {};
+    const adoption = r.adoption_analysis || {};
+    const fComp = r.founder_comparison || {};
+    const valCtx = r.valuation_context || {};
+    const pImpact = r.portfolio_impact || {};
+    const ps = r.position_sizing || {};
+    const ov = r.deal_overview || {};
+    const hero = r.hero_metrics || {};
+    const prob = sim.probability || {};
+    const moic = sim.moic_unconditional || {};
+    const moicC = sim.moic_conditional || {};
+
+    const fmt = (v, d=2) => v != null ? Number(v).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d}) : 'N/A';
+    const pctFmt = (v) => v != null ? (v * 100).toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%' : 'N/A';
+
+    // Find memo sections by H2 title text
+    function findSection(titleMatch) {
+        const h2s = container.querySelectorAll('h2');
+        for (const h2 of h2s) {
+            if (h2.textContent.toLowerCase().includes(titleMatch.toLowerCase())) return h2;
+        }
+        return null;
+    }
+
+    // Get the container element for a section's content.
+    // After _memoWrapSections runs, content lives inside .memo-section-content.
+    // Before wrapping (flat DOM), we walk nextElementSibling until the next H2.
+    function getSectionContainer(h2) {
+        if (!h2) return null;
+        // Wrapped DOM: h2 is inside .memo-section-wrapper, content is in sibling .memo-section-content
+        const wrapper = h2.closest('.memo-section-wrapper');
+        if (wrapper) return wrapper.querySelector('.memo-section-content') || wrapper;
+        return null; // flat DOM — handled by getSectionElements
+    }
+
+    function getSectionElements(h2) {
+        if (!h2) return [];
+        const contentDiv = getSectionContainer(h2);
+        if (contentDiv) return Array.from(contentDiv.children);
+        // Flat DOM fallback (before wrapping)
+        const elements = [];
+        let el = h2.nextElementSibling;
+        while (el && el.tagName !== 'H2') {
+            elements.push(el);
+            el = el.nextElementSibling;
+        }
+        return elements;
+    }
+
+    // Insert content INLINE within a section — finds the best paragraph to insert after
+    // based on keyword matching. Falls back to appending at section end.
+    function insertInline(h2, html, keywords) {
+        if (!h2) return null;
+        const div = document.createElement('div');
+        div.className = 'memo-chart-inline';
+        div.innerHTML = html;
+
+        // Determine the parent container to append into (wrapped or flat)
+        const contentContainer = getSectionContainer(h2);
+        const sectionEls = getSectionElements(h2);
+
+        if (keywords && keywords.length > 0) {
+            // Score each paragraph by keyword match density
+            let bestEl = null;
+            let bestScore = 0;
+            for (const el of sectionEls) {
+                if (el.tagName === 'P' || el.tagName === 'UL' || el.tagName === 'OL') {
+                    const text = el.textContent.toLowerCase();
+                    let score = 0;
+                    for (const kw of keywords) {
+                        if (text.includes(kw.toLowerCase())) score++;
+                    }
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestEl = el;
+                    }
+                }
+            }
+            if (bestEl && bestScore > 0) {
+                // Insert AFTER the matching paragraph
+                bestEl.after(div);
+                return div;
+            }
+        }
+
+        // Fallback: insert after the first substantial paragraph (>50 chars)
+        for (const el of sectionEls) {
+            if (el.tagName === 'P' && el.textContent.length > 50) {
+                el.after(div);
+                return div;
+            }
+        }
+
+        // Final fallback: append into content container (wrapped) or before next H2 (flat)
+        if (contentContainer) {
+            contentContainer.appendChild(div);
+        } else {
+            let insertBefore = h2.nextElementSibling;
+            while (insertBefore && insertBefore.tagName !== 'H2') {
+                insertBefore = insertBefore.nextElementSibling;
+            }
+            if (insertBefore) container.insertBefore(div, insertBefore);
+            else container.appendChild(div);
+        }
+        return div;
+    }
+
+    // Append a chart block at the end of a section
+    function appendToSection(h2, html) {
+        if (!h2) return null;
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        const contentContainer = getSectionContainer(h2);
+        if (contentContainer) {
+            contentContainer.appendChild(div);
+        } else {
+            // Flat DOM fallback
+            let insertBefore = h2.nextElementSibling;
+            while (insertBefore && insertBefore.tagName !== 'H2') {
+                insertBefore = insertBefore.nextElementSibling;
+            }
+            if (insertBefore) container.insertBefore(div, insertBefore);
+            else container.appendChild(div);
+        }
+        return div;
+    }
+
+    // Shared chart styling
+    const chartFont = "'Inter', 'system-ui', sans-serif";
+    const chartColors = {
+        green: '#5B7744', sage: '#8BA872', blueSteel: '#607D8B',
+        accent: '#3B5249', danger: '#dc2626', muted: '#94a3b8',
+        light: 'rgba(91,119,68,0.12)', band: 'rgba(91,119,68,0.08)',
+    };
+
+    // ── 1. FINANCING OVERVIEW: Break into inline sub-blocks ──
+    const finH2 = findSection('financing overview');
+    if (finH2) {
+        // Hero metrics — insert near the top of the section (after first paragraph about the deal)
+        insertInline(finH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">RVM Deal Metrics Summary</p>
+            <p>The VoLo Return Validation Model (RVM) simulated ${(sim.n_simulations||5000).toLocaleString()} Monte Carlo paths to derive the following key deal metrics:</p>
+            <div class="memo-rvm-hero">
+                <div class="memo-rvm-hero-card accent"><div class="memo-rvm-hero-num">${fmt(hero.expected_moic)}x</div><div class="memo-rvm-hero-lbl">Expected MOIC</div></div>
+                <div class="memo-rvm-hero-card"><div class="memo-rvm-hero-num">${pctFmt(hero.p_gt_3x)}</div><div class="memo-rvm-hero-lbl">P(>3x)</div></div>
+                <div class="memo-rvm-hero-card"><div class="memo-rvm-hero-num">${pctFmt(hero.expected_irr)}</div><div class="memo-rvm-hero-lbl">Expected IRR</div></div>
+                <div class="memo-rvm-hero-card"><div class="memo-rvm-hero-num">${pctFmt(hero.survival_rate)}</div><div class="memo-rvm-hero-lbl">Survival Rate</div></div>
+            </div>
+            <p class="memo-chart-note">Probability distribution: P(loss)=${pctFmt(prob.total_loss)}, P(>1x)=${pctFmt(prob.gt_1x)}, P(>3x)=${pctFmt(prob.gt_3x)}, P(>5x)=${pctFmt(prob.gt_5x)}, P(>10x)=${pctFmt(prob.gt_10x)}</p>
+        </div>`, ['moic', 'irr', 'return', 'monte carlo', 'simulation', 'rvm', 'deal structure']);
+
+        // MOIC + Outcome charts — inline after return/MOIC discussion
+        if (sim.moic_histogram) {
+            insertInline(finH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Return Distribution Analysis</p>
+                <p class="memo-chart-caption">MOIC distribution conditional on survival to exit. Outcome breakdown shows probability-weighted split across exit scenarios.</p>
+                <div class="memo-chart-row">
+                    <div class="memo-chart-wrap"><canvas id="memo-moic-chart" height="260"></canvas></div>
+                    <div class="memo-chart-wrap"><canvas id="memo-outcome-chart" height="260"></canvas></div>
+                </div>
+            </div>`, ['moic', 'distribution', 'return', 'outcome', 'exit', 'probability', 'loss']);
+        }
+
+        // Variance drivers table — inline after risk/sensitivity discussion
+        if (sim.variance_drivers) {
+            const vExp = sim.variance_explanations || {};
+            let vRows = '';
+            for (const [k, v] of Object.entries(sim.variance_drivers)) {
+                const exp = typeof vExp[k] === 'object' ? (vExp[k]?.explanation || '') : (vExp[k] || '');
+                vRows += `<tr><td style="text-transform:capitalize">${k.replace(/_/g, ' ')}</td><td style="text-align:right;font-weight:600;">${fmt(v * 100, 1)}%</td><td>${exp}</td></tr>`;
+            }
+            insertInline(finH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Variance Drivers</p>
+                <p class="memo-chart-caption">Decomposition of outcome uncertainty ranked by contribution to total return variance:</p>
+                <table class="memo-rvm-table"><thead><tr><th>Driver</th><th>Contribution</th><th>Explanation</th></tr></thead><tbody>${vRows}</tbody></table>
+            </div>`, ['variance', 'sensitivity', 'driver', 'risk', 'uncertainty']);
+        }
+
+        // Portfolio impact — inline after portfolio/fund discussion
+        if (pImpact.has_data) {
+            const nCommitted = pImpact.n_committed_deals || 0;
+            insertInline(finH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Simulated Portfolio Impact</p>
+                <p>Adding this deal to ${nCommitted > 0 ? 'the running fund (' + nCommitted + ' committed deals)' : 'a simulated VoLo portfolio'} produces the following marginal impact on fund-level returns:</p>
+                <table class="memo-rvm-table"><thead><tr><th>Metric</th><th>Base Portfolio</th><th>With Deal</th><th>Delta</th></tr></thead><tbody>
+                    <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(pImpact.tvpi_base_mean)}x</td><td style="text-align:right;">${fmt(pImpact.tvpi_new_mean)}x</td><td style="text-align:right;font-weight:600;">${(pImpact.tvpi_mean_lift >= 0 ? '+' : '') + fmt(pImpact.tvpi_mean_lift)}x</td></tr>
+                    <tr><td>TVPI (P50)</td><td style="text-align:right;">${fmt(pImpact.tvpi_base_p50)}x</td><td style="text-align:right;">${fmt(pImpact.tvpi_new_p50)}x</td><td style="text-align:right;font-weight:600;">${((pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50) >= 0 ? '+' : '') + fmt(pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50)}x</td></tr>
+                    <tr><td>IRR (Mean)</td><td style="text-align:right;">${pctFmt(pImpact.irr_base_mean)}</td><td style="text-align:right;">${pctFmt(pImpact.irr_new_mean)}</td><td style="text-align:right;font-weight:600;">${((pImpact.irr_mean_lift*100) >= 0 ? '+' : '') + (pImpact.irr_mean_lift*100).toFixed(1)}pp</td></tr>
+                </tbody></table>
+            </div>`, ['portfolio', 'fund', 'tvpi', 'marginal', 'impact']);
+        }
+
+        // Follow-on charts rendered in Fund Return Model section only (memo-frm-fo-* canvases)
+    }
+
+    // ── 2. MARKET: S-curve adoption chart — inline after adoption/TAM paragraphs ──
+    const marketH2 = findSection('market');
+    if (marketH2 && adoption.scurve) {
+        const scBp = adoption.scurve?.bass_p_mean;
+        const scBq = adoption.scurve?.bass_q_mean;
+        const archLabel = (s) => (s||'').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const mktHtml = `<div class="memo-chart-context">
+            <p class="memo-chart-label">Technology Adoption S-Curve</p>
+            <p class="memo-chart-caption">Market adoption trajectory calibrated from NREL ATB data using Bass diffusion parameters (p=${scBp?.toFixed(4) || 'N/A'}, q=${scBq?.toFixed(3) || 'N/A'}) for the ${archLabel(ov.archetype)} archetype. Uncertainty cone: P10–P90 across ${(sim.n_simulations||5000).toLocaleString()} paths.</p>
+            <div class="memo-chart-wrap"><canvas id="memo-scurve-chart" height="300"></canvas></div>
+        </div>`;
+        insertInline(marketH2, mktHtml, ['adoption', 'tam', 'market size', 'serviceable', 'bass', 's-curve', 'diffusion', 'penetration']);
+    }
+
+    // ── 3. BUSINESS MODEL: Revenue cone — inline after revenue/projection paragraphs ──
+    const bizH2 = findSection('business model');
+    if (bizH2 && sim.revenue_trajectories) {
+        const revSource = sim.revenue_trajectories?.source || 'scurve_derived';
+        const bizHtml = `<div class="memo-chart-context">
+            <p class="memo-chart-label">Revenue Cone vs Founder Projections</p>
+            <p class="memo-chart-caption">The ${revSource === 'founder_anchored' ? 'founder-anchored' : 'S-curve-derived'} simulation shows P10–P90 revenue paths. ${fComp.has_data ? 'Founder projections overlaid — divergences flag where management assumptions depart from the model.' : ''}</p>
+            <div class="memo-chart-wrap"><canvas id="memo-revenue-cone-chart" height="300"></canvas></div>
+        </div>`;
+        insertInline(bizH2, bizHtml, ['revenue', 'projection', 'forecast', 'growth', 'founder', 'diverge', 'trajectory', 'simulation']);
+    }
+
+    // ── 4. FINANCIALS: S-Curve adoption + Revenue Cone + Founder Comparison table ──
+    const finSectionH2 = findSection('financials');
+    if (finSectionH2) {
+        const scBp = adoption.scurve?.bass_p_mean;
+        const scBq = adoption.scurve?.bass_q_mean;
+        const archLabel2 = (s) => (s||'').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+        // Founder comparison table
+        if (fComp.has_data && fComp.revenue?.year_by_year?.length) {
+            let tableRows = '';
+            fComp.revenue.year_by_year.forEach(y => {
+                const rowCls = y.in_band ? '' : (y.divergence_pct > 0 ? ' class="memo-rvm-above"' : ' class="memo-rvm-below"');
+                const divPct = y.divergence_pct != null ? (y.divergence_pct > 0 ? '+' : '') + Number(y.divergence_pct).toFixed(1) + '%' : 'N/A';
+                const yearLbl = y.calendar_year || `Y${y.year}`;
+                tableRows += `<tr${rowCls}>
+                    <td>${yearLbl}</td>
+                    <td style="text-align:right;">${y.founder != null ? Number(y.founder).toFixed(1) : '—'}</td>
+                    <td style="text-align:right;">${y.simulated_median != null ? Number(y.simulated_median).toFixed(1) : '—'}</td>
+                    <td style="text-align:right;">${y.simulated_p25 != null ? Number(y.simulated_p25).toFixed(1) : '—'}</td>
+                    <td style="text-align:right;">${y.simulated_p75 != null ? Number(y.simulated_p75).toFixed(1) : '—'}</td>
+                    <td style="text-align:right;font-weight:600;">${divPct}</td>
+                    <td style="text-align:center;">${y.in_band ? '✓' : '✗'}</td>
+                </tr>`;
+            });
+            const narrative = fComp.revenue?.narrative || '';
+            insertInline(finSectionH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Founder vs Simulation Comparison</p>
+                ${narrative ? `<p class="memo-chart-caption">${narrative}</p>` : ''}
+                <table class="memo-rvm-table">
+                    <thead><tr>
+                        <th>Year</th>
+                        <th style="text-align:right;">Founder ($M)</th>
+                        <th style="text-align:right;">Sim Median ($M)</th>
+                        <th style="text-align:right;">Sim P25</th>
+                        <th style="text-align:right;">Sim P75</th>
+                        <th style="text-align:right;">Divergence</th>
+                        <th style="text-align:center;">In Band</th>
+                    </tr></thead>
+                    <tbody>${tableRows}</tbody>
+                </table>
+                <p class="memo-chart-note">In Band = founder projection falls within Sim P25–P75 range. ✓ = plausible, ✗ = outside model expectations.</p>
+            </div>`, ['divergence', 'founder', 'comparison', 'projection', 'band', 'median', 'year']);
+        }
+
+        // ── Section 6: Valuation Context (comps table) ──────────────────────
+        const valCtx2 = r.valuation_context || {};
+        const vcMatches2 = valCtx2.matches || valCtx2.industries || [];
+        if (vcMatches2.length) {
+            let vcRows = '';
+            vcMatches2.forEach(m => {
+                vcRows += `<tr>
+                    <td>${m.label || m.industry || ''}</td>
+                    <td style="text-align:right;">${fmt(m.ipo_ev_ebitda,1)}x</td>
+                    <td style="text-align:right;">${fmt(m.acq_ev_ebitda,1)}x</td>
+                </tr>`;
+            });
+            if (valCtx2.ipo_ev_ebitda_mean) {
+                vcRows += `<tr style="font-weight:700;border-top:2px solid var(--border,#ccc);">
+                    <td>Weighted Average</td>
+                    <td style="text-align:right;">${fmt(valCtx2.ipo_ev_ebitda_mean,1)}x</td>
+                    <td style="text-align:right;">${fmt(valCtx2.acq_ev_ebitda_mean,1)}x</td>
+                </tr>`;
+            }
+            appendToSection(finSectionH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Section 6 — Valuation Context: Public Comparables</p>
+                <p class="memo-chart-caption">Simulation exit multiples: ${fmt(ov.exit_multiple_range?.[0],1)}x – ${fmt(ov.exit_multiple_range?.[1],1)}x EV/EBITDA applied to projected exit-year EBITDA. Comps sourced from Damodaran/NYU dataset with 20% acquisition haircut. ${valCtx2.multiples_source || ''}</p>
+                <table class="memo-rvm-table">
+                    <thead><tr>
+                        <th>Industry</th>
+                        <th style="text-align:right;">IPO EV/EBITDA</th>
+                        <th style="text-align:right;">Acq EV/EBITDA (80% haircut)</th>
+                    </tr></thead>
+                    <tbody>${vcRows}</tbody>
+                </table>
+            </div>`);
+        }
+
+        // ── Section 6 cont: Enterprise Value at Exit ─────────────────────────
+        const evData2 = sim.ev_at_exit || {};
+        const ebMargin2 = sim.ebitda_margin || {};
+        if (evData2.mean_m) {
+            appendToSection(finSectionH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Enterprise Value at Exit</p>
+                <p class="memo-chart-caption">Implied EV at exit across ${(sim.n_simulations||5000).toLocaleString()} successful-exit paths (conditional on positive exit). EV = exit-year EBITDA × EV/EBITDA multiple. EBITDA margin ramps from ${((ebMargin2.margin_start||0)*100).toFixed(0)}% to ${((ebMargin2.margin_end||0.25)*100).toFixed(0)}% over ${ebMargin2.ramp_years||6} years at TRL ${ov.trl}.</p>
+                <div class="memo-chart-row" style="align-items:flex-start; gap:20px;">
+                    <div style="flex:1;">
+                        <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">EV Distribution (Successful Exits)</p>
+                        <table class="memo-rvm-table">
+                            <thead><tr><th>Percentile</th><th style="text-align:right;">EV ($M)</th></tr></thead>
+                            <tbody>
+                                <tr><td>P25</td><td style="text-align:right;">$${fmt(evData2.p25_m,1)}M</td></tr>
+                                <tr style="font-weight:700;background:rgba(91,119,68,0.08)"><td>P50 (Median)</td><td style="text-align:right;">$${fmt(evData2.p50_m,1)}M</td></tr>
+                                <tr><td>Mean</td><td style="text-align:right;">$${fmt(evData2.mean_m,1)}M</td></tr>
+                                <tr><td>P75</td><td style="text-align:right;">$${fmt(evData2.p75_m,1)}M</td></tr>
+                                <tr><td>P90</td><td style="text-align:right;">$${fmt(evData2.p90_m,1)}M</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div style="flex:1;">
+                        <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">EV Build-Up (Mean Path)</p>
+                        <table class="memo-rvm-table">
+                            <thead><tr><th>Component</th><th style="text-align:right;">Value</th></tr></thead>
+                            <tbody>
+                                <tr><td>Exit Revenue</td><td style="text-align:right;">$${fmt(evData2.exit_revenue_mean_m,1)}M</td></tr>
+                                <tr><td>× EBITDA Margin</td><td style="text-align:right;">${fmt(evData2.exit_margin_mean_pct,1)}%</td></tr>
+                                <tr style="border-top:1px solid #ddd;"><td>= Exit EBITDA</td><td style="text-align:right;">$${fmt(evData2.exit_ebitda_mean_m,1)}M</td></tr>
+                                <tr><td>× EV/EBITDA Multiple</td><td style="text-align:right;">${fmt(evData2.exit_multiple_mean,1)}x</td></tr>
+                                <tr style="font-weight:700;background:rgba(91,119,68,0.08);border-top:2px solid #ccc;"><td>= Enterprise Value</td><td style="text-align:right;">$${fmt(evData2.mean_m,1)}M</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="memo-chart-wrap" style="flex:1.2; min-width:220px;"><canvas id="memo-fin-ev-chart" height="260"></canvas></div>
+                </div>
+                <p class="memo-chart-note">Exit multiples drawn uniformly from ${fmt(ov.exit_multiple_range?.[0],1)}x–${fmt(ov.exit_multiple_range?.[1],1)}x (TRL-adjusted). Mean realized: ${fmt(evData2.exit_multiple_mean,1)}x. EBITDA margin ramp: TRL ${ov.trl} entry → ${((ebMargin2.margin_end||0.25)*100).toFixed(0)}% terminal.</p>
+            </div>`);
+        }
+
+        // ── FM Financials Summary Table ──────────────────────────────────────
+        const fm2 = r.financial_model || {};
+        if (fm2.has_data && fm2.financials && fm2.fiscal_years?.length) {
+            const fmYrs2 = fm2.fiscal_years || [];
+            const fmFin2 = fm2.financials || {};
+            const entryYr2 = r.deal_overview?.entry_year || 0;
+            // Filter to years >= entry_year (show forward-looking only); fall back to all years
+            const dispYrs = fmYrs2.filter(y => !entryYr2 || parseInt(y) >= entryYr2);
+            const colYrs = dispYrs.length ? dispYrs : fmYrs2;
+            if (colYrs.length) {
+                const exitMult = ov.exit_multiple_range || [];
+                const multMid = exitMult.length === 2 ? (exitMult[0] + exitMult[1]) / 2 : null;
+                // Normalise key lookup — fm stores as lowercase
+                const revSeries = fmFin2.revenue || fmFin2.Revenue || {};
+                const ebSeries  = fmFin2.ebitda  || fmFin2.EBITDA  || {};
+                const fmHdrCols = colYrs.map(y => `<th style="text-align:right;">${y}</th>`).join('');
+                const _fmCell = (series, y) => {
+                    const v = series[String(y)] ?? series[y];
+                    if (v == null) return `<td style="text-align:right;">—</td>`;
+                    const vM = v / 1e6;
+                    const neg = vM < 0;
+                    return `<td style="text-align:right;${neg ? 'color:#dc2626;' : ''}">${neg ? '(' : ''}$${Math.abs(vM).toFixed(1)}M${neg ? ')' : ''}</td>`;
+                };
+                const fmRow = (label, series) =>
+                    `<tr><td style="font-weight:600;">${label}</td>${colYrs.map(y => _fmCell(series, y)).join('')}</tr>`;
+                const marginRow = () => {
+                    const cells = colYrs.map(y => {
+                        const rev = revSeries[String(y)] ?? revSeries[y];
+                        const eb  = ebSeries[String(y)]  ?? ebSeries[y];
+                        if (rev == null || eb == null || rev === 0) return `<td style="text-align:right;">—</td>`;
+                        const pct = (eb / rev * 100).toFixed(1);
+                        return `<td style="text-align:right;">${pct}%</td>`;
+                    }).join('');
+                    return `<tr><td style="font-weight:600;">EBITDA Margin</td>${cells}</tr>`;
+                };
+                const valRow = () => {
+                    const cells = colYrs.map(y => {
+                        const eb = ebSeries[String(y)] ?? ebSeries[y];
+                        if (eb == null || multMid == null || eb <= 0) return `<td style="text-align:right;">—</td>`;
+                        const evM = (eb / 1e6) * multMid;
+                        return `<td style="text-align:right;font-weight:700;">$${evM.toFixed(0)}M</td>`;
+                    }).join('');
+                    return `<tr style="background:rgba(91,119,68,0.08);border-top:2px solid #ccc;"><td style="font-weight:600;">Implied EV (${multMid?.toFixed(1)}x)</td>${cells}</tr>`;
+                };
+                const hasRev = colYrs.some(y => (revSeries[String(y)] ?? revSeries[y]) != null);
+                const hasEb  = colYrs.some(y => (ebSeries[String(y)]  ?? ebSeries[y])  != null);
+                if (hasRev || hasEb) {
+                    const multNote = multMid ? ` Implied EV = EBITDA × ${multMid.toFixed(1)}x (midpoint of ${exitMult[0]}x–${exitMult[1]}x range).` : '';
+                    appendToSection(finSectionH2, `<div class="memo-chart-context">
+                        <p class="memo-chart-label">Financial Model Summary</p>
+                        <p class="memo-chart-caption">Revenue, EBITDA, and implied valuation from uploaded financial model (${fm2.file_name || 'FM'}).${multNote} Values in USD millions.</p>
+                        <table class="memo-rvm-table">
+                            <thead><tr><th>Metric</th>${fmHdrCols}</tr></thead>
+                            <tbody>
+                                ${hasRev ? fmRow('Revenue ($M)', revSeries) : ''}
+                                ${hasEb  ? fmRow('EBITDA ($M)',  ebSeries)  : ''}
+                                ${(hasRev && hasEb) ? marginRow() : ''}
+                                ${(hasEb && multMid) ? valRow() : ''}
+                            </tbody>
+                        </table>
+                        <p class="memo-chart-note">Raw extraction — no interpolation or estimation. ${fm2.model_summary?.manually_edited ? '&#9998; Values include manual corrections.' : ''} Empty cells = not present in source file.</p>
+                    </div>`);
+                }
+            }
+        }
+    }
+
+    // ── 5. FUND RETURN MODEL: Section 3 (Portfolio Impact) + Section 8 (Check Size) ──
+    const frmH2 = findSection('fund return model');
+    if (frmH2) {
+        const pImpact2 = r.portfolio_impact || {};
+        const ps2 = r.position_sizing || {};
+        const foPs2 = r.followon_position_sizing || {};
+
+        // ─ Block A: Section 3 — Portfolio Impact ─────────────────────────────
+        if (pImpact2.has_data) {
+            const liftCls2 = (v) => v > 0 ? 'color:#2d6a4f;font-weight:700;' : v < 0 ? 'color:#dc2626;font-weight:700;' : '';
+            const signFmt2 = (v) => v != null ? (v >= 0 ? '+' : '') + Number(v).toFixed(2) : 'N/A';
+            const nComm = pImpact2.n_committed_deals || 0;
+            const portLabel = nComm > 0
+                ? `Running Fund (${nComm} committed deal${nComm > 1 ? 's' : ''} + ${20 - nComm} simulated)`
+                : 'Simulated VoLo Portfolio';
+
+            insertInline(frmH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Section 3 — Portfolio Impact: ${portLabel}</p>
+                ${nComm > 0 ? `<p class="memo-chart-caption" style="background:#f0f4ec;border:1px solid #5B7744;border-radius:4px;padding:6px 10px;">Running portfolio mode: baseline includes ${nComm} committed deal${nComm > 1 ? 's' : ''} replacing simulated company slots.</p>` : ''}
+                <p class="memo-chart-caption">${pImpact2.narrative || 'VCSimulator 2,000 portfolio paths — base portfolio vs portfolio including this deal.'}</p>
+                <div class="memo-rvm-hero">
+                    <div class="memo-rvm-hero-card">
+                        <div class="memo-rvm-hero-num">${fmt(pImpact2.tvpi_base_mean)}x</div>
+                        <div class="memo-rvm-hero-lbl">Base Fund TVPI</div>
+                    </div>
+                    <div class="memo-rvm-hero-card accent">
+                        <div class="memo-rvm-hero-num">${fmt(pImpact2.tvpi_new_mean)}x</div>
+                        <div class="memo-rvm-hero-lbl">With Deal TVPI</div>
+                    </div>
+                    <div class="memo-rvm-hero-card">
+                        <div class="memo-rvm-hero-num" style="${liftCls2(pImpact2.tvpi_mean_lift)}">${signFmt2(pImpact2.tvpi_mean_lift)}x</div>
+                        <div class="memo-rvm-hero-lbl">TVPI Lift (Marginal)</div>
+                    </div>
+                </div>
+                <table class="memo-rvm-table">
+                    <thead><tr><th>Metric</th><th style="text-align:right;">Base Portfolio</th><th style="text-align:right;">With This Deal</th><th style="text-align:right;">Delta</th></tr></thead>
+                    <tbody>
+                        <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_mean)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_mean)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_mean_lift)}">${signFmt2(pImpact2.tvpi_mean_lift)}x</td></tr>
+                        <tr><td>TVPI (P50)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p50)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p50)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}">${signFmt2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}x</td></tr>
+                        <tr><td>TVPI (P75)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p75)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p75)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_p75_lift)}">${signFmt2(pImpact2.tvpi_p75_lift)}x</td></tr>
+                        <tr><td>IRR (Mean)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_mean)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_mean)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_mean_lift)}">${pImpact2.irr_mean_lift != null ? ((pImpact2.irr_mean_lift*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
+                        <tr><td>IRR (P50)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_p50)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_p50)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_new_p50 - pImpact2.irr_base_p50)}">${pImpact2.irr_new_p50 != null ? (((pImpact2.irr_new_p50 - pImpact2.irr_base_p50)*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
+                    </tbody>
+                </table>
+                <p class="memo-chart-note">Deal parameters used in simulation: Conditional MOIC=${fmt(r.simulation?.moic_conditional?.mean)}x, Survival=${pctFmt(r.simulation?.survival_rate)}, Exit ${ov.exit_year_range?.[0] || 5}–${ov.exit_year_range?.[1] || 10} years, Check=$${fmt(ov.check_size_millions,1)}M.</p>
+            </div>`, ['portfolio', 'fund', 'tvpi', 'irr', 'impact', 'return', 'base', 'marginal']);
+        }
+
+        // ─ Block B: Section 8 — Check Size Optimization ──────────────────────
+        if (ps2.has_data && ps2.grid_search?.grid?.length) {
+            const gsOptimal2 = ps2.grid_search.optimal || {};
+            const constraints2 = ps2.fund_constraints || {};
+            const kelly2 = ps2.kelly_reference || {};
+            const pctChgFmt2 = (v) => v != null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%' : '—';
+            const grid2 = ps2.grid_search.grid;
+            const step2 = Math.max(1, Math.floor(grid2.length / 10));
+            let gridRows = '';
+            grid2.forEach((g, i) => {
+                const isOpt = g.check_m === gsOptimal2.check_m;
+                const isCur = Math.abs(g.check_m - (ov.check_size_millions || 0)) < 0.13;
+                if (i % step2 === 0 || isOpt || isCur) {
+                    const rowStyle = isOpt ? 'background:rgba(91,119,68,0.12);font-weight:700;' : isCur ? 'background:#fff3cd;' : '';
+                    const tag = isOpt ? ' ★' : isCur ? ' (entered)' : '';
+                    gridRows += `<tr style="${rowStyle}">
+                        <td>$${Number(g.check_m).toFixed(2)}M${tag}</td>
+                        <td style="text-align:right;">${Number(g.ownership_pct).toFixed(1)}%</td>
+                        <td style="text-align:right;">${pctChgFmt2(g.fund_p10_pct_chg)}</td>
+                        <td style="text-align:right;">${pctChgFmt2(g.fund_p50_pct_chg)}</td>
+                        <td style="text-align:right;">${pctChgFmt2(g.fund_p90_pct_chg)}</td>
+                        <td style="text-align:right;">${g.composite_score != null ? Number(g.composite_score).toFixed(3) : '—'}</td>
+                    </tr>`;
+                }
+            });
+
+            appendToSection(frmH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Section 8 — Check Size Optimization</p>
+                <p class="memo-chart-caption">$250K-increment sweep from $${fmt(constraints2.min_check_m,2)}M to $${fmt(constraints2.max_check_m,2)}M (${fmt(constraints2.max_concentration_pct,0)}% concentration limit on $${fmt(constraints2.fund_size_m,0)}M fund). VCSimulator measures % change in fund TVPI P10/P50/P90 at each level. Composite score = weighted sum of normalized Δ%.</p>
+                <div class="memo-rvm-hero">
+                    <div class="memo-rvm-hero-card accent">
+                        <div class="memo-rvm-hero-num">$${fmt(gsOptimal2.check_m,2)}M</div>
+                        <div class="memo-rvm-hero-lbl">Fund-Optimized Check ★</div>
+                    </div>
+                    <div class="memo-rvm-hero-card">
+                        <div class="memo-rvm-hero-num">${fmt(gsOptimal2.ownership_pct,1)}%</div>
+                        <div class="memo-rvm-hero-lbl">Implied Ownership</div>
+                    </div>
+                    <div class="memo-rvm-hero-card">
+                        <div class="memo-rvm-hero-num">${pctChgFmt2(gsOptimal2.fund_p50_pct_chg)}</div>
+                        <div class="memo-rvm-hero-lbl">Fund P50 Impact</div>
+                    </div>
+                    <div class="memo-rvm-hero-card">
+                        <div class="memo-rvm-hero-num">${fmt(gsOptimal2.fund_pct,1)}%</div>
+                        <div class="memo-rvm-hero-lbl">% of Fund</div>
+                    </div>
+                </div>
+                <div class="memo-chart-row">
+                    <div class="memo-chart-wrap"><canvas id="memo-frm-sizing-chart" height="280"></canvas></div>
+                    <div class="memo-chart-wrap"><canvas id="memo-frm-sizing-score-chart" height="280"></canvas></div>
+                </div>
+                <table class="memo-rvm-table" style="margin-top:12px;">
+                    <thead><tr>
+                        <th>Check Size</th>
+                        <th style="text-align:right;">Ownership</th>
+                        <th style="text-align:right;">Fund Δ%P10</th>
+                        <th style="text-align:right;">Fund Δ%P50</th>
+                        <th style="text-align:right;">Fund Δ%P90</th>
+                        <th style="text-align:right;">Score</th>
+                    </tr></thead>
+                    <tbody>${gridRows}</tbody>
+                </table>
+                <table class="memo-rvm-table" style="margin-top:10px;">
+                    <thead><tr><th>Sizing Method</th><th style="text-align:right;">Check Size</th><th>Notes</th></tr></thead>
+                    <tbody>
+                        <tr style="background:rgba(91,119,68,0.10);font-weight:700;"><td>Fund-Performance Optimizer ★</td><td style="text-align:right;">$${fmt(gsOptimal2.check_m,2)}M</td><td>Max composite Δ% fund TVPI P10/P50/P90</td></tr>
+                        <tr><td>Full Kelly Criterion</td><td style="text-align:right;">$${fmt(kelly2.optimal_check_m,2)}M</td><td>Theoretical log-wealth maximizer (high volatility)</td></tr>
+                        <tr><td>Half Kelly</td><td style="text-align:right;">$${fmt(kelly2.half_kelly_check_m,2)}M</td><td>~75% of Kelly growth, lower drawdown</td></tr>
+                        <tr><td>Fund Average</td><td style="text-align:right;">$${fmt(constraints2.avg_check_m,2)}M</td><td>Investable capital ÷ ${constraints2.n_deals || 25} deals</td></tr>
+                        <tr><td>Entered (this deal)</td><td style="text-align:right;">$${fmt(ov.check_size_millions,2)}M</td><td>As specified in deal terms</td></tr>
+                    </tbody>
+                </table>
+            </div>`);
+        }
+
+        // ─ Block C: Follow-on Check Size Optimization (if applicable) ─────────
+        if (foPs2.has_data && foPs2.blended_curve?.length) {
+            const foInv2 = foPs2.followon_investment || {};
+            const comb2 = foPs2.combined || {};
+            const blStats2 = comb2.blended_stats || {};
+            // Support new multi-prior format and old single first_investment
+            const priorArr2 = foPs2.prior_investments || (foPs2.first_investment ? [Object.assign({}, foPs2.first_investment, {stage: foPs2.first_investment.entry_stage})] : []);
+            const totalPriorCheck2 = priorArr2.reduce((s,p) => s + (p.check_m||0), 0);
+            const combinedOwn2 = comb2.total_ownership_pct_approx ?? comb2.combined_ownership_pct ?? 0;
+            const priorLabel2 = priorArr2.length > 1 ? `${priorArr2.length} prior rounds ($${fmt(totalPriorCheck2,2)}M)` : (priorArr2[0] ? `$${fmt(priorArr2[0].check_m,2)}M at ${priorArr2[0].stage||priorArr2[0].entry_stage||'entry'}` : 'Prior');
+            const priorCheckCell2 = priorArr2.length > 1 ? `$${fmt(totalPriorCheck2,2)}M` : `$${fmt(priorArr2[0]?.check_m,2)}M`;
+            const priorOwnCell2  = priorArr2.length > 1 ? priorArr2.map(p=>`${fmt(p.ownership_pct,1)}%`).join(' + ') : `${fmt(priorArr2[0]?.ownership_pct,1)}%`;
+            const priorRowsHtml2 = priorArr2.length > 1 ? priorArr2.map(p =>
+                `<tr><td style="padding-left:12px;color:var(--color-muted);font-size:11px;">Round ${p.round_num||''}: ${p.type==='convertible'?'Conv/SAFE':'Priced'} ${p.stage||''}</td><td style="text-align:right;color:var(--color-muted);font-size:11px;">$${fmt(p.check_m,2)}M</td><td></td><td></td></tr>`
+            ).join('') : '';
+            appendToSection(frmH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Follow-on Check Size Optimization</p>
+                <p class="memo-chart-caption">${priorLabel2} treated as sunk cost. Optimizer finds optimal follow-on check for blended MOIC maximization.</p>
+                <table class="memo-rvm-table">
+                    <thead><tr><th></th><th style="text-align:right;">Prior Round(s)</th><th style="text-align:right;">Follow-on</th><th style="text-align:right;">Combined</th></tr></thead>
+                    <tbody>
+                        <tr><td>Check Size</td><td style="text-align:right;">${priorCheckCell2}</td><td style="text-align:right;font-weight:700;">$${fmt(foPs2.recommended_followon_check_m,2)}M</td><td style="text-align:right;">$${fmt(comb2.total_invested_m,2)}M</td></tr>
+                        ${priorRowsHtml2}
+                        <tr><td>Ownership</td><td style="text-align:right;">${priorOwnCell2}</td><td style="text-align:right;">${fmt(foInv2.ownership_pct,1)}%</td><td style="text-align:right;font-weight:700;">${fmt(combinedOwn2,1)}%</td></tr>
+                    </tbody>
+                </table>
+                ${blStats2.blended_moic_p50 != null ? `<p style="margin-top:8px;">Blended MOIC: <strong>${fmt(blStats2.blended_moic_p50,2)}x</strong> (P50), <strong>${fmt(blStats2.blended_moic_p10,2)}x</strong> (P10), <strong>${fmt(blStats2.blended_moic_p90,2)}x</strong> (P90)</p>` : ''}
+                <div class="memo-chart-row">
+                    <div class="memo-chart-wrap"><canvas id="memo-frm-fo-blended-chart" height="260"></canvas></div>
+                    <div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>
+                </div>
+            </div>`);
+        }
+    }
+
+    // ── 6. CARBON IMPACT: Full Section 4 from deal pipeline ──
+    const carbonH2 = findSection('carbon impact');
+    if (carbonH2) {
+        const co = carbon.outputs || {};
+        const ci = carbon.intermediates || {};
+        const cInp = carbon.carbon_inputs || {};
+        const riskDiv = carbon.risk_divisor_used || 1;
+        const riskSrc = carbon.risk_divisor_source || '';
+        const entryOwn = ov.entry_ownership_pct || 0;
+        const checkM = ov.check_size_millions || 0;
+
+        // ─ Block A: Carbon Hero Cards ─────────────────────────────────────────
+        insertInline(carbonH2, `<div class="memo-chart-context memo-carbon-hero-block">
+            <p class="memo-chart-label">RVM Carbon Impact Summary — Section 4</p>
+            <p class="memo-chart-caption">VoLo Return Validation Model carbon assessment. Lifecycle tCO2 is the company-level impact across the 10-year volume forecast. Attribution applies VoLo's ${fmt(entryOwn,1)}% entry ownership and TRL-based risk haircut.</p>
+            <div class="memo-rvm-hero">
+                <div class="memo-rvm-hero-card accent">
+                    <div class="memo-rvm-hero-num">${fmt(co.company_tonnes, 0)}</div>
+                    <div class="memo-rvm-hero-lbl">Total Lifecycle tCO₂</div>
+                </div>
+                <div class="memo-rvm-hero-card">
+                    <div class="memo-rvm-hero-num">${fmt(co.volo_prorata, 0)}</div>
+                    <div class="memo-rvm-hero-lbl">VoLo Pro-Rata tCO₂</div>
+                </div>
+                <div class="memo-rvm-hero-card">
+                    <div class="memo-rvm-hero-num">${fmt(co.volo_risk_adj, 0)}</div>
+                    <div class="memo-rvm-hero-lbl">Risk-Adjusted tCO₂</div>
+                </div>
+                <div class="memo-rvm-hero-card accent">
+                    <div class="memo-rvm-hero-num">${co.risk_adj_tpd != null ? Number(co.risk_adj_tpd).toFixed(4) : 'N/A'}</div>
+                    <div class="memo-rvm-hero-lbl">t/$ (Risk-Adj)</div>
+                </div>
+            </div>
+        </div>`, ['theory of change', 'carbon', 'emissions', 'displace', 'avoided', 'tco2', 'lifecycle', 'impact']);
+
+        // ─ Block B: Displacement Chain Step-by-Step Calculation ──────────────
+        const unitDef = cInp.unit_definition || 'unit';
+        const dispRes = cInp.displaced_resource || 'N/A';
+        const baselifeProd = cInp.baseline_lifetime_prod != null ? Number(cInp.baseline_lifetime_prod).toLocaleString() : 'N/A';
+        const rangeImp = cInp.range_improvement != null ? (Number(cInp.range_improvement) * 100).toFixed(0) + '%' : 'N/A';
+        const specProdUnits = cInp.specific_production_units || '';
+        const jd = ci.jd != null ? Number(ci.jd).toLocaleString(undefined, {maximumFractionDigits: 2}) : 'N/A';
+        const ciY1 = (ci.operating_ci_series || [])[0];
+        const svcLife = cInp.unit_service_life_yrs || 'N/A';
+        const launchYr = cInp.commercial_launch_yr || 'N/A';
+        const embDisp = cInp.emb_displaced_resource;
+        const totalOp = ci.total_operating != null ? Number(ci.total_operating).toLocaleString(undefined, {maximumFractionDigits: 0}) : 'N/A';
+        const totalEmb = ci.total_embodied != null ? Number(ci.total_embodied).toLocaleString(undefined, {maximumFractionDigits: 0}) : '0';
+        const totalLc = ci.total_lifecycle != null ? Number(ci.total_lifecycle).toLocaleString(undefined, {maximumFractionDigits: 0}) : 'N/A';
+
+        // CI series declining-check
+        const ciSeries = ci.operating_ci_series || [];
+        const ciDeclines = ciSeries.length > 1 && ciSeries[ciSeries.length-1] < ciSeries[0];
+        const ciNote = ciDeclines
+            ? `Declines from ${ciSeries[0]?.toFixed(4)} → ${ciSeries[ciSeries.length-1]?.toFixed(4)} tCO₂/unit as grid decarbonizes.`
+            : `Flat at ${ciSeries[0]?.toFixed(4)} tCO₂/unit (resource CI does not change over model horizon).`;
+
+        // Volume forecast
+        const yearVols = cInp.year_volumes || [];
+        let volRows = '';
+        if (yearVols.length) {
+            const _volCalLaunch = typeof launchYr === 'number' ? launchYr : (parseInt(launchYr) || null);
+            yearVols.slice(0,10).forEach((v, i) => {
+                const annOpVal = (ci.annual_operating || [])[i];
+                const annEmbVal = (ci.annual_embodied || [])[i];
+                const annLcVal = (ci.annual_lifecycle || [])[i];
+                const ciYrVal = ciSeries[i];
+                // Use calendar year label (same system as revenue table) — falls back to Y1/Y2 if no launch year
+                const volYrLbl = _volCalLaunch ? String(_volCalLaunch + i) : `Y${i+1}`;
+                volRows += `<tr>
+                    <td>${volYrLbl}</td>
+                    <td style="text-align:right;">${v != null ? Number(v).toLocaleString(undefined,{maximumFractionDigits:1}) : '—'}</td>
+                    <td style="text-align:right;">${ciYrVal != null ? ciYrVal.toFixed(4) : '—'}</td>
+                    <td style="text-align:right;">${annOpVal != null ? Number(annOpVal).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'}</td>
+                    <td style="text-align:right;">${annEmbVal != null && annEmbVal > 0 ? Number(annEmbVal).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'}</td>
+                    <td style="text-align:right;font-weight:600;">${annLcVal != null ? Number(annLcVal).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'}</td>
+                </tr>`;
+            });
+        }
+
+        insertInline(carbonH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">Displacement Chain Calculation</p>
+            <p class="memo-chart-caption">Step-by-step derivation of avoided CO₂ per the VoLo RVM methodology (cols JA–LK in original Fund I spreadsheet):</p>
+            <table class="memo-rvm-table memo-carbon-chain-table">
+                <thead><tr><th>Step</th><th>Formula</th><th>Value</th><th>Notes</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Unit</strong></td>
+                        <td>—</td>
+                        <td>${unitDef}</td>
+                        <td>One deployable unit of the company's product</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Service Life</strong></td>
+                        <td>—</td>
+                        <td>${svcLife} yrs</td>
+                        <td>Expected operational lifespan per unit</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Baseline Lifetime Prod (JA)</strong></td>
+                        <td>—</td>
+                        <td>${baselifeProd} ${specProdUnits}</td>
+                        <td>Total production of the displaced resource per unit over its service life</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Range Improvement (JC)</strong></td>
+                        <td>—</td>
+                        <td>${rangeImp}</td>
+                        <td>Fraction of baseline resource that this technology displaces</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Displaced Vol/Unit (JD)</strong></td>
+                        <td>JC × JA</td>
+                        <td>${jd} ${specProdUnits}</td>
+                        <td>Net resource displaced per deployed unit over its life</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Displaced Resource</strong></td>
+                        <td>—</td>
+                        <td>${dispRes}</td>
+                        <td>Carbon-intensive resource or energy source being replaced</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CI Year 1 (JE)</strong></td>
+                        <td>CarbonIntensityDB lookup</td>
+                        <td>${ciY1 != null ? ciY1.toFixed(4) : 'N/A'} tCO₂/unit</td>
+                        <td>${ciNote}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Annual Op. Impact (JO)</strong></td>
+                        <td>JD × Vol_yr × CI_yr</td>
+                        <td colspan="2">See year-by-year table below</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Embodied Carbon (KP)</strong></td>
+                        <td>${embDisp ? 'KE × CI_yr × Vol_yr' : '—'}</td>
+                        <td>${embDisp ? embDisp : 'Not modeled'}</td>
+                        <td>Manufacturing / upstream carbon; ${totalEmb !== '0' ? `total ${totalEmb} tCO₂` : 'zero in this model'}</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.08);font-weight:700;">
+                        <td><strong>Total Lifecycle (LL)</strong></td>
+                        <td>Σ (Operating + Embodied)</td>
+                        <td>${totalLc} tCO₂</td>
+                        <td>Operating ${totalOp} + Embodied ${totalEmb} tCO₂</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>`, ['displacement', 'chain', 'calculation', 'baseline', 'range', 'ci', 'jd', 'formula', 'carbon', 'avoided']);
+
+        // ─ Block C: Year-by-Year Impact Table + Annual Bar Chart ─────────────
+        if (volRows) {
+            insertInline(carbonH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Annual Carbon Impact by Year</p>
+                <p class="memo-chart-caption">Annual operating and embodied carbon impact across the 10-year volume forecast (commercial launch ${launchYr}). Operating impact = JD × units deployed × CI for that year.</p>
+                <div class="memo-chart-row">
+                    <div class="memo-carbon-table-wrap">
+                        <table class="memo-rvm-table">
+                            <thead><tr>
+                                <th>Year</th>
+                                <th style="text-align:right;">Units</th>
+                                <th style="text-align:right;">CI (tCO₂/unit)</th>
+                                <th style="text-align:right;">Operating tCO₂</th>
+                                <th style="text-align:right;">Embodied tCO₂</th>
+                                <th style="text-align:right;">Lifecycle tCO₂</th>
+                            </tr></thead>
+                            <tbody>${volRows}</tbody>
+                        </table>
+                    </div>
+                    <div class="memo-chart-wrap"><canvas id="memo-carbon-chart" height="300"></canvas></div>
+                </div>
+            </div>`, ['annual', 'year', 'impact', 'deployment', 'volume', 'operating', 'embodied', 'lifecycle']);
+        }
+
+        // ─ Block D: Attribution Waterfall ─────────────────────────────────────
+        const riskDivLabel = riskDiv >= 6 ? 'TRL 1–4 (pre-commercial, 6× haircut)'
+                           : riskDiv >= 3 ? 'TRL 5–6 (validated, 3× haircut)'
+                           : 'TRL 7–9 (proven, no haircut)';
+        const compTonnes = co.company_tonnes || 0;
+        const voloProrata = co.volo_prorata || 0;
+        const voloRiskAdj = co.volo_risk_adj || 0;
+        const tpdRaw = co.tonnes_per_dollar != null ? Number(co.tonnes_per_dollar).toFixed(5) : 'N/A';
+        const tpdRisk = co.risk_adj_tpd != null ? Number(co.risk_adj_tpd).toFixed(5) : 'N/A';
+
+        insertInline(carbonH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">VoLo Attribution Waterfall</p>
+            <p class="memo-chart-caption">Step-down from company-level lifecycle tCO₂ to VoLo's risk-adjusted carbon efficiency metric (t/$).</p>
+            <div class="memo-chart-row" style="align-items:flex-start; gap: 20px;">
+                <table class="memo-rvm-table" style="flex:1.4;">
+                    <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Explanation</th></tr></thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>① Lifecycle tCO₂</strong></td>
+                            <td>Σ annual lifecycle</td>
+                            <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
+                            <td>Company-level total across 10-year forecast</td>
+                        </tr>
+                        <tr>
+                            <td><strong>② VoLo Pro-Rata</strong></td>
+                            <td>① × ${fmt(entryOwn,1)}% ownership</td>
+                            <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
+                            <td>VoLo's attributable share at entry ownership</td>
+                        </tr>
+                        <tr>
+                            <td><strong>③ Risk Divisor</strong></td>
+                            <td>÷ ${riskDiv}</td>
+                            <td style="text-align:right;">${riskDivLabel}</td>
+                            <td>${riskSrc}. Reduce to 1× if TRL reaches 7+.</td>
+                        </tr>
+                        <tr style="background:rgba(91,119,68,0.08);">
+                            <td><strong>④ Risk-Adj tCO₂</strong></td>
+                            <td>② ÷ ${riskDiv}</td>
+                            <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
+                            <td>Expected avoided CO₂ accounting for execution risk</td>
+                        </tr>
+                        <tr>
+                            <td><strong>⑤ t/$ (raw)</strong></td>
+                            <td>② ÷ $${fmt(checkM,2)}M</td>
+                            <td style="text-align:right;">${tpdRaw}</td>
+                            <td>Unadjusted tCO₂ per dollar invested</td>
+                        </tr>
+                        <tr style="background:rgba(91,119,68,0.08);">
+                            <td><strong>⑥ t/$ (risk-adj)</strong></td>
+                            <td>④ ÷ $${fmt(checkM,2)}M</td>
+                            <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
+                            <td>Risk-adjusted carbon efficiency — VoLo's primary carbon KPI</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>
+            </div>
+            <p class="memo-chart-note">Risk divisor is TRL-derived: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Typical VoLo portfolio range: 0.005–0.10 t/$.</p>
+        </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
+
+        // Grid Carbon Intensity Trajectory chart removed from memo
+    }
+
+    // ── Now render the actual Chart.js charts ──
+    setTimeout(() => { _memoRenderCharts(report); }, 100);
+}
+
+
+// ── Inject data room images into memo sections by category ──────────────────
+function _memoInjectImages(container, imageDocs) {
+    if (!container || !imageDocs || imageDocs.length === 0) return;
+
+    // Section key → H2 title keyword mapping
+    const SECTION_TITLES = {
+        'company_overview': 'company overview',
+        'market': 'market',
+        'business_model': 'business model',
+        'financials': 'financials',
+        'team': 'team',
+        'traction': 'traction',
+        'competitive_position': 'competitive position',
+        'carbon_impact': 'carbon impact',
+        'technology_ip_moat': 'technology',
+        'financing_overview': 'financing overview',
+        'fund_return_model': 'fund return model',
+    };
+
+    function findSectionH2(sectionKey) {
+        const keyword = SECTION_TITLES[sectionKey];
+        if (!keyword) return null;
+        const h2s = container.querySelectorAll('h2');
+        for (const h2 of h2s) {
+            if (h2.textContent.toLowerCase().includes(keyword)) return h2;
+        }
+        return null;
+    }
+
+    // Track which sections already have an image to avoid overloading
+    const sectionsWithImages = new Set();
+
+    for (const img of imageDocs) {
+        // Find the best target section (first matching section that doesn't already have an image)
+        let targetH2 = null;
+        let targetKey = null;
+        for (const sectionKey of (img.section_targets || [])) {
+            if (!sectionsWithImages.has(sectionKey)) {
+                const h2 = findSectionH2(sectionKey);
+                if (h2) {
+                    targetH2 = h2;
+                    targetKey = sectionKey;
+                    break;
+                }
+            }
+        }
+        if (!targetH2) continue;
+
+        sectionsWithImages.add(targetKey);
+
+        // Build a readable caption from the filename
+        const cleanName = img.file_name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const catLabel = (img.category || 'other').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+        const imgHtml = `<figure class="memo-image-figure">
+            <button class="memo-image-remove" title="Remove image from memo" onclick="_memoRemoveImage(this, ${img.doc_id})">✕</button>
+            <img src="/api/memo/documents/${img.doc_id}/view?token=${encodeURIComponent(localStorage.getItem('rvm_token') || '')}"
+                 alt="${_escHtml(cleanName)}"
+                 class="memo-image-embed"
+                 loading="lazy"
+                 onerror="this.closest('.memo-image-figure').style.display='none'">
+            <figcaption class="memo-image-caption">
+                <span class="memo-image-source">${_escHtml(catLabel)}</span>
+                ${_escHtml(cleanName)}
+            </figcaption>
+        </figure>`;
+
+        // Insert after the first substantial paragraph in the section
+        const sectionEls = [];
+        let el = targetH2.nextElementSibling;
+        while (el && el.tagName !== 'H2') {
+            sectionEls.push(el);
+            el = el.nextElementSibling;
+        }
+
+        let inserted = false;
+        for (const sEl of sectionEls) {
+            if (sEl.tagName === 'P' && sEl.textContent.length > 50) {
+                const div = document.createElement('div');
+                div.innerHTML = imgHtml;
+                sEl.after(div.firstElementChild);
+                inserted = true;
+                break;
+            }
+        }
+        if (!inserted && sectionEls.length > 0) {
+            const div = document.createElement('div');
+            div.innerHTML = imgHtml;
+            sectionEls[sectionEls.length - 1].after(div.firstElementChild);
+        }
+    }
+}
+
+
+async function _memoRemoveImage(btn, docId) {
+    const figure = btn.closest('.memo-image-figure');
+    if (!figure) return;
+    // Remove from DOM immediately for instant feedback
+    figure.remove();
+    // Persist deletion so it stays gone on export and reload
+    if (docId) {
+        try {
+            await fetch(`/api/memo/documents/${docId}`, { method: 'DELETE', headers: _rvmHeaders() });
+        } catch (e) {
+            console.warn('Could not delete image doc:', e);
+        }
+    }
+}
+
+function _memoRenderCharts(r) {
+    const sim = r.simulation || {};
+    const carbon = r.carbon_impact || {};
+    const adoption = r.adoption_analysis || {};
+    const fComp = r.founder_comparison || {};
+    const ps = r.position_sizing || {};
+    const ov = r.deal_overview || {};
+    const risk = r.risk_summary || {};
+
+    const chartFont = "'Inter', 'system-ui', sans-serif";
+    const C = {
+        green: '#5B7744', sage: '#8BA872', blueSteel: '#607D8B',
+        accent: '#3B5249', danger: '#dc2626', muted: '#94a3b8',
+    };
+
+    // Helper to create chart and track instance
+    function mkChart(id, config) {
+        const canvas = document.getElementById(id);
+        if (!canvas) return null;
+        const ctx = canvas.getContext('2d');
+        const chart = new Chart(ctx, config);
+        _memoChartInstances.push(chart);
+        return chart;
+    }
+
+    // ── MOIC Distribution ──
+    if (sim.moic_histogram) {
+        const hist = sim.moic_histogram;
+        const bins = hist.bins || [];
+        const counts = hist.counts || [];
+        const labels = bins.map((b, i) => i < bins.length - 1 ? `${b.toFixed(1)}x` : '');
+        mkChart('memo-moic-chart', {
+            type: 'bar',
+            data: {
+                labels: labels.slice(0, -1),
+                datasets: [{
+                    data: counts, backgroundColor: C.green + '88',
+                    borderColor: C.green, borderWidth: 1,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, title: { display: true, text: 'MOIC Distribution (Survivors)', font: { family: chartFont, size: 13 } } },
+                scales: { x: { title: { display: true, text: 'MOIC' } }, y: { title: { display: true, text: 'Frequency' } } },
+            }
+        });
+    }
+
+    // ── Outcome Breakdown ──
+    if (sim.outcome_breakdown) {
+        const ob = sim.outcome_breakdown;
+        const oLabels = ['Full Exit', 'Stage Exit', 'Partial Recovery', 'Late Small Exit', 'Total Loss'];
+        // outcome_breakdown values can be plain numbers OR objects {count, pct, label}
+        const _obVal = (v) => v == null ? 0 : (typeof v === 'object' ? (v.pct != null ? v.pct / 100 : (v.count || 0)) : v);
+        const oData = [_obVal(ob.full_exit), _obVal(ob.stage_exit), _obVal(ob.partial_recovery), _obVal(ob.late_small_exit), _obVal(ob.total_loss)];
+        const oColors = [C.green, C.sage, C.blueSteel, C.muted, C.danger];
+        mkChart('memo-outcome-chart', {
+            type: 'bar',
+            data: {
+                labels: oLabels,
+                datasets: [{ data: oData, backgroundColor: oColors }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                plugins: { legend: { display: false }, title: { display: true, text: 'Outcome Breakdown', font: { family: chartFont, size: 13 } } },
+                scales: { x: { title: { display: true, text: 'Probability' }, ticks: { callback: v => (v*100).toFixed(0)+'%' } } },
+            }
+        });
+    }
+
+    // ── S-Curve (Market section + Financials section) ──
+    if (adoption.scurve) {
+        const sc = adoption.scurve;
+        const years = sc.years || [];
+        const buildSCurveDatasets = () => {
+            const ds = [];
+            // data key may be 'p50' or 'median'
+            const scMedian = sc.p50 || sc.median;
+            if (scMedian) ds.push({ label: 'Median (P50)', data: scMedian, borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 0 });
+            if (sc.p25 && sc.p75) {
+                ds.push({ label: 'P25', data: sc.p25, borderColor: C.sage+'66', borderWidth: 1, borderDash: [4,4], fill: false, pointRadius: 0 });
+                ds.push({ label: 'P75', data: sc.p75, borderColor: C.sage+'66', borderWidth: 1, borderDash: [4,4], fill: '-1', backgroundColor: C.green+'15', pointRadius: 0 });
+            }
+            if (sc.p10 && sc.p90) {
+                ds.push({ label: 'P10', data: sc.p10, borderColor: C.muted+'44', borderWidth: 1, fill: false, pointRadius: 0 });
+                ds.push({ label: 'P90', data: sc.p90, borderColor: C.muted+'44', borderWidth: 1, fill: '-1', backgroundColor: C.green+'08', pointRadius: 0 });
+            }
+            return ds;
+        };
+        const sCurveOptions = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { title: { display: true, text: 'Adoption S-Curve', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+            scales: { x: { title: { display: true, text: 'Year' } }, y: { title: { display: true, text: 'Cumulative Adoption' } } },
+        };
+        mkChart('memo-scurve-chart', { type: 'line', data: { labels: years, datasets: buildSCurveDatasets() }, options: sCurveOptions });
+    }
+
+    // ── Revenue Cone (Business Model + Financials sections) ──
+    const revTraj = sim.revenue_trajectories || {};
+    const _memoEntryYr = r.deal_overview?.entry_year || new Date().getFullYear();
+    const _memoFundVintageYr = r.deal_overview?.fund_vintage_year || _memoEntryYr;
+    const _memoDealOffset = r.deal_overview?.deal_offset_years || 0;
+    const _rtMedian = revTraj.median || revTraj.p50 || [];
+    // X-axis anchored to fund_vintage_year; MC simulation data offset by deal_offset_years
+    const _rtN = _rtMedian.length;
+    if (_rtN) {
+        const _rtTotalN = _memoDealOffset + _rtN;
+        const ry = Array.from({length: _rtTotalN}, (_, i) => _memoFundVintageYr + i);
+        // Helper: prepend fund-offset nulls to MC arrays
+        const _padRT = arr => arr ? [...new Array(_memoDealOffset).fill(null), ...arr] : null;
+        const buildRevDatasets = () => {
+            const ds = [];
+            const rtMedian = revTraj.p50 || revTraj.median;
+            if (rtMedian) ds.push({ label: 'Sim Median', data: _padRT(rtMedian), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 0 });
+            if (revTraj.p25 && revTraj.p75) {
+                ds.push({ label: 'P25', data: _padRT(revTraj.p25), borderColor: C.sage+'55', borderWidth: 1, fill: false, pointRadius: 0 });
+                ds.push({ label: 'P75', data: _padRT(revTraj.p75), borderColor: C.sage+'55', borderWidth: 1, fill: '-1', backgroundColor: C.green+'12', pointRadius: 0 });
+            }
+            if (revTraj.p10 && revTraj.p90) {
+                ds.push({ label: 'P10', data: _padRT(revTraj.p10), borderColor: C.muted+'33', borderWidth: 1, fill: false, pointRadius: 0 });
+                ds.push({ label: 'P90', data: _padRT(revTraj.p90), borderColor: C.muted+'33', borderWidth: 1, fill: '-1', backgroundColor: C.green+'06', pointRadius: 0 });
+            }
+            // Founder projection overlay — calendar_year aligned to fund_vintage_year axis
+            // Authoritative source: r.financial_model.fiscal_years (same as FM summary table).
+            // Falls back to stored y.calendar_year, then entry_year+i if neither is available.
+            if (fComp.has_data && fComp.revenue?.year_by_year?.length) {
+                const fm = r.financial_model || {};
+                const _fmFiscalYrs = (fm.has_data && fm.fiscal_years?.length)
+                    ? fm.fiscal_years.filter(y => !_memoEntryYr || y >= _memoEntryYr)
+                    : null;
+                const founderData = new Array(_rtTotalN).fill(null);
+                fComp.revenue.year_by_year.forEach((y, i) => {
+                    const calYr = (_fmFiscalYrs && i < _fmFiscalYrs.length)
+                        ? _fmFiscalYrs[i]
+                        : (y.calendar_year || (_memoEntryYr + i));
+                    const t = calYr - _memoFundVintageYr;
+                    if (t >= 0 && t < _rtTotalN) founderData[t] = y.founder;
+                });
+                if (founderData.some(v => v != null)) {
+                    ds.push({ label: 'Founder', data: founderData, borderColor: '#e36209', borderWidth: 2, borderDash: [6,3], fill: false, pointRadius: 3 });
+                }
+            }
+            return ds;
+        };
+        const revConeOptions = {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { title: { display: true, text: 'Revenue Cone vs Founder Projections ($M)', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+            scales: { x: { title: { display: true, text: 'Calendar Year' } }, y: { title: { display: true, text: 'Revenue ($M)' } } },
+        };
+        mkChart('memo-revenue-cone-chart', { type: 'line', data: { labels: ry, datasets: buildRevDatasets() }, options: revConeOptions });
+    }
+
+    // ── Carbon Impact (3 charts: stacked bar + waterfall + CI decay) ──
+    const ci = carbon.intermediates || {};
+    const cInp2 = carbon.carbon_inputs || {};
+    const co2 = carbon.outputs || {};
+    const riskDiv2 = carbon.risk_divisor_used || 1;
+
+    // Chart 1: Annual stacked bar (operating + embodied) — X-axis anchored to fund_vintage_year
+    if (ci.annual_lifecycle?.length) {
+        const _carbonLaunchYr = cInp2.commercial_launch_yr || _memoEntryYr;
+        const _carbonOffset = Math.max(0, _carbonLaunchYr - _memoFundVintageYr);
+        const _carbonTotalLen = _carbonOffset + ci.annual_lifecycle.length;
+        const carbonYears = Array.from({length: _carbonTotalLen}, (_, i) => String(_memoFundVintageYr + i));
+        const _padCarbon = arr => arr ? [...new Array(_carbonOffset).fill(null), ...arr] : [];
+        mkChart('memo-carbon-chart', {
+            type: 'bar',
+            data: {
+                labels: carbonYears,
+                datasets: [
+                    { label: 'Operating (displaced energy)', data: _padCarbon(ci.annual_operating), backgroundColor: C.accent + 'cc', borderRadius: 2 },
+                    { label: 'Embodied (manufacturing)', data: _padCarbon(ci.annual_embodied), backgroundColor: C.sage + '88', borderRadius: 2 },
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: 'tCO₂' } } },
+                plugins: {
+                    title: { display: true, text: 'Annual Carbon Impact by Type (tCO₂)', font: { family: chartFont, size: 13 } },
+                    legend: { position: 'bottom', labels: { font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            footer: (items) => {
+                                const total = items.reduce((s, i) => s + i.parsed.y, 0);
+                                return `Total: ${total.toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
+                            }
+                        }
+                    }
+                },
+            }
+        });
+    }
+
+    // Chart 2: Attribution waterfall bar chart
+    if (co2.company_tonnes != null) {
+        const entryOwn2 = (ov.entry_ownership_pct || 0) / 100;
+        const wfLabels = ['Lifecycle tCO₂', 'VoLo Pro-Rata', 'Risk-Adjusted', 't/$ ×10k'];
+        const wfData = [
+            co2.company_tonnes || 0,
+            co2.volo_prorata || 0,
+            co2.volo_risk_adj || 0,
+            (co2.risk_adj_tpd || 0) * 10000,
+        ];
+        const wfColors = [C.blueSteel + 'cc', C.green + 'cc', C.accent + 'cc', '#e36209cc'];
+        mkChart('memo-carbon-waterfall-chart', {
+            type: 'bar',
+            data: {
+                labels: wfLabels,
+                datasets: [{
+                    data: wfData,
+                    backgroundColor: wfColors,
+                    borderColor: wfColors.map(c => c.slice(0,7)),
+                    borderWidth: 1,
+                    borderRadius: 3,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: 'Carbon Attribution Step-Down', font: { family: chartFont, size: 13 } },
+                    tooltip: {
+                        callbacks: {
+                            label: (item) => {
+                                const raw = item.parsed.y;
+                                if (item.dataIndex === 3) return `t/$ = ${(raw/10000).toFixed(5)}`;
+                                return `${raw.toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: { title: { display: true, text: 'tCO₂ (t/$ ×10k for last bar)' } }
+                }
+            }
+        });
+    }
+
+    // Chart 3: Carbon Intensity decay series — removed from memo
+
+    // ── EV at Exit distribution bar chart (Financials section) ──
+    const evData3 = sim.ev_at_exit || {};
+    if (evData3.mean_m) {
+        mkChart('memo-fin-ev-chart', {
+            type: 'bar',
+            data: {
+                labels: ['P25', 'P50', 'Mean', 'P75', 'P90'],
+                datasets: [{
+                    label: 'EV at Exit ($M)',
+                    data: [evData3.p25_m, evData3.p50_m, evData3.mean_m, evData3.p75_m, evData3.p90_m],
+                    backgroundColor: [C.muted+'88', C.green+'aa', C.blueSteel+'cc', C.green+'cc', C.accent+'cc'],
+                    borderColor: [C.muted, C.green, C.blueSteel, C.green, C.accent],
+                    borderWidth: 1,
+                    borderRadius: 3,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: 'EV at Exit Distribution ($M)', font: { family: chartFont, size: 13 } },
+                    tooltip: { callbacks: { label: (i) => `$${i.parsed.y?.toLocaleString(undefined, {maximumFractionDigits:1})}M` } }
+                },
+                scales: { y: { title: { display: true, text: 'Enterprise Value ($M)' }, beginAtZero: true } }
+            }
+        });
+    }
+
+    // Check size charts rendered in Fund Return Model section only (memo-frm-sizing-chart)
+
+    // Follow-on charts rendered in Fund Return Model section only (memo-frm-fo-* canvases)
+
+    // ── Fund Return Model: Check Size + Follow-on charts (separate canvases) ──
+    const ps3 = r.position_sizing || {};
+    if (ps3.has_data && ps3.grid_search?.grid?.length) {
+        const grid3 = ps3.grid_search.grid;
+        const optimal3 = ps3.grid_search.optimal || {};
+        const labels3 = grid3.map(g => '$' + g.check_m.toFixed(2) + 'M');
+        mkChart('memo-frm-sizing-chart', {
+            type: 'line',
+            data: {
+                labels: labels3,
+                datasets: [
+                    { label: 'Fund P50 Δ%', data: grid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green, borderWidth: 2, fill: false, pointRadius: 1 },
+                    { label: 'Fund P10 Δ%', data: grid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'Fund P90 Δ%', data: grid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { title: { display: true, text: 'Fund TVPI Impact by Check Size', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                scales: { x: { title: { display: true, text: 'Check Size' } }, y: { title: { display: true, text: 'Δ% Fund TVPI' }, ticks: { callback: v => v.toFixed(2)+'%' } } },
+            }
+        });
+        mkChart('memo-frm-sizing-score-chart', {
+            type: 'bar',
+            data: {
+                labels: labels3,
+                datasets: [{
+                    data: grid3.map(g => g.composite_score || 0),
+                    backgroundColor: grid3.map(g => g.check_m === optimal3.check_m ? C.green : C.blueSteel+'66'),
+                    borderColor: grid3.map(g => g.check_m === optimal3.check_m ? C.green : C.blueSteel+'44'),
+                    borderWidth: 1,
+                    borderRadius: 2,
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, title: { display: true, text: 'Composite Optimization Score', font: { family: chartFont, size: 13 } } },
+                scales: { x: { title: { display: true, text: 'Check Size' } }, y: { title: { display: true, text: 'Score' } } },
+            }
+        });
+    }
+
+    const foPs3 = r.followon_position_sizing || {};
+    if (foPs3.has_data && foPs3.blended_curve?.length) {
+        const bc3 = foPs3.blended_curve;
+        const recFo3 = foPs3.recommended_followon_check_m;
+        const bcLabels3 = bc3.map(b => '$' + b.followon_check_m.toFixed(2) + 'M');
+        mkChart('memo-frm-fo-blended-chart', {
+            type: 'line',
+            data: {
+                labels: bcLabels3,
+                datasets: [
+                    { label: 'Blended P90', data: bc3.map(b => b.blended_moic_p90), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'Blended P50', data: bc3.map(b => b.blended_moic_p50), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 1 },
+                    { label: 'Blended P10', data: bc3.map(b => b.blended_moic_p10), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { title: { display: true, text: 'Blended MOIC (First + Follow-on)', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Blended MOIC' }, ticks: { callback: v => v.toFixed(1)+'x' } } },
+            }
+        });
+        const foGrid3 = foPs3.standalone_grid_search?.grid || [];
+        if (foGrid3.length) {
+            const foLabels3 = foGrid3.map(g => '$' + g.check_m.toFixed(2) + 'M');
+            mkChart('memo-frm-fo-grid-chart', {
+                type: 'line',
+                data: {
+                    labels: foLabels3,
+                    datasets: [
+                        { label: 'Fund P50 Δ%', data: foGrid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green, borderWidth: 2, fill: false, pointRadius: 1 },
+                        { label: 'Fund P10 Δ%', data: foGrid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                        { label: 'Fund P90 Δ%', data: foGrid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { title: { display: true, text: 'Follow-on Fund TVPI Impact', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                    scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Δ% Fund TVPI' }, ticks: { callback: v => v.toFixed(2)+'%' } } },
+                }
+            });
+        }
+    }
+}
+
+
 // ── Init on tab switch ──────────────────────────────────────────────────────
 const _origSwitchTab = switchTab;
 switchTab = function(tab) {
@@ -5761,7 +8263,1176 @@ switchTab = function(tab) {
         memoLoadReports();
         memoLoadTemplates();
         memoInitUpload();
+        _memoFollowonInit();
         driveLoadLibraries();
         if (_memo.sessionId) memoRefreshDocList();
+    }
+};
+
+// ══════════════════════════════════════════════════════════════════════
+// DD FINANCIAL ANALYSIS TAB
+// ══════════════════════════════════════════════════════════════════════
+
+const _dd = {
+    currentScenario: 'conservative',
+    scenarios: {},       // {name: assumptions}
+    results: null,       // last compute result
+    reportId: null,
+    reportData: null,    // selected deal report data
+    charts: {},          // Chart.js instances
+};
+
+// ── Scenario tab switching ────────────────────────────────────────
+function ddSwitchScenario(name) {
+    _dd.currentScenario = name;
+    document.querySelectorAll('.dd-scenario-tab').forEach(t => t.classList.remove('active'));
+    const tab = document.querySelector(`.dd-scenario-tab[data-scenario="${name}"]`);
+    if (tab) tab.classList.add('active');
+
+    const editorPanel = document.getElementById('dd-editor-panel');
+    const resultsPanel = document.getElementById('dd-results-panel');
+    const compPanel = document.getElementById('dd-comparison-panel');
+    const dilutionPanel = document.getElementById('dd-dilution-panel');
+
+    if (name === 'comparison') {
+        editorPanel.style.display = 'none';
+        resultsPanel.style.display = 'none';
+        if (dilutionPanel) dilutionPanel.style.display = 'none';
+        compPanel.style.display = _dd.results ? '' : 'none';
+        if (_dd.results) ddRenderComparison();
+    } else {
+        editorPanel.style.display = '';
+        compPanel.style.display = 'none';
+        // Load this scenario's assumptions into the editor
+        ddLoadScenarioToEditor(name);
+        // Show results for this scenario if available
+        if (_dd.results && _dd.results.scenarios && _dd.results.scenarios[name]) {
+            resultsPanel.style.display = '';
+            if (dilutionPanel) dilutionPanel.style.display = '';
+            ddRenderScenarioResults(name);
+        } else {
+            resultsPanel.style.display = 'none';
+            if (dilutionPanel) dilutionPanel.style.display = 'none';
+        }
+    }
+}
+
+// ── Load deal reports into the dropdown ────────────────────────────
+function ddLoadReports() {
+    const sel = document.getElementById('dd-report-select');
+    if (!sel) return;
+    _apiFetch('/api/deal-pipeline/reports')
+        .then(r => r.json())
+        .then(data => {
+            sel.innerHTML = '<option value="">Select a Deal Report...</option>';
+            (data.reports || []).forEach(rpt => {
+                const opt = document.createElement('option');
+                opt.value = rpt.id;
+                opt.textContent = `${rpt.company_name} — ${rpt.entry_stage} (${rpt.created_at?.split('T')[0] || ''})`;
+                sel.appendChild(opt);
+            });
+        }).catch(() => {});
+}
+
+function ddReportChanged() {
+    const sel = document.getElementById('dd-report-select');
+    const id = sel ? parseInt(sel.value) : null;
+    _dd.reportId = id || null;
+    _dd.reportData = null;
+
+    const btns = ['dd-defaults-btn', 'dd-run-btn', 'dd-save-btn'];
+    btns.forEach(b => { const el = document.getElementById(b); if (el) el.disabled = !id; });
+
+    if (id) {
+        _apiFetch(`/api/deal-pipeline/report/${id}`)
+            .then(r => r.json())
+            .then(data => {
+                _dd.reportData = data;
+                // Also try to load saved scenarios
+                ddLoadSavedScenarios(id);
+            }).catch(() => {});
+    }
+}
+
+// ── Load default assumptions from backend ─────────────────────────
+function ddLoadDefaults() {
+    const stage = _dd.reportData?.inputs?.entry_stage || 'Seed';
+    _apiFetch('/api/dd/defaults', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entry_stage: stage }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        _dd.scenarios = data;
+        ddLoadScenarioToEditor(_dd.currentScenario);
+    }).catch(e => console.error('DD defaults error', e));
+}
+
+// ── Load saved scenarios ──────────────────────────────────────────
+function ddLoadSavedScenarios(reportId) {
+    _apiFetch(`/api/dd/scenarios/${reportId}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.count > 0) {
+                _dd.scenarios = data.scenarios;
+                ddLoadScenarioToEditor(_dd.currentScenario);
+            } else {
+                ddLoadDefaults();
+            }
+        }).catch(() => ddLoadDefaults());
+}
+
+// ── Editor ↔ Scenario Data Binding ────────────────────────────────
+function ddLoadScenarioToEditor(name) {
+    const a = _dd.scenarios[name];
+    if (!a) return;
+    _ddSet('dd-time-to-launch', a.time_to_launch_years || 0);
+    _ddSet('dd-revenue-y1', a.revenue_y1_m);
+    _ddSet('dd-revenue-cagr', a.revenue_cagr_pct);
+    _ddSet('dd-proj-years', a.projection_years);
+    _ddSet('dd-custom-rev', '');
+    _ddSet('dd-gm-start', a.gross_margin_start_pct);
+    _ddSet('dd-gm-end', a.gross_margin_end_pct);
+    _ddSet('dd-rd-start', a.opex_rd_pct_rev);
+    _ddSet('dd-rd-end', a.opex_rd_end_pct_rev);
+    _ddSet('dd-sm-start', a.opex_sm_pct_rev);
+    _ddSet('dd-sm-end', a.opex_sm_end_pct_rev);
+    _ddSet('dd-ga-start', a.opex_ga_pct_rev);
+    _ddSet('dd-ga-end', a.opex_ga_end_pct_rev);
+    _ddSet('dd-da-pct', a.da_pct_rev);
+    _ddSet('dd-exit-type', a.exit_multiple_type || 'ev_revenue');
+    _ddSet('dd-exit-mult', a.exit_multiple);
+    _ddSet('dd-discount', a.discount_rate_pct);
+    _ddSet('dd-terminal-g', a.terminal_growth_pct);
+    _ddSet('dd-tax', a.tax_rate_pct);
+    _ddSet('dd-capex', a.capex_pct_rev);
+    _ddSet('dd-nwc', a.nwc_pct_rev);
+    _ddSet('dd-dilution-rounds', a.future_rounds || 2);
+    _ddSet('dd-dilution-pct', a.dilution_per_round_pct || 20);
+    // Fundraising plan
+    _ddRenderFundraisingPlan(a.fundraising_plan || []);
+}
+
+function ddReadEditorToScenario() {
+    return {
+        time_to_launch_years: _ddNum('dd-time-to-launch', 0),
+        projection_years: _ddNum('dd-proj-years', 10),
+        revenue_y1_m: _ddNum('dd-revenue-y1', 1),
+        revenue_cagr_pct: _ddNum('dd-revenue-cagr', 100),
+        gross_margin_start_pct: _ddNum('dd-gm-start', 40),
+        gross_margin_end_pct: _ddNum('dd-gm-end', 65),
+        opex_rd_pct_rev: _ddNum('dd-rd-start', 50),
+        opex_sm_pct_rev: _ddNum('dd-sm-start', 30),
+        opex_ga_pct_rev: _ddNum('dd-ga-start', 15),
+        opex_rd_end_pct_rev: _ddNum('dd-rd-end', 15),
+        opex_sm_end_pct_rev: _ddNum('dd-sm-end', 12),
+        opex_ga_end_pct_rev: _ddNum('dd-ga-end', 7),
+        da_pct_rev: _ddNum('dd-da-pct', 3),
+        capex_pct_rev: _ddNum('dd-capex', 5),
+        nwc_pct_rev: _ddNum('dd-nwc', 10),
+        tax_rate_pct: _ddNum('dd-tax', 0),
+        terminal_growth_pct: _ddNum('dd-terminal-g', 3),
+        discount_rate_pct: _ddNum('dd-discount', 25),
+        exit_multiple_type: _ddVal('dd-exit-type') || 'ev_revenue',
+        exit_multiple: _ddNum('dd-exit-mult', 10),
+        scenario: _dd.currentScenario,
+        fundraising_plan: _ddReadFundraisingPlan(),
+    };
+}
+
+function _ddSet(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
+function _ddVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+function _ddNum(id, def) { const v = parseFloat(_ddVal(id)); return isNaN(v) ? def : v; }
+
+// ── Run Analysis ──────────────────────────────────────────────────
+function ddRunAnalysis() {
+    // Save current editor state to current scenario
+    _dd.scenarios[_dd.currentScenario] = ddReadEditorToScenario();
+
+    // Make sure all three scenarios exist (use defaults for missing)
+    ['conservative', 'base', 'best_case'].forEach(s => {
+        if (!_dd.scenarios[s]) {
+            const stage = _dd.reportData?.inputs?.entry_stage || 'Seed';
+            // We'll let the backend fill missing
+        }
+    });
+
+    // Parse custom revenues
+    const customRevenues = {};
+    const crInput = _ddVal('dd-custom-rev').trim();
+    if (crInput) {
+        const revs = crInput.split(',').map(v => { const n = parseFloat(v.trim()); return isNaN(n) ? null : n; });
+        customRevenues[_dd.currentScenario] = revs;
+    }
+
+    const inputs = _dd.reportData?.inputs || {};
+    const payload = {
+        report_id: _dd.reportId,
+        entry_stage: inputs.entry_stage || 'Seed',
+        check_size_m: inputs.check_size_millions || 2.0,
+        pre_money_m: inputs.pre_money_millions || 15.0,
+        round_size_m: inputs.round_size_m || null,
+        exit_year: null,
+        dilution_per_round_pct: _ddNum('dd-dilution-pct', 20),
+        future_rounds: _ddNum('dd-dilution-rounds', 2),
+        scenarios: _dd.scenarios,
+        custom_revenues: Object.keys(customRevenues).length ? customRevenues : null,
+        fundraising_plans: _ddBuildFundraisingPlans(),
+    };
+
+    const runBtn = document.getElementById('dd-run-btn');
+    if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Computing...'; }
+
+    _apiFetch('/api/dd/compute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            _dd.results = data.result;
+            ddSwitchScenario(_dd.currentScenario);
+        } else {
+            alert('Analysis failed: ' + (data.detail || 'Unknown error'));
+        }
+    })
+    .catch(e => alert('Analysis error: ' + e.message))
+    .finally(() => {
+        if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Analysis'; }
+    });
+}
+
+// ── Save Scenarios ────────────────────────────────────────────────
+function ddSaveScenarios() {
+    if (!_dd.reportId) return;
+    // Capture current editor state
+    _dd.scenarios[_dd.currentScenario] = ddReadEditorToScenario();
+
+    const payload = {
+        report_id: _dd.reportId,
+        scenarios: _dd.scenarios,
+        deal_params: {
+            check_size_m: _dd.reportData?.inputs?.check_size_millions || 2.0,
+            pre_money_m: _dd.reportData?.inputs?.pre_money_millions || 15.0,
+        },
+        notes: '',
+    };
+
+    _apiFetch('/api/dd/scenarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const btn = document.getElementById('dd-save-btn');
+            if (btn) { btn.textContent = 'Saved!'; setTimeout(() => btn.textContent = 'Save', 2000); }
+        }
+    }).catch(e => alert('Save failed: ' + e.message));
+}
+
+// ── Render Single Scenario Results ────────────────────────────────
+function ddRenderScenarioResults(name) {
+    const s = _dd.results.scenarios[name];
+    if (!s) return;
+    const pnl = s.pnl;
+    const ret = s.returns;
+
+    // Hero metrics
+    const heroEl = document.getElementById('dd-hero');
+    const moicClass = ret.moic >= 3 ? 'dd-positive' : ret.moic < 1 ? 'dd-negative' : '';
+    const prelaunch = pnl.pre_launch_years || 0;
+    const bridgeDelay = ret.bridge_delay_years || 0;
+    const totalHold = ret.hold_years_total || (ret.exit_year + prelaunch);
+    const holdParts = [];
+    if (prelaunch > 0) holdParts.push(`${prelaunch}yr pre-launch`);
+    if (bridgeDelay > 0) holdParts.push(`${bridgeDelay}yr bridge delay`);
+    const holdSub = holdParts.length > 0 ? ` (${holdParts.join(' + ')})` : '';
+    heroEl.innerHTML = `
+        <div class="dd-hero-card dd-hero-highlight">
+            <div class="dd-hero-label">Implied MOIC</div>
+            <div class="dd-hero-value ${moicClass}">${ret.moic.toFixed(1)}x</div>
+            <div class="dd-hero-sub">${totalHold}yr hold${holdSub}</div>
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">Implied IRR</div>
+            <div class="dd-hero-value">${ret.irr_pct.toFixed(1)}%</div>
+            ${bridgeDelay > 0 ? `<div class="dd-hero-sub dd-warn">bridge adds +${bridgeDelay}yr</div>` : ''}
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">Exit EV</div>
+            <div class="dd-hero-value">$${_ddFmt(ret.exit_ev_m)}M</div>
+            <div class="dd-hero-sub">${s.assumptions.exit_multiple_type === 'ev_ebitda' ? 'EV/EBITDA' : 'EV/Rev'} × ${s.assumptions.exit_multiple}</div>
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">DCF Value</div>
+            <div class="dd-hero-value">$${_ddFmt(pnl.enterprise_value)}M</div>
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">Exit Revenue</div>
+            <div class="dd-hero-value">$${_ddFmt(pnl.revenue[pnl.revenue.length - 1])}M</div>
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">Exit EBITDA Margin</div>
+            <div class="dd-hero-value">${pnl.ebitda_margin_pct[pnl.ebitda_margin_pct.length - 1].toFixed(1)}%</div>
+        </div>
+        <div class="dd-hero-card">
+            <div class="dd-hero-label">Entry Ownership</div>
+            <div class="dd-hero-value">${ret.entry_ownership_pct.toFixed(1)}%</div>
+            <div class="dd-hero-sub">→ ${ret.exit_ownership_pct.toFixed(1)}% at exit</div>
+        </div>
+    `;
+
+    // Render dilution waterfall if schedule exists
+    _ddRenderDilutionWaterfall(ret);
+
+    // P&L table
+    ddRenderPnlTable(pnl, 'dd-pnl-table');
+
+    // Charts
+    ddRenderScenarioCharts(pnl, name);
+}
+
+function ddRenderPnlTable(pnl, tableId) {
+    const tbl = document.getElementById(tableId);
+    if (!tbl) return;
+    const yrs = pnl.years;
+    const prelaunch = pnl.pre_launch_years || 0;
+    const hdr = '<tr><th>Line Item</th>' + yrs.map(y => {
+        if (y <= prelaunch) return `<th class="dd-prelaunch-hdr">Pre-L ${y}</th>`;
+        return `<th>Yr ${y - prelaunch}</th>`;
+    }).join('') + '</tr>';
+    const rows = [
+        { label: 'Revenue', data: pnl.revenue, cls: 'dd-row-header' },
+        { label: 'COGS', data: pnl.cogs, neg: true },
+        { label: 'Gross Profit', data: pnl.gross_profit, cls: 'dd-row-subtotal' },
+        { label: 'Gross Margin %', data: pnl.gross_margin_pct, pct: true },
+        { label: 'R&D', data: pnl.opex_rd, neg: true },
+        { label: 'Sales & Marketing', data: pnl.opex_sm, neg: true },
+        { label: 'G&A', data: pnl.opex_ga, neg: true },
+        { label: 'EBITDA', data: pnl.ebitda, cls: 'dd-row-subtotal' },
+        { label: 'EBITDA Margin %', data: pnl.ebitda_margin_pct, pct: true },
+        { label: 'D&A', data: pnl.da, neg: true },
+        { label: 'EBIT', data: pnl.ebit },
+        { label: 'Taxes', data: pnl.taxes, neg: true },
+        { label: 'Net Income', data: pnl.net_income, cls: 'dd-row-subtotal' },
+        { label: 'CapEx', data: pnl.capex, neg: true },
+        { label: 'Δ Working Capital', data: pnl.delta_nwc, neg: true },
+        { label: 'Free Cash Flow', data: pnl.fcf, cls: 'dd-row-total' },
+    ];
+
+    let html = '<thead>' + hdr + '</thead><tbody>';
+    for (const row of rows) {
+        const cls = row.cls ? ` class="${row.cls}"` : '';
+        html += `<tr${cls}><td>${row.label}</td>`;
+        for (const val of row.data) {
+            const isNeg = val < 0;
+            const cellCls = row.pct ? 'dd-pct' : (isNeg ? 'dd-neg' : '');
+            const display = row.pct ? `${val.toFixed(1)}%` : _ddFmt(val);
+            html += `<td class="${cellCls}">${display}</td>`;
+        }
+        html += '</tr>';
+    }
+    html += '</tbody>';
+    tbl.innerHTML = html;
+}
+
+function _ddFmt(v) {
+    if (v == null || isNaN(v)) return '-';
+    const abs = Math.abs(v);
+    if (abs >= 1000) return (v < 0 ? '(' : '') + abs.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (v < 0 ? ')' : '');
+    if (abs >= 10) return v.toFixed(1);
+    if (abs >= 1) return v.toFixed(2);
+    return v.toFixed(3);
+}
+
+// ── Scenario Charts ───────────────────────────────────────────────
+function ddRenderScenarioCharts(pnl, name) {
+    const prelaunch = pnl.pre_launch_years || 0;
+    const labels = pnl.years.map(y => y <= prelaunch ? `Pre-L ${y}` : `Yr ${y - prelaunch}`);
+    const base = { tension: 0.3, pointRadius: 3, borderWidth: 2 };
+
+    // Destroy old charts
+    Object.values(_dd.charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+    _dd.charts = {};
+
+    // Revenue & EBITDA
+    _dd.charts.revEbitda = new Chart(document.getElementById('dd-chart-rev-ebitda'), {
+        type: 'line', data: {
+            labels,
+            datasets: [
+                { ...base, label: 'Revenue', data: pnl.revenue, borderColor: VOLO.green, backgroundColor: VOLO.greenLight },
+                { ...base, label: 'EBITDA', data: pnl.ebitda, borderColor: VOLO.blueSteel, backgroundColor: VOLO.blueSteelLight },
+            ]
+        },
+        options: _ddChartOpts('$M'),
+    });
+
+    // Margins
+    _dd.charts.margins = new Chart(document.getElementById('dd-chart-margins'), {
+        type: 'line', data: {
+            labels,
+            datasets: [
+                { ...base, label: 'Gross Margin %', data: pnl.gross_margin_pct, borderColor: VOLO.green },
+                { ...base, label: 'EBITDA Margin %', data: pnl.ebitda_margin_pct, borderColor: VOLO.blueSteel },
+            ]
+        },
+        options: _ddChartOpts('%'),
+    });
+
+    // FCF
+    _dd.charts.fcf = new Chart(document.getElementById('dd-chart-fcf'), {
+        type: 'bar', data: {
+            labels,
+            datasets: [{
+                label: 'Free Cash Flow',
+                data: pnl.fcf,
+                backgroundColor: pnl.fcf.map(v => v >= 0 ? 'rgba(91,119,68,0.6)' : 'rgba(220,53,69,0.5)'),
+                borderColor: pnl.fcf.map(v => v >= 0 ? 'rgba(91,119,68,1)' : 'rgba(220,53,69,0.8)'),
+                borderWidth: 1,
+            }]
+        },
+        options: _ddChartOpts('$M'),
+    });
+
+    // OpEx breakdown
+    const totalRev = pnl.revenue;
+    _dd.charts.opex = new Chart(document.getElementById('dd-chart-opex'), {
+        type: 'bar', data: {
+            labels,
+            datasets: [
+                { label: 'R&D %', data: pnl.opex_rd.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(91,119,68,0.7)' },
+                { label: 'S&M %', data: pnl.opex_sm.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(157,181,196,0.7)' },
+                { label: 'G&A %', data: pnl.opex_ga.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(44,62,80,0.4)' },
+            ]
+        },
+        options: { ..._ddChartOpts('%'), scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: '% of Revenue' } } } },
+    });
+}
+
+function _ddChartOpts(yLabel) {
+    return {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
+        scales: { y: { title: { display: true, text: yLabel } } },
+    };
+}
+
+// ── Comparison View ───────────────────────────────────────────────
+function ddRenderComparison() {
+    if (!_dd.results) return;
+    const comp = _dd.results.comparison;
+    const scenarios = comp.scenarios;
+
+    // Hero comparison
+    const heroEl = document.getElementById('dd-comp-hero');
+    let heroHtml = '';
+    for (const s of scenarios) {
+        const label = s === 'conservative' ? 'Conservative' : s === 'base' ? 'Base Case' : 'Best Case';
+        const moic = comp.moic[s] || 0;
+        const bridgeD = comp.bridge_delay[s] || 0;
+        const holdYrs = comp.hold_years[s] || 0;
+        const cls = moic >= 3 ? 'dd-positive' : moic < 1 ? 'dd-negative' : '';
+        heroHtml += `
+            <div class="dd-hero-card">
+                <div class="dd-hero-label">${label} MOIC</div>
+                <div class="dd-hero-value ${cls}">${moic.toFixed(1)}x</div>
+                <div class="dd-hero-sub">IRR: ${(comp.irr[s] || 0).toFixed(1)}% · ${holdYrs}yr hold${bridgeD > 0 ? ` (${bridgeD}yr bridge)` : ''}</div>
+            </div>`;
+    }
+    heroEl.innerHTML = heroHtml;
+
+    // Comparison charts
+    Object.values(_dd.charts).forEach(c => { try { c.destroy(); } catch(e) {} });
+    _dd.charts = {};
+
+    const colors = { conservative: '#dc2626', base: '#5b7744', best_case: '#1e40af' };
+    const labels_map = { conservative: 'Conservative', base: 'Base Case', best_case: 'Best Case' };
+
+    // Get year labels from first available scenario
+    const firstKey = scenarios[0];
+    const yrs = _dd.results.scenarios[firstKey]?.pnl?.years || [];
+    const yearLabels = yrs.map(y => `Yr ${y}`);
+
+    // Revenue comparison
+    const revDatasets = scenarios.map(s => ({
+        label: labels_map[s],
+        data: _dd.results.scenarios[s]?.pnl?.revenue || [],
+        borderColor: colors[s],
+        backgroundColor: colors[s] + '22',
+        tension: 0.3, pointRadius: 3, borderWidth: 2, fill: true,
+    }));
+    _dd.charts.compRev = new Chart(document.getElementById('dd-chart-comp-rev'), {
+        type: 'line', data: { labels: yearLabels, datasets: revDatasets },
+        options: _ddChartOpts('Revenue ($M)'),
+    });
+
+    // EBITDA comparison
+    const ebitdaDatasets = scenarios.map(s => ({
+        label: labels_map[s],
+        data: _dd.results.scenarios[s]?.pnl?.ebitda || [],
+        borderColor: colors[s],
+        backgroundColor: colors[s] + '22',
+        tension: 0.3, pointRadius: 3, borderWidth: 2, fill: true,
+    }));
+    _dd.charts.compEbitda = new Chart(document.getElementById('dd-chart-comp-ebitda'), {
+        type: 'line', data: { labels: yearLabels, datasets: ebitdaDatasets },
+        options: _ddChartOpts('EBITDA ($M)'),
+    });
+
+    // MOIC bar chart
+    _dd.charts.compMoic = new Chart(document.getElementById('dd-chart-comp-moic'), {
+        type: 'bar', data: {
+            labels: scenarios.map(s => labels_map[s]),
+            datasets: [{ label: 'MOIC', data: scenarios.map(s => comp.moic[s] || 0),
+                backgroundColor: scenarios.map(s => colors[s] + 'aa'), borderColor: scenarios.map(s => colors[s]), borderWidth: 1 }]
+        },
+        options: { ..._ddChartOpts('MOIC (x)'), plugins: { legend: { display: false } } },
+    });
+
+    // IRR bar chart
+    _dd.charts.compIrr = new Chart(document.getElementById('dd-chart-comp-irr'), {
+        type: 'bar', data: {
+            labels: scenarios.map(s => labels_map[s]),
+            datasets: [{ label: 'IRR %', data: scenarios.map(s => comp.irr[s] || 0),
+                backgroundColor: scenarios.map(s => colors[s] + 'aa'), borderColor: scenarios.map(s => colors[s]), borderWidth: 1 }]
+        },
+        options: { ..._ddChartOpts('IRR (%)'), plugins: { legend: { display: false } } },
+    });
+
+    // Comparison summary table
+    const tbl = document.getElementById('dd-comp-table');
+    if (tbl) {
+        let html = '<thead><tr><th>Metric</th>';
+        for (const s of scenarios) html += `<th>${labels_map[s]}</th>`;
+        html += '</tr></thead><tbody>';
+
+        const metrics = [
+            ['Exit Revenue ($M)', s => _ddFmt(comp.exit_year_revenue[s])],
+            ['Exit EBITDA ($M)', s => _ddFmt(comp.exit_year_ebitda[s])],
+            ['Exit EBITDA Margin', s => (comp.exit_year_ebitda_margin[s] || 0).toFixed(1) + '%'],
+            ['Exit EV ($M)', s => _ddFmt(comp.exit_ev[s])],
+            ['DCF EV ($M)', s => _ddFmt(comp.dcf_ev[s])],
+            ['MOIC', s => (comp.moic[s] || 0).toFixed(1) + 'x'],
+            ['IRR', s => (comp.irr[s] || 0).toFixed(1) + '%'],
+            ['Exit Ownership', s => (comp.exit_ownership[s] || 0).toFixed(1) + '%'],
+            ['Hold Period (yr)', s => (comp.hold_years[s] || 0).toFixed(1)],
+            ['Bridge Delay (yr)', s => (comp.bridge_delay[s] || 0).toFixed(1)],
+        ];
+
+        for (const [label, fn] of metrics) {
+            html += `<tr><td>${label}</td>`;
+            for (const s of scenarios) html += `<td>${fn(s)}</td>`;
+            html += '</tr>';
+        }
+        html += '</tbody>';
+        tbl.innerHTML = html;
+    }
+}
+
+// ── Info-tip injection for DD labels ──────────────────────────────
+// ── Fundraising Plan UI ───────────────────────────────────────────
+function _ddRenderFundraisingPlan(plan) {
+    const container = document.getElementById('dd-fundraising-rounds');
+    if (!container) return;
+    container.innerHTML = '';
+    if (!plan || plan.length === 0) {
+        plan = [{ label: 'Series A', year: 2, dilution_pct: 20, needs_bridge: false, bridge_dilution_pct: 8, bridge_delay_years: 0.5 }];
+    }
+    plan.forEach((rnd, idx) => {
+        container.appendChild(_ddCreateRoundRow(rnd, idx));
+    });
+    _ddReindexRounds();
+}
+
+function _ddCreateRoundRow(rnd, idx) {
+    const div = document.createElement('div');
+    div.className = 'dd-fundraising-round';
+    div.dataset.roundIdx = idx;
+    const bridgeChecked = rnd.needs_bridge ? 'checked' : '';
+    const bridgeVis = rnd.needs_bridge ? '' : 'style="display:none"';
+    div.innerHTML = `
+        <div class="dd-round-header">
+            <span class="dd-round-num">#${idx + 1}</span>
+            <button class="dd-round-remove" title="Remove round" onclick="_ddRemoveRound(${idx})">×</button>
+        </div>
+        <div class="dd-field-row">
+            <div class="dd-field dd-field-sm">
+                <label data-tip="dd_round_label">Round</label>
+                <input type="text" class="dd-fp-label" value="${rnd.label || 'Round'}" placeholder="e.g. Series A">
+            </div>
+            <div class="dd-field dd-field-sm">
+                <label data-tip="dd_round_year">Year</label>
+                <input type="number" class="dd-fp-year" value="${rnd.year || 2}" step="1" min="1" max="15">
+            </div>
+            <div class="dd-field dd-field-sm">
+                <label data-tip="dd_round_dilution">Dilution %</label>
+                <input type="number" class="dd-fp-dilution" value="${rnd.dilution_pct || 20}" step="1" min="0" max="50">
+            </div>
+        </div>
+        <div class="dd-field-row dd-bridge-row">
+            <div class="dd-field dd-field-sm">
+                <label data-tip="dd_needs_bridge">
+                    <input type="checkbox" class="dd-fp-bridge-toggle" ${bridgeChecked} onchange="_ddToggleBridge(this)"> Needs Bridge
+                </label>
+            </div>
+            <div class="dd-bridge-fields" ${bridgeVis}>
+                <div class="dd-field dd-field-sm">
+                    <label data-tip="dd_bridge_dilution">Bridge Dilution %</label>
+                    <input type="number" class="dd-fp-bridge-dilution" value="${rnd.bridge_dilution_pct || 8}" step="1" min="0" max="30">
+                </div>
+                <div class="dd-field dd-field-sm">
+                    <label data-tip="dd_bridge_delay">Bridge Delay (yr)</label>
+                    <input type="number" class="dd-fp-bridge-delay" value="${rnd.bridge_delay_years || 0.5}" step="0.1" min="0" max="3">
+                </div>
+            </div>
+        </div>
+    `;
+    return div;
+}
+
+function _ddToggleBridge(checkbox) {
+    const row = checkbox.closest('.dd-fundraising-round');
+    const fields = row.querySelector('.dd-bridge-fields');
+    if (fields) fields.style.display = checkbox.checked ? '' : 'none';
+}
+
+function _ddRemoveRound(idx) {
+    const container = document.getElementById('dd-fundraising-rounds');
+    if (!container) return;
+    const rows = container.querySelectorAll('.dd-fundraising-round');
+    if (rows.length <= 1) return; // keep at least one
+    if (rows[idx]) rows[idx].remove();
+    _ddReindexRounds();
+}
+
+function _ddReindexRounds() {
+    const container = document.getElementById('dd-fundraising-rounds');
+    if (!container) return;
+    container.querySelectorAll('.dd-fundraising-round').forEach((row, i) => {
+        row.dataset.roundIdx = i;
+        const num = row.querySelector('.dd-round-num');
+        if (num) num.textContent = '#' + (i + 1);
+        const removeBtn = row.querySelector('.dd-round-remove');
+        if (removeBtn) removeBtn.setAttribute('onclick', `_ddRemoveRound(${i})`);
+    });
+    // Re-inject info-tips for new round rows
+    _ddInjectInfoTips();
+}
+
+function _ddAddFundraisingRound() {
+    const container = document.getElementById('dd-fundraising-rounds');
+    if (!container) return;
+    const count = container.querySelectorAll('.dd-fundraising-round').length;
+    const labels = ['Series A', 'Series B', 'Series C', 'Series D', 'Series E'];
+    const rnd = {
+        label: labels[Math.min(count, labels.length - 1)],
+        year: (count + 1) * 2,
+        dilution_pct: 18,
+        needs_bridge: false,
+        bridge_dilution_pct: 8,
+        bridge_delay_years: 0.5,
+    };
+    container.appendChild(_ddCreateRoundRow(rnd, count));
+    _ddReindexRounds();
+}
+
+function _ddReadFundraisingPlan() {
+    const container = document.getElementById('dd-fundraising-rounds');
+    if (!container) return [];
+    const rounds = [];
+    container.querySelectorAll('.dd-fundraising-round').forEach(row => {
+        const label = (row.querySelector('.dd-fp-label') || {}).value || 'Round';
+        const year = parseInt((row.querySelector('.dd-fp-year') || {}).value) || 2;
+        const dilution = parseFloat((row.querySelector('.dd-fp-dilution') || {}).value) || 20;
+        const needsBridge = (row.querySelector('.dd-fp-bridge-toggle') || {}).checked || false;
+        const bridgeDilution = parseFloat((row.querySelector('.dd-fp-bridge-dilution') || {}).value) || 8;
+        const bridgeDelay = parseFloat((row.querySelector('.dd-fp-bridge-delay') || {}).value) || 0.5;
+        rounds.push({
+            label: label,
+            year: year,
+            dilution_pct: dilution,
+            needs_bridge: needsBridge,
+            bridge_dilution_pct: bridgeDilution,
+            bridge_delay_years: bridgeDelay,
+        });
+    });
+    return rounds;
+}
+
+function _ddBuildFundraisingPlans() {
+    // Build fundraising plans dict from each scenario's assumptions
+    const plans = {};
+    let hasPlan = false;
+    for (const [name, assumptions] of Object.entries(_dd.scenarios)) {
+        if (assumptions.fundraising_plan && assumptions.fundraising_plan.length > 0) {
+            plans[name] = assumptions.fundraising_plan;
+            hasPlan = true;
+        }
+    }
+    return hasPlan ? plans : null;
+}
+
+// ── Dilution Waterfall Renderer ──────────────────────────────────
+function _ddRenderDilutionWaterfall(ret) {
+    const panel = document.getElementById('dd-dilution-panel');
+    const container = document.getElementById('dd-dilution-waterfall');
+    if (!panel || !container) return;
+    const schedule = ret.dilution_schedule;
+    if (!schedule || schedule.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = '';
+    let html = '<div class="dd-waterfall-chart">';
+    // Entry ownership bar
+    html += `<div class="dd-wf-step">
+        <div class="dd-wf-label">Entry</div>
+        <div class="dd-wf-bar-container">
+            <div class="dd-wf-bar dd-wf-entry" style="width:${Math.min(ret.entry_ownership_pct, 100)}%">
+                ${ret.entry_ownership_pct.toFixed(1)}%
+            </div>
+        </div>
+    </div>`;
+    // Each dilution event
+    for (const evt of schedule) {
+        const isbridge = evt.type === 'bridge';
+        const barClass = isbridge ? 'dd-wf-bridge' : 'dd-wf-priced';
+        const label = evt.label + (isbridge ? '' : (evt.year ? ` (Yr ${evt.year})` : ''));
+        const dilNote = `-${evt.dilution_pct}%${isbridge ? ` +${evt.delay_years}yr` : ''}`;
+        html += `<div class="dd-wf-step">
+            <div class="dd-wf-label">${label}<span class="dd-wf-dil">${dilNote}</span></div>
+            <div class="dd-wf-bar-container">
+                <div class="dd-wf-bar ${barClass}" style="width:${Math.min(evt.ownership_after_pct * (100 / ret.entry_ownership_pct), 100)}%">
+                    ${evt.ownership_after_pct.toFixed(1)}%
+                </div>
+            </div>
+        </div>`;
+    }
+    // Final ownership
+    html += `<div class="dd-wf-step dd-wf-final">
+        <div class="dd-wf-label">Exit Ownership</div>
+        <div class="dd-wf-bar-container">
+            <div class="dd-wf-bar dd-wf-exit" style="width:${Math.min(ret.exit_ownership_pct * (100 / ret.entry_ownership_pct), 100)}%">
+                ${ret.exit_ownership_pct.toFixed(1)}%
+            </div>
+        </div>
+    </div>`;
+    html += '</div>';
+    if (ret.bridge_delay_years > 0) {
+        html += `<p class="dd-wf-note">Bridge financing adds <strong>${ret.bridge_delay_years} year(s)</strong> to the hold period, extending total hold to <strong>${ret.hold_years_total} years</strong>.</p>`;
+    }
+    container.innerHTML = html;
+}
+
+function _ddInjectInfoTips() {
+    document.querySelectorAll('#tab-ddanalysis label[data-tip]').forEach(label => {
+        const key = label.getAttribute('data-tip');
+        if (key && !label.querySelector('.info-tip')) {
+            label.insertAdjacentHTML('beforeend', ' ' + infoTip(key));
+        }
+    });
+}
+
+// ── Tab init hook ─────────────────────────────────────────────────
+// Hook into the nav click to load reports when DD tab is activated
+document.addEventListener('DOMContentLoaded', () => {
+    // Inject info-tips into DD labels once DOM is ready
+    _ddInjectInfoTips();
+
+    const ddLink = document.querySelector('.nav-link[data-tab="ddanalysis"]');
+    if (ddLink) {
+        ddLink.addEventListener('click', () => {
+            setTimeout(() => { ddLoadReports(); }, 50);
+        });
+    }
+
+    // Wire up Add Round button
+    const addRoundBtn = document.getElementById('dd-add-round');
+    if (addRoundBtn) {
+        addRoundBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            _ddAddFundraisingRound();
+        });
+    }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// FUND II DEPLOYMENT TAB
+// ════════════════════════════════════════════════════════════════════════════
+
+const _fdCharts = {};
+let _fdCompanies = [];
+let _fdQuarters = [];
+let _fdFund = {};
+
+// ── Color palettes ───────────────────────────────────────────────────────────
+const FD_VERTICAL_COLORS = {
+    'Energy':         '#5b7744',
+    'Buildings':      '#3b82f6',
+    'AI':             '#8b5cf6',
+    'Transportation': '#f59e0b',
+    'Agriculture':    '#10b981',
+    'Industrial':     '#ef4444',
+    'Water':          '#06b6d4',
+    'Other':          '#9ca3af',
+    'Unassigned':     '#e5e7eb',
+};
+const FD_TYPE_COLORS = {
+    'Software':    '#3b82f6',
+    'Hardware':    '#f59e0b',
+    'HE-SaaS':     '#5b7744',
+    'Unassigned':  '#e5e7eb',
+};
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+async function fdInit() {
+    try {
+        const [configRes, companiesRes, summaryRes] = await Promise.all([
+            apiCall('/api/fund/config'),
+            apiCall('/api/fund/companies'),
+            apiCall('/api/fund/summary'),
+        ]);
+        _fdFund = configRes.fund;
+        _fdQuarters = configRes.quarters;
+        _fdCompanies = companiesRes.companies;
+        _fdRenderKPIs(summaryRes);
+        _fdRenderCompanyTable();
+        _fdRenderCharts();
+    } catch(e) {
+        console.error('Fund II init failed:', e);
+    }
+}
+
+function fdRefresh() { fdInit(); }
+
+// ── KPI Strip ────────────────────────────────────────────────────────────────
+function _fdRenderKPIs(s) {
+    const set = (id, val, cls) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = val;
+        if (cls) el.className = 'fd-kpi-value ' + cls;
+    };
+    set('fd-kpi-aum', `$${_fdFund.aum_m}M`);
+    set('fd-kpi-target', _fdFund.target_company_count);
+    set('fd-kpi-deployed', `$${s.actual_nic_m.toFixed(1)}M`);
+    const pct = s.pct_nic_deployed;
+    const pctCls = pct >= 80 ? 'fd-positive' : pct >= 50 ? '' : 'fd-warn';
+    set('fd-kpi-pct', `${pct}%`, pctCls);
+    const gap = s.deal_gap;
+    set('fd-kpi-deal-gap', `${s.actual_deals} / ${Math.round(s.plan_deals)} (${gap > 0 ? '-' : '+'}${Math.abs(gap).toFixed(1)})`, gap > 0.5 ? 'fd-negative' : 'fd-positive');
+    const nicGap = s.nic_gap_m;
+    set('fd-kpi-nic-gap', `$${s.actual_nic_m.toFixed(1)}M / $${s.plan_nic_m.toFixed(1)}M`, nicGap > 5 ? 'fd-negative' : 'fd-positive');
+    set('fd-kpi-rc', `$${s.actual_rc_deployed_m.toFixed(1)}M`);
+    set('fd-kpi-quarter', `Q${s.current_quarter} (${s.current_quarter_label})`);
+}
+
+// ── Charts ───────────────────────────────────────────────────────────────────
+function _fdDestroyChart(key) {
+    if (_fdCharts[key]) { _fdCharts[key].destroy(); delete _fdCharts[key]; }
+}
+
+function _fdRenderCharts() {
+    _fdRenderCadenceChart();
+    _fdRenderCumulativeChart();
+    _fdRenderDealCountChart();
+    _fdRenderSectorCharts();
+}
+
+function _fdRenderCadenceChart() {
+    _fdDestroyChart('cadence');
+    const ctx = document.getElementById('fd-chart-cadence');
+    if (!ctx) return;
+    const labels = _fdQuarters.map(q => q.label);
+    const planned = _fdQuarters.map(q => q.planned_nic_m);
+    const actual = _fdQuarters.map(q => q.actual_nic_m);
+    const updated = _fdQuarters.map(q => q.updated_nic_m);
+    _fdCharts.cadence = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Planned', data: planned, backgroundColor: 'rgba(59,130,246,0.6)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 3 },
+                { label: 'Actual', data: actual, backgroundColor: 'rgba(91,119,68,0.85)', borderColor: '#5b7744', borderWidth: 1, borderRadius: 3 },
+                { label: 'Updated Plan', data: updated, backgroundColor: 'rgba(217,119,6,0.5)', borderColor: '#d97706', borderWidth: 1.5, borderRadius: 3, borderDash: [4,4] },
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${(ctx.raw||0).toFixed(2)}M` } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
+                y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v}M`, font: { size: 10 } }, beginAtZero: true },
+            }
+        }
+    });
+}
+
+function _fdRenderCumulativeChart() {
+    _fdDestroyChart('cumulative');
+    const ctx = document.getElementById('fd-chart-cumulative');
+    if (!ctx) return;
+    const labels = _fdQuarters.map(q => q.label);
+    let cumPlan = 0, cumActual = 0, cumUpdated = 0;
+    const planData = [], actualData = [], updatedData = [];
+    for (const q of _fdQuarters) {
+        cumPlan += q.planned_nic_m || 0;
+        planData.push(parseFloat(cumPlan.toFixed(2)));
+        if (q.actual_nic_m !== null) { cumActual += q.actual_nic_m || 0; actualData.push(parseFloat(cumActual.toFixed(2))); }
+        else actualData.push(null);
+        if (q.updated_nic_m !== null) { cumUpdated += q.updated_nic_m || 0; updatedData.push(parseFloat(cumUpdated.toFixed(2))); }
+        else updatedData.push(null);
+    }
+    _fdCharts.cumulative = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Planned', data: planData, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', fill: true, tension: 0.3, pointRadius: 2 },
+                { label: 'Actual', data: actualData, borderColor: '#5b7744', backgroundColor: 'rgba(91,119,68,0.08)', fill: false, tension: 0.3, pointRadius: 3, spanGaps: false },
+                { label: 'Updated Plan', data: updatedData, borderColor: '#d97706', borderDash: [5,5], fill: false, tension: 0.3, pointRadius: 2, spanGaps: false },
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { labels: { font: { size: 10 } } }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: $${(ctx.raw||0).toFixed(1)}M` } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 45 } },
+                y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v}M`, font: { size: 10 } }, beginAtZero: true },
+            }
+        }
+    });
+}
+
+function _fdRenderDealCountChart() {
+    _fdDestroyChart('deals');
+    const ctx = document.getElementById('fd-chart-deals');
+    if (!ctx) return;
+    const labels = _fdQuarters.map(q => q.label);
+    let cumPlan = 0, cumActual = 0;
+    const planData = [], actualData = [];
+    for (const q of _fdQuarters) {
+        cumPlan += q.planned_ni || 0;
+        planData.push(parseFloat(cumPlan.toFixed(1)));
+        if (q.actual_ni !== null) { cumActual += q.actual_ni || 0; actualData.push(parseFloat(cumActual.toFixed(1))); }
+        else actualData.push(null);
+    }
+    _fdCharts.deals = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                { label: 'Planned Cumulative Deals', data: planData, borderColor: '#3b82f6', borderDash: [5,5], fill: false, tension: 0.2, pointRadius: 2 },
+                { label: 'Actual Cumulative Deals', data: actualData, borderColor: '#5b7744', backgroundColor: 'rgba(91,119,68,0.1)', fill: true, tension: 0.2, pointRadius: 3, spanGaps: false },
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: { legend: { labels: { font: { size: 10 } } } },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 9 }, maxRotation: 45 } },
+                y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { stepSize: 2, font: { size: 10 } }, beginAtZero: true },
+            }
+        }
+    });
+}
+
+function _fdRenderSectorCharts() {
+    // Tally capital by vertical and type — only assigned NIC entries (exclude reserves and "?")
+    const vertMap = {}, typeMap = {};
+    for (const c of _fdCompanies) {
+        if (c.is_reserve) continue;                         // Exclude reserve follow-ons
+        const nic = parseFloat(c.nic_m) || 0;
+        if (nic <= 0) continue;                             // Must have capital deployed
+        const vert = c.vertical && c.vertical !== '?' ? c.vertical : 'Unassigned';
+        const type = c.type && c.type !== '?' ? c.type : 'Unassigned';
+        vertMap[vert] = (vertMap[vert] || 0) + nic;
+        typeMap[type] = (typeMap[type] || 0) + nic;
+    }
+
+    // Vertical donut
+    _fdDestroyChart('vertical');
+    const ctxV = document.getElementById('fd-chart-vertical');
+    if (ctxV) {
+        const vLabels = Object.keys(vertMap);
+        const vData = vLabels.map(k => parseFloat(vertMap[k].toFixed(2)));
+        const vColors = vLabels.map(k => FD_VERTICAL_COLORS[k] || '#9ca3af');
+        _fdCharts.vertical = new Chart(ctxV, {
+            type: 'doughnut',
+            data: { labels: vLabels, datasets: [{ data: vData, backgroundColor: vColors, borderWidth: 2, borderColor: '#fff' }] },
+            options: { responsive: true, cutout: '60%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.label}: $${ctx.raw.toFixed(1)}M (${Math.round(ctx.parsed / vData.reduce((a,b)=>a+b,0) * 100)}%)` } } } }
+        });
+        const legend = document.getElementById('fd-vertical-legend');
+        if (legend) legend.innerHTML = vLabels.map((l, i) => `<div class="fd-pie-legend-item"><div class="fd-pie-legend-color" style="background:${vColors[i]}"></div>${l}: $${vData[i].toFixed(1)}M</div>`).join('');
+    }
+
+    // Type donut
+    _fdDestroyChart('type');
+    const ctxT = document.getElementById('fd-chart-type');
+    if (ctxT) {
+        const tLabels = Object.keys(typeMap);
+        const tData = tLabels.map(k => parseFloat(typeMap[k].toFixed(2)));
+        const tColors = tLabels.map(k => FD_TYPE_COLORS[k] || '#9ca3af');
+        _fdCharts.type = new Chart(ctxT, {
+            type: 'doughnut',
+            data: { labels: tLabels, datasets: [{ data: tData, backgroundColor: tColors, borderWidth: 2, borderColor: '#fff' }] },
+            options: { responsive: true, cutout: '60%', plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${ctx.label}: $${ctx.raw.toFixed(1)}M (${Math.round(ctx.parsed / tData.reduce((a,b)=>a+b,0) * 100)}%)` } } } }
+        });
+        const legend = document.getElementById('fd-type-legend');
+        if (legend) legend.innerHTML = tLabels.map((l, i) => `<div class="fd-pie-legend-item"><div class="fd-pie-legend-color" style="background:${tColors[i]}"></div>${l}: $${tData[i].toFixed(1)}M</div>`).join('');
+    }
+
+    // Software / Hardware / HE-SaaS grouped bar
+    _fdDestroyChart('shs');
+    const ctxS = document.getElementById('fd-chart-shs');
+    if (ctxS) {
+        const shsTypes = ['Software', 'Hardware', 'HE-SaaS'];
+        const shsData = shsTypes.map(t => parseFloat((typeMap[t] || 0).toFixed(2)));
+        const shsColors = shsTypes.map(t => FD_TYPE_COLORS[t]);
+        _fdCharts.shs = new Chart(ctxS, {
+            type: 'bar',
+            data: {
+                labels: shsTypes,
+                datasets: [{ label: 'Capital Deployed ($M)', data: shsData, backgroundColor: shsColors, borderRadius: 6, borderWidth: 0 }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `$${ctx.raw.toFixed(1)}M` } } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 11, weight: '600' } } },
+                    y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { callback: v => `$${v}M`, font: { size: 10 } }, beginAtZero: true },
+                }
+            }
+        });
+    }
+}
+
+// ── Company Table ─────────────────────────────────────────────────────────────
+const FD_VERTICALS = ['Energy', 'Buildings', 'AI', 'Transportation', 'Agriculture', 'Industrial', 'Water', 'Other'];
+const FD_TYPES = ['Software', 'Hardware', 'HE-SaaS'];
+const FD_UNASSIGNED = '?';
+
+function _fdRenderCompanyTable() {
+    const tbody = document.getElementById('fd-company-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    // Split into new investments (nic) and reserve follow-ons
+    const newInvest = _fdCompanies.filter(c => !c.is_reserve);
+    const reserves  = _fdCompanies.filter(c => c.is_reserve);
+
+    const renderGroup = (list, startIdx, isReserve) => {
+        if (isReserve && list.length) {
+            // Section separator row
+            const sep = document.createElement('tr');
+            sep.innerHTML = `<td colspan="7" style="background:#f8f9fa;font-size:0.7rem;font-weight:700;color:#6b7280;text-transform:uppercase;letter-spacing:.05em;padding:6px 12px;border-top:2px solid #e1e4e8;">Reserve / Follow-on Capital</td>`;
+            tbody.appendChild(sep);
+        }
+        list.forEach((c, localIdx) => {
+            const i = startIdx + localIdx;
+            const tr = document.createElement('tr');
+            tr.dataset.idx = i;
+            if (isReserve) tr.style.background = 'rgba(248,249,250,0.7)';
+
+            // vertical options — include "?" as first option if unassigned
+            const vertOpts = [
+                (c.vertical === FD_UNASSIGNED ? `<option value="?" selected>— unassigned —</option>` : `<option value="?">— unassigned —</option>`),
+                ...FD_VERTICALS.map(v => `<option value="${v}" ${c.vertical===v?'selected':''}>${v}</option>`)
+            ].join('');
+            const typeOpts = [
+                (c.type === FD_UNASSIGNED ? `<option value="?" selected>— unassigned —</option>` : `<option value="?">— unassigned —</option>`),
+                ...FD_TYPES.map(t => `<option value="${t}" ${c.type===t?'selected':''}>${t}</option>`)
+            ].join('');
+
+            // NIC or RC column
+            const capitalLabel = isReserve ? 'RC ($M)' : 'NIC ($M)';
+            const capitalVal = isReserve ? (c.rc_m || 0) : (c.nic_m || 0);
+            const capitalField = isReserve ? 'rc_m' : 'nic_m';
+
+            // Highlight unassigned cells
+            const vertStyle = c.vertical === FD_UNASSIGNED ? 'border-color:#f59e0b;background:#fffbeb;' : '';
+            const typeStyle = c.type === FD_UNASSIGNED ? 'border-color:#f59e0b;background:#fffbeb;' : '';
+
+            tr.innerHTML = `
+              <td style="color:#6b7280;font-size:0.75rem;">${c.label || ('Q' + c.quarter)}</td>
+              <td><input type="text" value="${c.name}" style="min-width:140px${c.name === 'TBD' ? ';border-color:#f59e0b;background:#fffbeb;' : ''}" onchange="_fdTableChange(${i},'name',this.value)"></td>
+              <td><input type="number" step="0.01" min="0" value="${capitalVal.toFixed(2)}" style="width:70px" onchange="_fdTableChange(${i},'${capitalField}',parseFloat(this.value)||0); _fdRenderSectorCharts()"></td>
+              <td><select style="${vertStyle}" onchange="_fdTableChange(${i},'vertical',this.value); _fdRenderSectorCharts()">${vertOpts}</select></td>
+              <td><select style="${typeStyle}" onchange="_fdTableChange(${i},'type',this.value); _fdRenderSectorCharts()">${typeOpts}</select></td>
+              <td>${isReserve ? '<span style="font-size:0.65rem;color:#9ca3af;font-weight:700;letter-spacing:.04em">RC</span>' : ''}</td>
+              <td><button class="fd-table-remove" onclick="_fdRemoveCompany(${i})" title="Remove">×</button></td>`;
+            tbody.appendChild(tr);
+        });
+    };
+
+    renderGroup(newInvest, 0, false);
+    renderGroup(reserves, newInvest.length, true);
+
+    // Show unassigned count badge
+    const unassignedCount = _fdCompanies.filter(c => c.vertical === FD_UNASSIGNED || c.type === FD_UNASSIGNED || c.name === 'TBD').length;
+    const status = document.getElementById('fd-save-status');
+    if (status && unassignedCount > 0) {
+        status.textContent = `⚠ ${unassignedCount} row(s) need assignment — highlighted in amber`;
+        status.className = 'fd-save-status error';
+    } else if (status && !status.textContent.startsWith('✓')) {
+        status.textContent = '';
+    }
+}
+
+function _fdTableChange(idx, field, val) {
+    if (_fdCompanies[idx]) _fdCompanies[idx][field] = val;
+}
+
+function _fdRemoveCompany(idx) {
+    _fdCompanies.splice(idx, 1);
+    _fdRenderCompanyTable();
+    _fdRenderSectorCharts();
+}
+
+function fdAddCompany() {
+    // Insert before reserve section
+    const insertAt = _fdCompanies.findIndex(c => c.is_reserve);
+    const newEntry = { quarter: 12, label: 'Q12', name: 'New Company', nic_m: 2.0, vertical: '?', type: '?', is_reserve: false };
+    if (insertAt >= 0) _fdCompanies.splice(insertAt, 0, newEntry);
+    else _fdCompanies.push(newEntry);
+    _fdRenderCompanyTable();
+}
+
+async function fdSaveCompanies() {
+    const status = document.getElementById('fd-save-status');
+    if (status) { status.textContent = 'Saving…'; status.className = 'fd-save-status'; }
+    try {
+        // Sync all input values from DOM before saving
+        const rows = document.querySelectorAll('#fd-company-tbody tr[data-idx]');
+        rows.forEach(tr => {
+            const i = parseInt(tr.dataset.idx);
+            const inputs = tr.querySelectorAll('input, select');
+            if (!_fdCompanies[i] || inputs.length < 4) return;
+            _fdCompanies[i].name    = inputs[0].value;
+            const capVal = parseFloat(inputs[1].value) || 0;
+            if (_fdCompanies[i].is_reserve) _fdCompanies[i].rc_m = capVal;
+            else _fdCompanies[i].nic_m = capVal;
+            _fdCompanies[i].vertical = inputs[2].value;
+            _fdCompanies[i].type     = inputs[3].value;
+        });
+        await apiCall('/api/fund/companies', { method: 'POST', body: JSON.stringify({ companies: _fdCompanies }) });
+        if (status) { status.textContent = '✓ Saved'; status.className = 'fd-save-status'; }
+        _fdRenderSectorCharts();
+        setTimeout(() => { if (status) status.textContent = ''; }, 3000);
+    } catch(e) {
+        if (status) { status.textContent = 'Save failed: ' + e.message; status.className = 'fd-save-status error'; }
+    }
+}
+
+// Hook into tab switching
+const _fdOrigSwitchTab = switchTab;
+switchTab = function(tab) {
+    _fdOrigSwitchTab(tab);
+    if (tab === 'funddeployment') {
+        setTimeout(() => fdInit(), 50);
     }
 };

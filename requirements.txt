@@ -13,6 +13,7 @@ PyJWT>=2.8.0
 Werkzeug>=3.0.0
 # AI extraction
 anthropic>=0.30.0
+openai>=1.30.0
 # Document parsing
 pypdf>=3.0.0
 pdfplumber>=0.10.0

@@ -19,6 +19,7 @@ GET    /api/memo/history/{id}/docx      — export as Word document
 GET    /api/memo/reports                — list available deal reports for selection
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -34,7 +35,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from ..auth import CurrentUser, get_current_user, decode_token
+from ..auth import CurrentUser, get_current_user, get_optional_user, decode_token
 from ..database import get_db, get_model_preferences, MODEL_DEFAULTS
 
 logger = logging.getLogger(__name__)
@@ -51,13 +52,13 @@ MAX_FILE_SIZE = 50 * 1024 * 1024
 # Allowed file extensions for data room documents
 ALLOWED_EXTENSIONS = {
     '.pdf', '.docx', '.doc', '.xlsx', '.xls', '.csv', '.txt',
-    '.pptx', '.ppt', '.md', '.html', '.json', '.png', '.jpg', '.jpeg'
+    '.pptx', '.ppt', '.md', '.html', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'
 }
 
 DOC_CATEGORIES = [
     'financial_model', 'pitch_deck', 'term_sheet', 'cap_table',
     'legal', 'ip_patent', 'customer_reference', 'market_research',
-    'technical_diligence', 'team_bios', 'board_materials', 'other'
+    'technical_diligence', 'team_bios', 'board_materials', 'screenshots', 'other'
 ]
 
 
@@ -321,16 +322,51 @@ def _extract_text_from_file(file_path: Path, file_name: str) -> str:
             text = file_path.read_text(errors='replace')[:100_000]
 
         elif ext == '.pdf':
+            pdf_bytes = file_path.read_bytes()
+            # Try pypdf first (always available)
             try:
-                import fitz  # PyMuPDF
-                doc = fitz.open(str(file_path))
+                import pypdf
+                reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
                 pages = []
-                for page in doc:
-                    pages.append(page.get_text())
-                text = "\n\n".join(pages)[:200_000]
-                doc.close()
-            except ImportError:
-                text = "[PDF text extraction requires PyMuPDF]"
+                for i, page in enumerate(reader.pages):
+                    page_text = page.extract_text() or ""
+                    if page_text.strip():
+                        pages.append(f"[Page {i+1}]\n{page_text}")
+                text = "\n\n".join(pages)
+            except Exception as e1:
+                logger.warning("pypdf extraction failed: %s", e1)
+                text = ""
+
+            # If pypdf got thin results, try pdfplumber
+            page_count = 0
+            try:
+                import pypdf as _p
+                page_count = len(_p.PdfReader(io.BytesIO(pdf_bytes)).pages)
+            except Exception:
+                pass
+            text_density = len(text.strip()) / max(page_count, 1) if page_count else 0
+
+            if text_density < 100 and page_count > 0:
+                try:
+                    import pdfplumber
+                    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                        plumber_parts = []
+                        for i, page in enumerate(pdf.pages):
+                            t = page.extract_text() or ""
+                            if t.strip():
+                                plumber_parts.append(f"[Page {i+1}]\n{t}")
+                            for table in (page.extract_tables() or []):
+                                for row in table:
+                                    plumber_parts.append(" | ".join(str(c or "") for c in row))
+                        plumber_text = "\n\n".join(plumber_parts)
+                        if len(plumber_text.strip()) > len(text.strip()):
+                            text = plumber_text
+                except Exception as e2:
+                    logger.warning("pdfplumber fallback failed: %s", e2)
+
+            text = text[:200_000]
+            if not text.strip():
+                text = "[PDF extraction returned no text — document may be image-only]"
 
         elif ext == '.docx':
             try:
@@ -435,13 +471,38 @@ async def upload_documents(
                 (user.id, session_id, file.filename, ext, len(content), extracted, category, str(dest_path)),
             )
             conn.commit()
+            doc_id = cur.lastrowid
+
+            # For PDFs: extract embedded images and store them as separate image records
+            # so they can be injected inline into the memo
+            img_records_added = 0
+            if ext == '.pdf':
+                pdf_images = _extract_images_from_pdf(dest_path, dest_dir)
+                for img in pdf_images:
+                    try:
+                        img_size = Path(img["file_path"]).stat().st_size
+                        if img_size < 5000:   # skip tiny icons / artifacts
+                            continue
+                        conn.execute(
+                            """INSERT INTO memo_documents
+                               (owner_id, memo_session_id, file_name, file_type, file_size, extracted_text, doc_category, file_path)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (user.id, session_id, img["file_name"], ".png",
+                             img_size, "", category, img["file_path"]),
+                        )
+                        img_records_added += 1
+                    except Exception as img_err:
+                        logger.debug("Failed to store extracted image %s: %s", img["file_name"], img_err)
+                if img_records_added:
+                    conn.commit()
 
             results.append({
-                "id": cur.lastrowid,
+                "id": doc_id,
                 "file": file.filename,
                 "size": len(content),
                 "extracted_chars": len(extracted),
                 "category": category,
+                "images_extracted": img_records_added,
             })
 
         return {"session_id": session_id, "documents": results}
@@ -462,6 +523,54 @@ async def list_documents(session_id: str, user: CurrentUser = Depends(get_curren
         conn.close()
 
 
+@router.get("/documents/{doc_id}/view")
+async def view_document(
+    doc_id: int,
+    token: Optional[str] = Query(None),
+    user: Optional[CurrentUser] = Depends(get_optional_user),
+):
+    """Serve an uploaded document file for inline viewing/verification.
+    Supports token via query param for <img> tags and new-tab access where
+    the browser cannot send an Authorization header."""
+    # Primary: use bearer-auth user.  Fallback: decode token from query param.
+    # This fallback is essential for <img src="...?token=..."> — browsers never
+    # send Authorization headers for image requests.
+    effective_user = user
+    if not effective_user and token:
+        payload = decode_token(token)
+        if payload:
+            effective_user = CurrentUser(uid=int(payload["sub"]), username=payload["user"], role=payload["role"])
+    if not effective_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT file_name, file_path, file_type FROM memo_documents WHERE id=? AND owner_id=?",
+            (doc_id, effective_user.id),
+        ).fetchone()
+        if not row or not row["file_path"]:
+            raise HTTPException(404, "Document not found")
+        fpath = Path(row["file_path"])
+        if not fpath.exists():
+            raise HTTPException(404, "File not found on disk")
+
+        content_types = {
+            '.pdf': 'application/pdf',
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.txt': 'text/plain',
+            '.md': 'text/plain',
+            '.csv': 'text/csv',
+            '.html': 'text/html',
+        }
+        ct = content_types.get(row["file_type"], 'application/octet-stream')
+        return FileResponse(str(fpath), media_type=ct, filename=row["file_name"])
+    finally:
+        conn.close()
+
+
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: int, user: CurrentUser = Depends(get_current_user)):
     conn = get_db()
@@ -475,6 +584,133 @@ async def delete_document(doc_id: int, user: CurrentUser = Depends(get_current_u
         conn.execute("DELETE FROM memo_documents WHERE id=? AND owner_id=?", (doc_id, user.id))
         conn.commit()
         return {"ok": True}
+    finally:
+        conn.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  RE-PROCESS IMAGES — extract embedded images from existing uploaded PDFs
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/documents/reprocess-images")
+async def reprocess_images(session_id: str = Query(...), user: CurrentUser = Depends(get_current_user)):
+    """Re-extract images from all PDFs in a session. Useful for documents uploaded
+    before automatic image extraction was enabled."""
+    conn = get_db()
+    try:
+        pdf_rows = conn.execute(
+            "SELECT id, file_name, file_path, doc_category FROM memo_documents "
+            "WHERE owner_id=? AND memo_session_id=? AND file_type='.pdf'",
+            (user.id, session_id),
+        ).fetchall()
+
+        added = 0
+        for row in pdf_rows:
+            if not row["file_path"]:
+                continue
+            fpath = Path(row["file_path"])
+            if not fpath.exists():
+                continue
+            dest_dir = fpath.parent
+            imgs = _extract_images_from_pdf(fpath, dest_dir, max_images=4)
+            for img in imgs:
+                try:
+                    img_size = Path(img["file_path"]).stat().st_size
+                    if img_size < 5000:
+                        continue
+                    # Don't double-insert if already there
+                    exists = conn.execute(
+                        "SELECT id FROM memo_documents WHERE file_path=?", (img["file_path"],)
+                    ).fetchone()
+                    if exists:
+                        continue
+                    conn.execute(
+                        """INSERT INTO memo_documents
+                           (owner_id, memo_session_id, file_name, file_type, file_size, extracted_text, doc_category, file_path)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (user.id, session_id, img["file_name"], ".png",
+                         img_size, "", row["doc_category"], img["file_path"]),
+                    )
+                    added += 1
+                except Exception as e:
+                    logger.debug("reprocess image insert error: %s", e)
+        conn.commit()
+        return {"ok": True, "images_added": added, "pdfs_processed": len(pdf_rows)}
+    finally:
+        conn.close()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  DEAL TERMS EXTRACTION — Extract prior deal terms from IC memo documents
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/documents/extract-deal-terms")
+async def extract_deal_terms_endpoint(
+    session_id: str = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Extract prior investment deal terms from uploaded prior IC memo documents.
+
+    Looks for documents with category 'prior_ic_memo' in the given session,
+    extracts text, and uses LLM to pull structured deal terms (check size,
+    pre-money, ownership, stage, commitments, etc.).
+    """
+    from ..engine.extraction import extract_deal_terms
+
+    conn = get_db()
+    try:
+        # Find prior IC memo documents
+        rows = conn.execute(
+            """SELECT id, file_name, extracted_text, doc_category
+               FROM memo_documents
+               WHERE owner_id=? AND memo_session_id=? AND doc_category='prior_ic_memo'
+               ORDER BY uploaded_at""",
+            (user.id, session_id),
+        ).fetchall()
+
+        if not rows:
+            # Also check for term_sheet or board_materials categories as fallback
+            rows = conn.execute(
+                """SELECT id, file_name, extracted_text, doc_category
+                   FROM memo_documents
+                   WHERE owner_id=? AND memo_session_id=? AND doc_category IN ('term_sheet', 'board_materials')
+                   ORDER BY uploaded_at""",
+                (user.id, session_id),
+            ).fetchall()
+
+        if not rows:
+            raise HTTPException(status_code=404, detail="No prior IC memo or term sheet documents found in this session")
+
+        # Combine text from all prior IC memo documents
+        combined_text = ""
+        source_files = []
+        for row in rows:
+            text = row["extracted_text"] or ""
+            if text.strip():
+                combined_text += f"\n\n=== Document: {row['file_name']} (Category: {row['doc_category']}) ===\n\n{text}"
+                source_files.append(row["file_name"])
+
+        if not combined_text.strip():
+            raise HTTPException(status_code=422, detail="No extractable text found in prior IC memo documents")
+
+        # Get model preferences
+        model_prefs = get_model_preferences(user.id)
+        model = model_prefs.get("extraction", "claude-haiku-4-5-20251001")
+
+        # Run extraction in thread to avoid blocking
+        result = await asyncio.to_thread(
+            extract_deal_terms,
+            combined_text,
+            source_name=", ".join(source_files),
+            model=model,
+        )
+
+        result["_source_documents"] = source_files
+        result["_session_id"] = session_id
+
+        return result
+
     finally:
         conn.close()
 
@@ -511,6 +747,7 @@ class MemoGenerateRequest(BaseModel):
     company_name: str = ""
     links: List[str] = []                        # URLs / reference links
     model_override: Optional[str] = None         # Force a specific model
+    investment_type: str = "first"               # "first" or "followon"
 
 
 def _build_report_context(report_row) -> str:
@@ -533,18 +770,18 @@ def _build_report_context(report_row) -> str:
             if v and k not in ('volume', 'op_carbon', 'emb_carbon', 'portfolio'):
                 parts.append(f"- {k}: {v}")
 
-    # Simulation results
+    # Simulation results — hero_metrics live at top level, probability inside simulation
     sim = report.get("simulation", {})
-    if sim:
+    hero = report.get("hero_metrics", {}) or sim.get("hero_metrics", {})
+    if sim or hero:
         parts.append("\n## SIMULATION RESULTS")
-        hero = sim.get("hero_metrics", {})
         if hero:
             parts.append(f"- Expected MOIC: {hero.get('expected_moic', 'N/A')}x")
             parts.append(f"- P(>3x): {hero.get('p_gt_3x', 'N/A')}")
             parts.append(f"- Expected IRR: {hero.get('expected_irr', 'N/A')}")
             parts.append(f"- Survival Rate: {hero.get('survival_rate', 'N/A')}")
 
-        prob = sim.get("probability_buckets", {})
+        prob = sim.get("probability", sim.get("probability_buckets", {}))
         if prob:
             parts.append(f"- P(Total Loss): {prob.get('total_loss', 'N/A')}")
             parts.append(f"- P(>1x): {prob.get('gt_1x', 'N/A')}")
@@ -556,28 +793,73 @@ def _build_report_context(report_row) -> str:
             parts.append(f"- MOIC Conditional Mean: {moic_cond.get('mean', 'N/A')}x")
             parts.append(f"- MOIC Conditional P50: {moic_cond.get('p50', 'N/A')}x")
 
-    # Adoption
-    adoption = report.get("adoption", {})
+    # Adoption — key is adoption_analysis, curve is a dict keyed by year
+    adoption = report.get("adoption_analysis", report.get("adoption", {}))
     if adoption:
         parts.append("\n## MARKET ADOPTION")
         scurve = adoption.get("scurve", {})
         if scurve:
             parts.append(f"- Bass p (innovation): {scurve.get('bass_p_mean', 'N/A')}")
             parts.append(f"- Bass q (imitation): {scurve.get('bass_q_mean', 'N/A')}")
-        div = adoption.get("divergence_table", [])
-        if div:
+        # adoption_curve can be columnar {years:[...], p10:[...], p50:[...], founder:[...]}
+        # OR row-based {year: {median_rev_m,...}} OR a list of row dicts
+        ac = adoption.get("adoption_curve", adoption.get("divergence_table", {}))
+        if isinstance(ac, dict) and ac:
+            # Columnar format: has a 'years' key whose value is a list
+            if isinstance(ac.get("years"), list):
+                years_list = ac.get("years", [])
+                p50_list   = ac.get("p50", ac.get("sim_median_m", []))
+                founder_list = ac.get("founder", ac.get("founder_rev_m", []))
+                parts.append("- Adoption Curve (Sim P50 by year):")
+                for i, yr in enumerate(years_list[:8]):
+                    p50_val      = p50_list[i]      if i < len(p50_list)      else "?"
+                    founder_val  = founder_list[i]  if i < len(founder_list)  else "N/A"
+                    founder_str  = f"${founder_val:.1f}M" if isinstance(founder_val, (int, float)) else "N/A"
+                    p50_str      = f"${p50_val:.1f}M"     if isinstance(p50_val,     (int, float)) else str(p50_val)
+                    parts.append(f"  Year {yr}: Founder {founder_str}, Sim P50 {p50_str}")
+            else:
+                # Row-keyed format: {year_str: {median_rev_m, ...}}
+                parts.append("- Adoption Curve (Founder vs Sim by year):")
+                for yr, vals in list(ac.items())[:8]:
+                    if not isinstance(vals, dict):
+                        continue
+                    parts.append(f"  Year {yr}: Founder ${vals.get('founder_rev_m', vals.get('founder','?'))}M, "
+                                 f"Sim Median ${vals.get('sim_median_m', vals.get('median','?'))}M")
+        elif isinstance(ac, list) and ac:
             parts.append("- Divergence Table (Founder vs Sim):")
-            for row in div[:8]:
-                parts.append(f"  Year {row.get('year','?')}: Founder ${row.get('founder_rev_m','?')}M, Sim Med ${row.get('sim_median_m','?')}M, Divergence {row.get('divergence_pct','?')}%, In Band: {row.get('in_band','?')}")
+            for row in ac[:8]:
+                parts.append(f"  Year {row.get('year','?')}: Founder ${row.get('founder_rev_m','?')}M, "
+                             f"Sim Med ${row.get('sim_median_m','?')}M")
 
-    # Carbon impact
-    carbon = report.get("carbon", {})
+    # Carbon impact — key is carbon_impact (not carbon)
+    carbon = report.get("carbon_impact", report.get("carbon", {}))
     co = carbon.get("outputs", {})
+    ci_inter = carbon.get("intermediates", {})
+    ci_inp = carbon.get("carbon_inputs", {})
     if co:
         parts.append("\n## CARBON IMPACT")
+        if ci_inp:
+            parts.append(f"- Unit definition: {ci_inp.get('unit_definition', 'N/A')}")
+            parts.append(f"- Unit service life: {ci_inp.get('unit_service_life_yrs', 'N/A')} years")
+            parts.append(f"- Displaced resource: {ci_inp.get('displaced_resource', 'N/A')}")
+            parts.append(f"- Baseline lifetime prod: {ci_inp.get('baseline_lifetime_prod', 'N/A')} {ci_inp.get('specific_production_units', '')}")
+            parts.append(f"- Range improvement: {ci_inp.get('range_improvement', 'N/A')}")
+            vols = ci_inp.get('year_volumes', [])
+            if vols:
+                parts.append(f"- Volume forecast: {', '.join(str(round(v,1)) for v in vols[:10])}")
+        if ci_inter:
+            parts.append(f"- JD (displaced vol/unit): {ci_inter.get('jd', 'N/A')}")
+            ann_op = ci_inter.get('annual_operating', [])
+            if ann_op:
+                parts.append(f"- Annual operating tCO2: {', '.join(f'{v:.1f}' for v in ann_op[:10])}")
+            ann_lc = ci_inter.get('annual_lifecycle', [])
+            if ann_lc:
+                parts.append(f"- Annual lifecycle tCO2: {', '.join(f'{v:.1f}' for v in ann_lc[:10])}")
         parts.append(f"- Total Lifecycle tCO2: {co.get('company_tonnes', 'N/A')}")
         parts.append(f"- VoLo Pro-Rata: {co.get('volo_prorata', 'N/A')}")
+        parts.append(f"- Risk Divisor: {carbon.get('risk_divisor_used', 'N/A')} ({carbon.get('risk_divisor_source', '')})")
         parts.append(f"- Risk-Adjusted: {co.get('volo_risk_adj', 'N/A')}")
+        parts.append(f"- t/$ (unadjusted): {co.get('tonnes_per_dollar', 'N/A')}")
         parts.append(f"- t/$ (Risk-Adj): {co.get('risk_adj_tpd', 'N/A')}")
 
     # Portfolio impact
@@ -598,16 +880,51 @@ def _build_report_context(report_row) -> str:
         for t in tornado[:6]:
             parts.append(f"- {t.get('param', '?')}: Low {t.get('moic_low', '?')}x / High {t.get('moic_high', '?')}x")
 
-    # Check size optimization
-    opt = report.get("check_optimization", {})
-    best = opt.get("best_check", {})
+    # Check size optimization — key is position_sizing, optimal inside grid_search
+    ps = report.get("position_sizing", report.get("check_optimization", {}))
+    best = ps.get("grid_search", {}).get("optimal", ps.get("best_check", {}))
     if best:
         parts.append("\n## CHECK SIZE OPTIMIZATION")
         parts.append(f"- Optimal Check: ${best.get('check_m', 'N/A')}M")
         parts.append(f"- Implied Ownership: {best.get('ownership_pct', 'N/A')}%")
-        parts.append(f"- Fund P50 Impact: {best.get('fund_p50_pct_chg', 'N/A')}")
+        parts.append(f"- Fund P50 Impact: +{best.get('fund_p50_pct_chg', 'N/A')}%")
+        parts.append(f"- Recommended Check: ${ps.get('recommended_check_m', 'N/A')}M")
 
-    # Extraction data
+    # Financial model — pull from report_json["financial_model"]["financials"]
+    fm = report.get("financial_model", {})
+    fm_fins = fm.get("financials", {})
+    if fm.get("has_data") and fm_fins:
+        parts.append("\n## FINANCIAL MODEL (from uploaded financial model)")
+        parts.append(f"- Source file: {fm.get('file_name', 'uploaded model')}")
+        parts.append(f"- Scale: {fm.get('scale_info', 'N/A')}")
+        if fm.get("model_summary"):
+            parts.append(f"- Summary: {str(fm['model_summary'])[:300]}")
+        # Revenue trajectory
+        rev = fm_fins.get("revenue", {})
+        if rev:
+            rev_items = sorted(rev.items())
+            rev_str = ", ".join(f"{yr}: ${v/1e6:.1f}M" for yr, v in rev_items if v is not None)
+            parts.append(f"- Revenue by year: {rev_str}")
+        # EBITDA trajectory
+        ebitda = fm_fins.get("ebitda", {})
+        if ebitda:
+            eb_items = sorted(ebitda.items())
+            eb_str = ", ".join(f"{yr}: ${v/1e6:.1f}M" for yr, v in eb_items if v is not None)
+            parts.append(f"- EBITDA by year: {eb_str}")
+        # Net income
+        ni = fm_fins.get("net_income", {})
+        if ni:
+            ni_items = sorted(ni.items())
+            ni_str = ", ".join(f"{yr}: ${v/1e6:.1f}M" for yr, v in ni_items if v is not None)
+            parts.append(f"- Net Income by year: {ni_str}")
+        # Cash
+        cash = fm_fins.get("cash", {})
+        if cash:
+            cash_items = sorted(cash.items())
+            cash_str = ", ".join(f"{yr}: ${v/1e6:.1f}M" for yr, v in cash_items if v is not None)
+            parts.append(f"- Cash by year: {cash_str}")
+
+    # Extraction data (legacy records format)
     if extraction:
         records = extraction.get("records", [])
         if records:
@@ -615,18 +932,20 @@ def _build_report_context(report_row) -> str:
             for rec in records[:20]:
                 parts.append(f"- {rec.get('metric','')} ({rec.get('period','')}): {rec.get('value','')} [source: {rec.get('sheet','')}, row {rec.get('row','')}]")
 
-    # Valuation comps
-    comps = report.get("valuation_comps", {})
+    # Valuation comps — key is valuation_context
+    comps = report.get("valuation_context", report.get("valuation_comps", {}))
     if comps:
         parts.append("\n## VALUATION CONTEXT")
-        archetype_comps = comps.get("archetype_comps", {})
-        if archetype_comps:
-            ev_rev = archetype_comps.get("ev_revenue", {})
-            ev_eb = archetype_comps.get("ev_ebitda", {})
-            if ev_rev:
-                parts.append(f"- EV/Revenue: {ev_rev.get('median', 'N/A')}x (median)")
-            if ev_eb:
-                parts.append(f"- EV/EBITDA: {ev_eb.get('median', 'N/A')}x (median)")
+        parts.append(f"- IPO EV/EBITDA Mean: {comps.get('ipo_ev_ebitda_mean', 'N/A')}x")
+        parts.append(f"- Acquisition EV/EBITDA Mean: {comps.get('acq_ev_ebitda_mean', 'N/A')}x")
+        rng = comps.get('suggested_exit_multiple_range', [])
+        if rng:
+            parts.append(f"- Suggested Exit Multiple Range: {rng[0]}x – {rng[1]}x")
+        matches = comps.get("matches", [])
+        if matches:
+            parts.append("- Comparable Industries:")
+            for m in matches[:5]:
+                parts.append(f"  {m.get('industry_name','?')}: IPO {m.get('ipo_ev_ebitda','N/A')}x, Acq {m.get('acq_ev_ebitda','N/A')}x EV/EBITDA")
 
     # Risk assessment
     risk = report.get("risk_assessment", sim.get("risk_assessment", {}))
@@ -643,15 +962,71 @@ def _build_report_context(report_row) -> str:
     return "\n".join(parts)
 
 
+_IMAGE_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
+
+
+def _extract_images_from_pdf(pdf_path: Path, dest_dir: Path, max_images: int = 6) -> list:
+    """Extract embedded images from a PDF and save them as PNG files.
+
+    Returns a list of dicts with 'file_name' and 'file_path' for each saved image.
+    Uses pypdf's image extraction + Pillow for format conversion (handles jp2, etc.).
+    No poppler required. Limits to max_images to avoid flooding the data room.
+    """
+    saved = []
+    try:
+        import pypdf
+        from PIL import Image as PILImage
+        reader = pypdf.PdfReader(str(pdf_path))
+        img_index = 0
+        for page_num, page in enumerate(reader.pages):
+            if img_index >= max_images:
+                break
+            try:
+                for image_obj in page.images:
+                    if img_index >= max_images:
+                        break
+                    try:
+                        raw_data = image_obj.data
+                        if len(raw_data) < 5000:   # skip tiny icons/artifacts
+                            continue
+                        img_name = f"{pdf_path.stem}_p{page_num+1}_img{img_index+1}.png"
+                        img_path = dest_dir / img_name
+                        # Convert to PNG via Pillow (handles jp2, bmp, tiff, etc.)
+                        pil_img = PILImage.open(io.BytesIO(raw_data))
+                        if pil_img.mode not in ("RGB", "RGBA"):
+                            pil_img = pil_img.convert("RGB")
+                        pil_img.save(str(img_path), format="PNG")
+                        saved.append({"file_name": img_name, "file_path": str(img_path)})
+                        img_index += 1
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug("PDF image extraction failed for %s: %s", pdf_path.name, e)
+    return saved
+
 def _load_raw_documents(session_id: str, owner_id: int) -> list:
-    """Load raw extracted text from all uploaded documents for a session."""
+    """Load all uploaded documents for a session.
+    - Text-bearing files (PDF, DOCX, PPTX, etc.) are included when extracted_text is non-empty.
+    - Image files (.png/.jpg/etc.) are always included even if they have no extracted text,
+      so they can be auto-placed inline in the rendered memo.
+    """
     conn = get_db()
     try:
         rows = conn.execute(
-            "SELECT id, file_name, doc_category, extracted_text FROM memo_documents WHERE owner_id=? AND memo_session_id=? ORDER BY doc_category, uploaded_at",
+            "SELECT id, file_name, file_type, doc_category, extracted_text FROM memo_documents "
+            "WHERE owner_id=? AND memo_session_id=? ORDER BY doc_category, uploaded_at",
             (owner_id, session_id),
         ).fetchall()
-        return [dict(r) for r in rows if (r["extracted_text"] or "").strip()]
+        result = []
+        for r in rows:
+            ext = (r["file_type"] or "").lower()
+            has_text = bool((r["extracted_text"] or "").strip())
+            is_image = ext in _IMAGE_EXTS
+            if has_text or is_image:
+                result.append(dict(r))
+        return result
     finally:
         conn.close()
 
@@ -735,6 +1110,22 @@ MEMO_SECTIONS = [
         "report_fields": ["extraction", "inputs", "simulation", "adoption"],
     },
     {
+        "key": "financials",
+        "title": "Financials",
+        "is_synthesis": False,
+        "guidance": (
+            "Present the financial projections and RVM simulation results side-by-side. "
+            "Describe the revenue model trajectory: S-curve adoption calibration (Bass p, q parameters), "
+            "inflection year, peak adoption year. Compare founder revenue projections against the RVM "
+            "simulation median and P25/P75 band — identify years where founder assumptions diverge "
+            "significantly from the model and explain the drivers. Summarize key financial metrics: "
+            "gross margins, burn rate, runway, unit economics from the financial model if provided. "
+            "Discuss capital efficiency and path to profitability. Reference the revenue cone chart and "
+            "founder comparison table (injected below)."
+        ),
+        "report_fields": ["extraction", "simulation", "adoption"],
+    },
+    {
         "key": "team",
         "title": "Team",
         "is_synthesis": False,
@@ -774,10 +1165,32 @@ MEMO_SECTIONS = [
         "title": "Carbon Impact",
         "is_synthesis": False,
         "guidance": (
-            "Explain the Theory of Change — what emissions does this technology displace and how? "
-            "Present Carbon Economics: total lifecycle tCO2 avoided, VoLo pro-rata share, risk-adjusted "
-            "tonnes, t/$ efficiency. Include reference to RVM carbon calculator output. "
-            "Compare to VoLo's portfolio benchmarks. Connect to the climate thesis."
+            "Write a detailed, quantitative Carbon Impact section structured in five parts:\n\n"
+            "1. THEORY OF CHANGE: In 1-2 paragraphs explain the physical mechanism of emissions "
+            "displacement. What resource does this technology replace (e.g. natural gas, diesel, "
+            "grid electricity)? What is the baseline carbon intensity of that resource? "
+            "How does each unit of the company's product displace emissions — describe the chain "
+            "from unit deployed → lifetime production → displaced resource intensity → tCO2/unit.\n\n"
+            "2. DISPLACEMENT CHAIN CALCULATION: Walk through the math step by step with actual numbers "
+            "from the RVM: (a) Displaced volume per unit (JD) = range_improvement × baseline_lifetime_prod. "
+            "(b) Carbon intensity at Year 1 (JE) — state the value and note if grid intensity declines. "
+            "(c) Annual operating impact = JD × units_deployed × CI_year for each of the 10 forecast years. "
+            "(d) Embodied carbon (manufacturing/upstream) — whether modeled and its magnitude vs operating. "
+            "(e) Annual lifecycle = operating + embodied. Cite actual tCO2 values from the report.\n\n"
+            "3. 10-YEAR CARBON SUMMARY WITH RVM METRICS: Present all four output metrics with exact values: "
+            "(a) Total Lifecycle tCO2 (company-level). "
+            "(b) VoLo Pro-Rata tCO2 = lifecycle × ownership%%. "
+            "(c) Risk-Adjusted tCO2 = pro-rata ÷ risk_divisor — explain the TRL-based divisor "
+            "(TRL 1-4 = 6× haircut reflecting high pre-commercial risk; TRL 5-6 = 3×; TRL 7-9 = 1× de-risked). "
+            "(d) Risk-Adjusted t/$ = risk-adjusted tCO2 ÷ VoLo check size. Note current risk divisor and what "
+            "TRL milestone would reduce it.\n\n"
+            "4. PORTFOLIO CONTEXT: Compare t/$ to typical VoLo range (~0.01-0.10 t/$). "
+            "Discuss sensitivity: carbon impact at 50%% volume forecast vs base case. "
+            "Identify the volume milestone that would re-rate the risk divisor.\n\n"
+            "5. CLIMATE THESIS ALIGNMENT: Connect to VoLo's climate thesis. "
+            "Is the carbon impact front-loaded (embodied at manufacturing) or back-loaded (cumulative deployment)? "
+            "How does this compare to other technologies in VoLo's portfolio? "
+            "Reference the annual impact chart and attribution waterfall below."
         ),
         "report_fields": ["carbon"],
     },
@@ -816,6 +1229,77 @@ MEMO_SECTIONS = [
         "report_fields": ["inputs", "simulation", "valuation_comps", "check_optimization", "portfolio_impact"],
     },
     {
+        "key": "fund_return_model",
+        "title": "Fund Return Model",
+        "is_synthesis": False,
+        "guidance": (
+            "This section covers VoLo's fund-level return modeling for this deal. Structure it in two parts:\n\n"
+            "PART 1 — PORTFOLIO IMPACT (RVM Section 3): "
+            "Describe the marginal impact of adding this deal to the VoLo fund. "
+            "Present the simulation methodology: the VCSimulator runs 2,000 portfolio paths, "
+            "comparing the base portfolio (with or without committed deals) against a portfolio "
+            "that includes this deal. Report the delta in TVPI Mean, TVPI P50, TVPI P75, and IRR "
+            "at mean and P50. Interpret what the lift means in practical terms — does this deal "
+            "diversify the portfolio, add return potential, or both? Discuss the deal parameters "
+            "used in the simulation: conditional MOIC, survival probability, exit year range. "
+            "Flag if the baseline is a running portfolio (with committed deals) vs. a simulated "
+            "benchmark portfolio.\n\n"
+            "PART 2 — CHECK SIZE OPTIMIZATION (RVM Section 8): "
+            "Explain the fund-performance optimizer methodology: a $250K-increment sweep across "
+            "the fund-constrained check size range, with VCSimulator run at each level to measure "
+            "percentage change in fund TVPI at P10, P50, and P90. Describe the composite score "
+            "(weighted sum of normalized Δ%P10/P50/P90 with stage-calibrated weights). "
+            "State the fund-optimized check size and implied ownership. "
+            "Compare to Kelly Criterion (full and half-Kelly) as a benchmark. "
+            "Discuss fund concentration constraints. "
+            "Reference the Fund TVPI Impact and Composite Score charts injected below. "
+            "Conclude with a recommendation on check sizing given VoLo's portfolio construction "
+            "goals and the deal terms."
+        ),
+        "report_fields": ["portfolio_impact", "check_optimization", "simulation"],
+    },
+    {
+        "key": "portfolio_tracking_scorecard",
+        "title": "Portfolio Tracking Scorecard",
+        "is_synthesis": False,
+        "followon_only": True,
+        "guidance": (
+            "This section is ONLY included for follow-on investments. It evaluates how the company has "
+            "performed against the goals, milestones, and commitments made in the original investment memo "
+            "and subsequent board reporting.\n\n"
+            "STRUCTURE:\n\n"
+            "1. SCORECARD TABLE: Build a structured scorecard with these columns:\n"
+            "   - Commitment/Goal (what was promised in the original IC memo)\n"
+            "   - Status: one of MET, PARTIALLY MET, DELAYED, CHANGED, MISSED\n"
+            "   - Evidence (specific data points from board reports)\n"
+            "   - Commentary (brief IC-level interpretation)\n\n"
+            "Categories to evaluate (group rows by category):\n"
+            "   a) FINANCIAL MILESTONES — Revenue targets, burn rate, runway, unit economics, fundraising progress\n"
+            "   b) PRODUCT & TECHNOLOGY — Product roadmap milestones, TRL progression, IP/patent filings, key technical achievements\n"
+            "   c) COMMERCIAL TRACTION — Customer acquisition, pipeline, LOIs, partnerships, market penetration\n"
+            "   d) TEAM & ORGANIZATION — Key hires, org build-out, board composition, advisory additions\n"
+            "   e) CARBON IMPACT — tCO2 milestones, pilot deployments, measurement/verification progress\n"
+            "   f) USE OF FUNDS — How capital was actually deployed vs. stated plan\n\n"
+            "2. OVERALL SCORE: Provide a high-level summary score:\n"
+            "   - Calculate percentage MET or PARTIALLY MET vs total commitments\n"
+            "   - Assign an overall grade: STRONG EXECUTION (>80%%), ON TRACK (60-80%%), CAUTION (<60%%)\n"
+            "   - Highlight the most important positive and negative deviations\n\n"
+            "3. TRAJECTORY NARRATIVE: 2-3 paragraphs analyzing:\n"
+            "   - Pattern of execution: Are delays systemic or isolated?\n"
+            "   - Pivot vs. plan: If goals changed, was the pivot strategic and well-reasoned or reactive?\n"
+            "   - Velocity trend: Is the company accelerating, steady, or decelerating?\n"
+            "   - Management credibility: How reliable have management projections been?\n\n"
+            "4. IMPLICATIONS FOR FOLLOW-ON:\n"
+            "   - Does the execution track record support the follow-on valuation?\n"
+            "   - What new milestones should VoLo require before the next investment decision?\n"
+            "   - Are there governance or reporting gaps to address?\n\n"
+            "IMPORTANT: Extract specific commitments from the PRIOR IC MEMO documents (category: prior_ic_memo). "
+            "Cross-reference against BOARD REPORT documents (category: board_report). "
+            "If either source is missing, note the gap explicitly. Never fabricate milestones."
+        ),
+        "report_fields": ["inputs", "simulation"],
+    },
+    {
         "key": "recommendation",
         "title": "Investment Recommendation",
         "is_synthesis": True,
@@ -831,6 +1315,15 @@ MEMO_SECTIONS = [
 # Section keys for non-synthesis (written in pass 2) vs synthesis (written in pass 3)
 _DATA_SECTIONS = [s for s in MEMO_SECTIONS if not s["is_synthesis"]]
 _SYNTHESIS_SECTIONS = [s for s in MEMO_SECTIONS if s["is_synthesis"]]
+
+
+def _get_active_sections(investment_type: str = "first"):
+    """Return (data_sections, synthesis_sections) filtered by investment type."""
+    if investment_type == "followon":
+        return _DATA_SECTIONS, _SYNTHESIS_SECTIONS
+    # For first investments, exclude follow-on only sections
+    data = [s for s in _DATA_SECTIONS if not s.get("followon_only")]
+    return data, _SYNTHESIS_SECTIONS
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -939,6 +1432,13 @@ Output format — use exactly these section headers:
 - Another fact with numbers, names, dates
 - Risk/gap: what's missing or unproven [flag]
 
+CRITICAL — ACCURACY:
+- Extract ONLY facts, names, numbers, and claims that are EXPLICITLY stated in the document.
+- NEVER infer, assume, or fabricate details that are not present in the text.
+- If a facility, location, partner, or customer is named in the document, include it exactly as written.
+- If the document does not name something specifically, do NOT guess or fill in a name.
+- Quote specific language from the document when possible to preserve accuracy.
+
 Repeat for each section. Be thorough but avoid repetition. Extract the RAW MATERIAL that a
 skilled memo writer needs to construct a compelling, data-driven narrative."""
 
@@ -946,6 +1446,19 @@ _EXTRACTION_SECTIONS_LIST = "\n".join(
     f"- [{s['key']}] {s['title']}: {s['guidance'][:200]}"
     for s in _DATA_SECTIONS
 )
+
+
+def _is_fatal_llm_error(e: Exception) -> bool:
+    """Return True for errors that will affect every subsequent call (credit/auth issues)."""
+    msg = str(e).lower()
+    return (
+        "credit balance exhausted" in msg
+        or "credit_balance_exhausted" in msg
+        or "402" in str(e)
+        or "invalid_api_key" in msg
+        or "authentication_error" in msg
+        or "401" in str(e)
+    )
 
 
 def _pass1_extract_document(client, model: str, doc: dict, max_chars: int = 60_000) -> dict:
@@ -982,6 +1495,8 @@ Include quantitative data, attributed claims, investment implications, competiti
         tokens_out = response.usage.output_tokens if response.usage else 0
     except Exception as e:
         logger.error(f"Pass 1 extraction failed for {fname}: {e}")
+        if _is_fatal_llm_error(e):
+            raise
         return {"_error": str(e), "_tokens_in": 0, "_tokens_out": 0}
 
     # Parse the reply into section buckets
@@ -1047,15 +1562,22 @@ def _aggregate_section_briefs(all_extractions: list, section_key: str,
 _SECTION_WRITER_SYSTEM = f"""You are VoLo Earth Ventures' Investment Committee memo writer.
 You are writing ONE section of an investment memorandum.
 
+CRITICAL — FACTUAL ACCURACY:
+- ONLY state facts, names, numbers, dates, and claims that appear explicitly in the provided source documents or report data.
+- NEVER fabricate facility names, locations, dollar amounts, percentages, timelines, partnerships, or any other specifics.
+- If you cannot find a specific detail in the sources, either omit it or flag it as "not confirmed in data room materials" or a diligence gap.
+- Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] or [RVM]. If you cannot cite it, do not write it.
+- When in doubt, be less specific rather than risk inventing details. "The company's manufacturing facility" is better than fabricating a facility name.
+
 Rules:
-1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts
+1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts FROM THE SOURCE DOCUMENTS ONLY
 2. Be thorough but avoid padding — every sentence should add value
 3. Balance the bull case and bear case — credibility comes from honest assessment, not advocacy
 4. Use Markdown formatting: ### for sub-sections, **bold** for emphasis, bullet lists only for catalogs of discrete items
 5. Do NOT include the section title as a header — it will be added automatically
 6. Target 400-800 words per section (more for Financing Overview and Business Model, less for shorter sections)
 7. Do NOT reference other sections or say "as discussed in..." — each section stands alone
-8. If information is missing or insufficient, explicitly note it as a diligence gap requiring follow-up
+8. If information is missing or insufficient, explicitly note it as a diligence gap requiring follow-up — do NOT fill gaps with invented details
 9. Open with a strong orienting statement that frames why this topic matters for the investment thesis
 10. Connect every fact back to its investment implication — never leave data uninterpreted
 
@@ -1161,6 +1683,8 @@ def _pass2_write_section(client, model: str, section: dict, brief: str,
         return {"text": text.strip(), "tokens_in": tokens_in, "tokens_out": tokens_out}
     except Exception as e:
         logger.error(f"Pass 2 section write failed for {section['key']}: {e}")
+        if _is_fatal_llm_error(e):
+            raise
         return {"text": f"*[Generation failed for this section: {str(e)[:200]}]*", "tokens_in": 0, "tokens_out": 0}
 
 
@@ -1171,12 +1695,18 @@ def _pass2_write_section(client, model: str, section: dict, brief: str,
 _SYNTHESIS_SYSTEM = f"""You are VoLo Earth Ventures' Investment Committee memo writer.
 You are writing a SYNTHESIS section that draws from the entire investment memo.
 
+CRITICAL — FACTUAL ACCURACY:
+- ONLY reference facts, names, numbers, and claims that appear in the section texts provided to you.
+- NEVER fabricate facility names, locations, dollar amounts, partnerships, customer names, or any specifics not present in the source material.
+- Every quantitative claim must be traceable to the section texts or report data provided. If a number does not appear in your inputs, do not invent it.
+- When synthesizing, use the same level of specificity as the source sections — do not add details that are not there.
+
 Rules:
 1. Synthesize across all sections — do not just summarize one part
 2. For the Investment Overview: write a compelling one-liner, populate the deal terms table, and list portfolio themes as concise bullets
-3. For High Level Opportunities / Risks: write 3-6 specific, evidence-backed bullet points — each should be punchy and data-driven
+3. For High Level Opportunities / Risks: write 3-6 specific, evidence-backed bullet points — each should be punchy and data-driven, drawn from the section texts
 4. For the Investment Recommendation: give a clear verdict (Invest / Pass / Conditional) with the bull and bear case
-5. Include the most important quantitative highlights: MOIC, IRR, P(>3x), carbon t/$, portfolio impact
+5. Include the most important quantitative highlights: MOIC, IRR, P(>3x), carbon t/$, portfolio impact — ONLY if present in the provided data
 6. Do NOT include the section title as a header — it will be added automatically
 7. Write with conviction and intellectual authority — this should read like a narrative that commands attention
 8. Frame this as a generational opportunity or a thoughtful pass — avoid lukewarm language
@@ -1240,6 +1770,8 @@ def _pass3_synthesize(client, model: str, section: dict, all_section_texts: dict
         return {"text": text.strip(), "tokens_in": tokens_in, "tokens_out": tokens_out}
     except Exception as e:
         logger.error(f"Pass 3 synthesis failed for {section['key']}: {e}")
+        if _is_fatal_llm_error(e):
+            raise
         return {"text": f"*[Synthesis failed: {str(e)[:200]}]*", "tokens_in": 0, "tokens_out": 0}
 
 
@@ -1344,7 +1876,7 @@ def _parse_template_sections(template_text: str) -> dict:
 
 @router.post("/generate")
 async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(get_current_user)):
-    import anthropic
+    from ..engine.llm_utils import make_llm_client
     start_time = time.time()
 
     # ── Resolve model ──
@@ -1356,14 +1888,18 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
         api_key = os.environ.get("REFIANT_API_KEY", "")
         if not api_key:
             raise HTTPException(status_code=500, detail="REFIANT_API_KEY not configured. Set it in .env or environment.")
-        client = anthropic.Anthropic(api_key=api_key, base_url="https://api.refiant.ai/v1")
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
             raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured. Set it in .env or environment.")
-        client = anthropic.Anthropic(api_key=api_key)
+    client = make_llm_client(is_refiant, api_key)
+
+    # ── Resolve active sections based on investment type ──
+    active_data, active_synth = _get_active_sections(req.investment_type)
+    is_followon = req.investment_type == "followon"
 
     # ── Gather raw inputs ──
+    report_data_json = None  # Raw report JSON for chart embedding
     conn = get_db()
     try:
         # Report
@@ -1377,6 +1913,7 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
             ).fetchone()
             if row:
                 report_context = _build_report_context(row)
+                report_data_json = row["report_json"]
                 if not company_name:
                     company_name = row["company_name"]
 
@@ -1412,52 +1949,103 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
     citation_index = _build_citation_index(raw_docs) if raw_docs else {"map": {}, "legend": "", "count": 0}
 
     # ═════════════════════════════════════════════════════════════════════════
-    #  PASS 1: Extract facts from each document into section buckets
+    #  Run all LLM passes in a thread to avoid blocking the async event loop
     # ═════════════════════════════════════════════════════════════════════════
-    all_extractions = []
-    if raw_docs:
-        for doc in raw_docs:
-            extraction = _pass1_extract_document(client, model, doc)
-            all_extractions.append(extraction)
-            total_tokens_in += extraction.get("_tokens_in", 0)
-            total_tokens_out += extraction.get("_tokens_out", 0)
-            pass_log.append({"pass": 1, "doc": doc["file_name"],
-                             "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
 
-    # ═════════════════════════════════════════════════════════════════════════
-    #  PASS 2: Write each data section from its aggregated brief + report slice
-    # ═════════════════════════════════════════════════════════════════════════
-    section_texts = {}
-    for section in _DATA_SECTIONS:
-        brief = _aggregate_section_briefs(all_extractions, section["key"], citation_index)
-        report_slice = _get_report_fields_for_section(report_context, section)
-        tpl_guidance = template_sections.get(section["key"], "")
+    def _strip_leading_heading(text: str, section_title: str) -> str:
+        """Remove any leading markdown heading the LLM added despite instructions.
+        Strips the first line if it is a #/##/### heading that matches (or approximates)
+        the section title, then strips any leading blank lines left behind."""
+        if not text:
+            return text
+        lines = text.split("\n")
+        first = lines[0].lstrip()
+        if first.startswith("#"):
+            # Remove all leading # characters and compare loosely
+            heading_text = first.lstrip("#").strip().lower()
+            title_lower  = section_title.lower()
+            # Strip if the heading is the same as or a prefix/suffix of the title
+            if (heading_text in title_lower or title_lower in heading_text
+                    or heading_text.replace(" ", "") == title_lower.replace(" ", "")):
+                lines = lines[1:]
+                # Drop any blank lines that were sitting right after the heading
+                while lines and not lines[0].strip():
+                    lines = lines[1:]
+        return "\n".join(lines)
 
-        result = _pass2_write_section(
-            client, model, section, brief, report_slice,
-            tpl_guidance, company_name, links,
-            citation_legend=citation_index["legend"]
-        )
-        section_texts[section["key"]] = result["text"]
-        total_tokens_in += result["tokens_in"]
-        total_tokens_out += result["tokens_out"]
-        pass_log.append({"pass": 2, "section": section["key"],
-                         "tokens": result["tokens_in"] + result["tokens_out"]})
+    def _run_llm_pipeline():
+        _total_in = 0
+        _total_out = 0
+        _pass_log = []
 
-    # ═════════════════════════════════════════════════════════════════════════
-    #  PASS 3: Synthesize cross-cutting sections (Exec Summary, Recommendation)
-    # ═════════════════════════════════════════════════════════════════════════
-    for section in _SYNTHESIS_SECTIONS:
-        result = _pass3_synthesize(
-            client, model, section, section_texts,
-            report_context, company_name,
-            req.additional_instructions
-        )
-        section_texts[section["key"]] = result["text"]
-        total_tokens_in += result["tokens_in"]
-        total_tokens_out += result["tokens_out"]
-        pass_log.append({"pass": 3, "section": section["key"],
-                         "tokens": result["tokens_in"] + result["tokens_out"]})
+        # PASS 1: Extract facts from each document
+        all_extractions = []
+        if raw_docs:
+            for doc in raw_docs:
+                extraction = _pass1_extract_document(client, model, doc)
+                all_extractions.append(extraction)
+                _total_in += extraction.get("_tokens_in", 0)
+                _total_out += extraction.get("_tokens_out", 0)
+                _pass_log.append({"pass": 1, "doc": doc["file_name"],
+                                  "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
+
+        # PASS 2: Write each data section
+        section_texts = {}
+        for section in active_data:
+            brief = _aggregate_section_briefs(all_extractions, section["key"], citation_index)
+            report_slice = _get_report_fields_for_section(report_context, section)
+            tpl_guidance = template_sections.get(section["key"], "")
+
+            result = _pass2_write_section(
+                client, model, section, brief, report_slice,
+                tpl_guidance, company_name, links,
+                citation_legend=citation_index["legend"]
+            )
+            section_texts[section["key"]] = _strip_leading_heading(result["text"], section["title"])
+            _total_in += result["tokens_in"]
+            _total_out += result["tokens_out"]
+            _pass_log.append({"pass": 2, "section": section["key"],
+                              "tokens": result["tokens_in"] + result["tokens_out"]})
+
+        # PASS 3: Synthesize cross-cutting sections
+        for section in active_synth:
+            result = _pass3_synthesize(
+                client, model, section, section_texts,
+                report_context, company_name,
+                req.additional_instructions
+            )
+            section_texts[section["key"]] = _strip_leading_heading(result["text"], section["title"])
+            _total_in += result["tokens_in"]
+            _total_out += result["tokens_out"]
+            _pass_log.append({"pass": 3, "section": section["key"],
+                              "tokens": result["tokens_in"] + result["tokens_out"]})
+
+        return section_texts, _total_in, _total_out, _pass_log
+
+    try:
+        pipeline_result = await asyncio.to_thread(_run_llm_pipeline)
+    except Exception as pipeline_err:
+        err_str = str(pipeline_err)
+        # Classify the error into a human-readable message
+        err_lower = err_str.lower()
+        if "credit balance exhausted" in err_lower or "credit_balance_exhausted" in err_lower:
+            detail = (
+                "Credit balance exhausted — the API account has no remaining credits. "
+                "Top up at console.anthropic.com (Anthropic) or refiant.ai (Refiant/Qwen) "
+                "then try again."
+            )
+        elif "overloaded" in err_lower or "529" in err_str:
+            detail = "The AI provider is currently overloaded. Please wait a moment and try again."
+        elif "rate limit" in err_lower or "rate_limit" in err_lower or "429" in err_str:
+            detail = "Rate limit reached. Please wait a moment and try again."
+        elif "invalid_api_key" in err_lower or "authentication" in err_lower or "401" in err_str:
+            detail = "Invalid API key. Check your ANTHROPIC_API_KEY or REFIANT_API_KEY in .env."
+        elif "context_length" in err_lower or "context length" in err_lower:
+            detail = "Input is too long for the selected model. Try reducing the number of documents."
+        else:
+            detail = f"Memo generation failed: {err_str[:300]}"
+        raise HTTPException(status_code=502, detail=detail)
+    section_texts, total_tokens_in, total_tokens_out, pass_log = pipeline_result
 
     # ═════════════════════════════════════════════════════════════════════════
     #  ASSEMBLE final memo in section order
@@ -1465,29 +2053,163 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
     memo_parts = [f"# Investment Memorandum: {company_name or 'Deal Analysis'}\n"]
     memo_parts.append(f"*VoLo Earth Ventures — Confidential*\n")
 
-    for section in MEMO_SECTIONS:
+    all_active_sections = active_data + active_synth
+    # Reorder: synthesis sections that come first in MEMO_SECTIONS, then data, then remaining synthesis
+    ordered_sections = [s for s in MEMO_SECTIONS if s in all_active_sections]
+    for section in ordered_sections:
         text = section_texts.get(section["key"], "")
         if text:
             memo_parts.append(f"## {section['title']}\n\n{text}\n")
 
     # Appendix: data sources with citation numbers
-    if raw_docs or links or report_context:
-        memo_parts.append("## Appendix: Sources\n")
-        if raw_docs:
-            memo_parts.append("### Documents Reviewed")
-            cite_map = citation_index.get("map", {})
-            for doc in raw_docs:
-                cat = doc["doc_category"].replace('_', ' ').title()
-                num = cite_map.get(doc["file_name"], "?")
-                memo_parts.append(f"- **[{num}]** [{cat}] {doc['file_name']}")
-            memo_parts.append("")
-        if report_context:
-            memo_parts.append("- **[RVM]** VoLo Return Validation Model — Deal Report\n")
-        if links:
-            memo_parts.append("### Reference Links")
-            for l in links:
-                memo_parts.append(f"- {l}")
-            memo_parts.append("")
+    memo_parts.append("## Appendix: Sources\n")
+
+    # 1. Data room documents reviewed
+    if raw_docs:
+        memo_parts.append("### I. Data Room Documents Reviewed")
+        cite_map = citation_index.get("map", {})
+        for doc in raw_docs:
+            cat = doc["doc_category"].replace('_', ' ').title()
+            num = cite_map.get(doc["file_name"], "?")
+            memo_parts.append(f"- **[{num}]** [{cat}] {doc['file_name']}")
+        memo_parts.append("")
+
+    # 2. RVM deal report
+    if report_context:
+        memo_parts.append("### II. Quantitative Model (RVM)")
+        memo_parts.append("- **[RVM]** VoLo Return Validation Model — Deal Report. Proprietary three-scenario DCF engine with Monte Carlo simulation across revenue, margin, exit multiple, and timing uncertainty. Produces MOIC, IRR, P(>3×), and carbon impact distributions.\n")
+
+    # 3. Reference links from memo request
+    if links:
+        memo_parts.append("### III. Reference Links")
+        for l in links:
+            memo_parts.append(f"- {l}")
+        memo_parts.append("")
+
+    # 4. Underlying analytical data sources used by the VoLo RVM
+    memo_parts.append("### IV. Underlying Analytical Data Sources")
+    memo_parts.append(
+        "_The following datasets and methodologies underpin the quantitative assumptions "
+        "embedded in the VoLo Return Validation Model (RVM) and deal pipeline analysis._\n"
+    )
+    _PIPELINE_SOURCES = [
+        {
+            "id": "carta_rounds",
+            "name": "Carta Insights — Fund Forecasting Profiles",
+            "provider": "Carta",
+            "category": "Financing & Valuation",
+            "description": "Round sizing by stage/sector (p10–p90 percentiles), pre/post-money valuations, ESOP metrics, graduation rates, and time-to-graduation. Used to calibrate stage-appropriate check size ranges, valuation entry points, and dilution assumptions.",
+            "url": "https://carta.com/blog/startup-financing-data/",
+            "used_for": "Check size defaults, valuation benchmarks, dilution modeling",
+        },
+        {
+            "id": "carta_benchmarks",
+            "name": "Carta TVPI Fund Benchmarks",
+            "provider": "Carta",
+            "category": "Fund Performance",
+            "description": "Fund TVPI percentiles (p10, p50, p75, p90) by fund age. Used for portfolio-level performance overlay and convergence-driven position sizing.",
+            "url": "https://carta.com/blog/startup-financing-data/",
+            "used_for": "Fund TVPI benchmarking, portfolio construction optimization",
+        },
+        {
+            "id": "nrel_atb",
+            "name": "NREL Annual Technology Baseline 2024 v3",
+            "provider": "National Renewable Energy Laboratory (NREL)",
+            "category": "Technology Cost",
+            "description": "LCOE projections by technology and cost case, deployment cost benchmarks, representative technology classes, capacity factors, and CAPEX curves. Primary source for Bass diffusion parameter calibration across energy technology archetypes.",
+            "url": "https://atb.nrel.gov/",
+            "used_for": "Technology cost benchmarks, Bass S-curve calibration, adoption timelines",
+        },
+        {
+            "id": "lazard_lcoe",
+            "name": "Lazard Levelized Cost of Energy+ (LCOE+)",
+            "provider": "Lazard",
+            "category": "Technology Cost",
+            "description": "Energy cost benchmarks (solar, wind, geothermal, nuclear, gas, coal, battery storage) in $/MWh ranges. Used to benchmark cost competitiveness of portfolio company technologies against incumbent energy sources.",
+            "url": "https://www.lazard.com/research-insights/levelized-cost-of-energyplus/",
+            "used_for": "Technology cost competitiveness, incumbent displacement analysis",
+        },
+        {
+            "id": "doe_electrification",
+            "name": "DOE Electrification Pathways Data Appendix",
+            "provider": "U.S. Department of Energy",
+            "category": "Technology Deployment",
+            "description": "Electrification pathways for EV and industrial technology deployment scenarios. Informs market adoption rate calibration and TAM trajectory for electrification-adjacent technologies.",
+            "url": "https://www.energy.gov/eere/analysis/electrification-futures-study",
+            "used_for": "EV and industrial electrification TAM projections",
+        },
+        {
+            "id": "damodaran_comps",
+            "name": "Damodaran EV/EBITDA Public Comps",
+            "provider": "Aswath Damodaran, Stern School of Business, NYU",
+            "category": "Valuation Multiples",
+            "description": "EV/EBITDA multiples for 97 US industries updated annually. Applied to terminal year EBITDA estimates with a 20% private-company discount (IPO haircut) to derive acquisition exit multiples.",
+            "url": "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/data.html",
+            "used_for": "Exit multiple ranges, sector-specific valuation benchmarks",
+        },
+        {
+            "id": "ebitda_margins",
+            "name": "EBITDA Margin Ramp Model by TRL Level",
+            "provider": "SaaS Capital, Bessemer Cloud Index, Battery Ventures, NREL/DOE (synthesized)",
+            "category": "Financial Modeling",
+            "description": "TRL-dependent EBITDA margin start/end/ramp parameters. Early-stage (TRL 1–3): −20% to +20% over 10 years; commercial stage (TRL 7–9): 18% to 32% over 2 years. Calibrated from SaaS and deep-tech operating benchmarks.",
+            "url": None,
+            "used_for": "Gross margin and EBITDA ramp assumptions by technology maturity stage",
+        },
+        {
+            "id": "bass_diffusion",
+            "name": "Bass Diffusion Technology Adoption Parameters",
+            "provider": "NREL ATB + Historical Market Data (calibrated by VoLo)",
+            "category": "Market Adoption",
+            "description": "Innovation coefficient (p) and imitation coefficient (q) for 12 technology archetypes, inflection years, and maturity stages. Drives the S-curve adoption model and revenue cone simulation. Calibrated from historical deployment data including utility solar (1.3% → 13% in 10 yr), EV adoption, and enterprise SaaS penetration curves.",
+            "url": "https://atb.nrel.gov/",
+            "used_for": "Technology adoption S-curve, revenue projection fan chart, market timing",
+        },
+        {
+            "id": "market_sizing",
+            "name": "TAM/SAM/SOM Defaults by Technology Archetype",
+            "provider": "BloombergNEF, Wood Mackenzie, IEA, Rystad Energy, McKinsey Global Institute, Gartner, Grand View Research",
+            "category": "Market Sizing",
+            "description": "Total addressable market sizing for 12 technology archetypes (e.g., Utility Solar $120B, EV Electrification $500B, AI/ML $300B, Industrial Decarbonization $180B). TAM estimates are cross-referenced across multiple provider forecasts and represent 2030 horizon figures.",
+            "url": None,
+            "used_for": "Base TAM/SAM/SOM defaults, market penetration ceiling, deal sizing context",
+        },
+        {
+            "id": "carbon_intensity",
+            "name": "Carbon Intensity & Avoided Emissions Model",
+            "provider": "EPA eGRID, IPCC AR6, EIA AEO, VoLo Earth Proprietary (RVM 1.19)",
+            "category": "Carbon Impact",
+            "description": "Carbon intensity (tCO2/unit) by displaced resource using EPA eGRID regional emissions factors, IPCC AR6 lifecycle analysis, and EIA Annual Energy Outlook. Includes 40% methane leakage premium on natural gas per EPA 2014 methodology. TRL-to-risk divisor mapping for early-stage carbon accounting uncertainty.",
+            "url": "https://www.epa.gov/egrid",
+            "used_for": "Avoided emissions quantification, carbon cost of capital adjustment, ESG impact reporting",
+        },
+        {
+            "id": "private_discount",
+            "name": "Private Company Acquisition Discount (DLOM)",
+            "provider": "Koeplin, Sarin & Shapiro (2000); Officer (2007)",
+            "category": "Valuation Multiples",
+            "description": "20% discount for lack of marketability (DLOM) applied to IPO/public comps when modeling acquisition exit paths. Academic range is 15–30%; 20% is the midpoint used per Koeplin et al. (2000) Journal of Financial Economics and Officer (2007) Journal of Finance.",
+            "url": None,
+            "used_for": "M&A exit multiple haircut, acquisition path valuation",
+        },
+        {
+            "id": "cambridge_exits",
+            "name": "Venture Exit Year Distribution",
+            "provider": "Cambridge Associates Venture Benchmarks",
+            "category": "Exit Modeling",
+            "description": "Exit year probability weighting calibrated from Cambridge Associates venture fund data. Venture exits cluster in years 4–7 from entry, with tails to year 12+. Applied as a prior in Monte Carlo exit timing draws.",
+            "url": "https://www.cambridgeassociates.com/",
+            "used_for": "Exit timing distribution, hold period assumptions, IRR discounting",
+        },
+    ]
+    for src in _PIPELINE_SOURCES:
+        url_str = f" — [{src['url']}]({src['url']})" if src.get("url") else ""
+        memo_parts.append(
+            f"- **{src['name']}** *(_{src['provider']}_)*{url_str}  \n"
+            f"  *Category: {src['category']} · Used for: {src['used_for']}*  \n"
+            f"  {src['description']}\n"
+        )
+    memo_parts.append("")
 
     memo_md = "\n".join(memo_parts)
     elapsed = time.time() - start_time
@@ -1496,45 +2218,119 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
     memo_html = _markdown_to_html(memo_md)
 
     # ── Save to DB ──
+    # Store section-level texts for per-section editing
+    sections_json_str = json.dumps(section_texts)
+
     conn = get_db()
     try:
         cur = conn.execute(
             """INSERT INTO generated_memos
                (owner_id, report_id, template_id, company_name, memo_markdown, memo_html,
-                model_used, input_token_count, output_token_count, generation_time_s)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                model_used, input_token_count, output_token_count, generation_time_s, sections_json, memo_session_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user.id, report_id, template_id, company_name, memo_md, memo_html,
-             model, total_tokens_in, total_tokens_out, elapsed),
+             model, total_tokens_in, total_tokens_out, elapsed, sections_json_str, req.session_id or ""),
         )
         conn.commit()
         memo_id = cur.lastrowid
     finally:
         conn.close()
 
-    # Build citation metadata for frontend popovers
+    # Build citation metadata for frontend popovers — rich page-level excerpts
     citations_meta = {}
     if raw_docs:
         cite_map = citation_index.get("map", {})
         for doc in raw_docs:
             num = cite_map.get(doc["file_name"], 0)
             cat = doc["doc_category"].replace('_', ' ').title()
-            # Build brief excerpt from extracted text (first ~500 chars)
-            excerpt = (doc.get("extracted_text") or "")[:500].strip()
-            if len(doc.get("extracted_text", "")) > 500:
-                excerpt += "..."
+            full_text = doc.get("extracted_text") or ""
+            doc_id = doc.get("id")
+            file_type = Path(doc["file_name"]).suffix.lower()
+
+            # Build page-level excerpts for PDFs (split on [Page N] markers)
+            pages = []
+            if "[Page " in full_text:
+                import re as _re
+                page_splits = _re.split(r'\[Page (\d+)\]\n?', full_text)
+                # page_splits: ['', '1', 'text...', '2', 'text...', ...]
+                for i in range(1, len(page_splits) - 1, 2):
+                    page_num = int(page_splits[i])
+                    page_text = page_splits[i + 1].strip()
+                    if page_text:
+                        pages.append({
+                            "page": page_num,
+                            "text": page_text[:2000],
+                            "truncated": len(page_text) > 2000,
+                        })
+            else:
+                # Non-PDF or no page markers — treat entire text as one block
+                if full_text.strip():
+                    pages.append({
+                        "page": None,
+                        "text": full_text[:3000],
+                        "truncated": len(full_text) > 3000,
+                    })
+
+            # Key facts summary (first 300 chars of non-empty content)
+            summary = ""
+            for p in pages:
+                if p["text"].strip():
+                    summary = p["text"][:300].strip()
+                    if len(p["text"]) > 300:
+                        summary += "..."
+                    break
+
             citations_meta[str(num)] = {
                 "number": num,
                 "file_name": doc["file_name"],
                 "category": cat,
-                "excerpt": excerpt,
+                "file_type": file_type,
+                "doc_id": doc_id,
+                "total_chars": len(full_text),
+                "total_pages": len(pages),
+                "summary": summary,
+                "pages": pages[:20],  # Cap at 20 pages for frontend
             }
     if report_context:
+        # Build structured RVM citation with key metrics
+        rvm_sections = []
+        for line in report_context.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('---'):
+                rvm_sections.append(line)
         citations_meta["RVM"] = {
             "number": "RVM",
             "file_name": "VoLo Return Validation Model",
             "category": "Deal Report",
-            "excerpt": report_context[:500] + ("..." if len(report_context) > 500 else ""),
+            "file_type": "rvm",
+            "total_chars": len(report_context),
+            "total_pages": 1,
+            "summary": "\n".join(rvm_sections[:10]),
+            "pages": [{"page": None, "text": report_context[:5000], "truncated": len(report_context) > 5000}],
         }
+
+    # Parse report data for frontend chart embedding
+    report_data_parsed = None
+    if report_data_json:
+        try:
+            report_data_parsed = json.loads(report_data_json) if isinstance(report_data_json, str) else report_data_json
+        except (json.JSONDecodeError, TypeError):
+            report_data_parsed = None
+
+    # Build image metadata for inline embedding — auto-match images to sections by category.
+    # raw_docs already includes image files (see _load_raw_documents), so we just filter here.
+    # We use file_type (stored as the extension at upload time) to avoid re-parsing file_name.
+    image_docs = []
+    for doc in raw_docs:
+        ext = (doc.get("file_type") or Path(doc["file_name"]).suffix).lower()
+        if ext in _IMAGE_EXTS and doc.get("id"):
+            image_docs.append({
+                "doc_id": doc["id"],
+                "file_name": doc["file_name"],
+                "category": doc.get("doc_category", "other"),
+                "file_type": ext,
+                "section_targets": _image_category_to_sections(doc.get("doc_category", "other"), doc.get("file_name", "")),
+            })
 
     return {
         "id": memo_id,
@@ -1546,6 +2342,9 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
         "output_tokens": total_tokens_out,
         "generation_time_s": round(elapsed, 2),
         "citations": citations_meta,
+        "report_data": report_data_parsed,
+        "image_docs": image_docs,
+        "sections": section_texts,
         "pipeline": {
             "documents_processed": len(raw_docs),
             "sections_written": len(section_texts),
@@ -1553,6 +2352,46 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
             "total_llm_calls": len(pass_log),
         },
     }
+
+
+def _image_category_to_sections(category: str, file_name: str = "") -> list:
+    """Map a document category (and filename) to memo sections for image embedding.
+    Filename keywords take priority over category when they match — this handles
+    cases like board_report PDFs whose extracted images have descriptive filenames.
+    """
+    CATEGORY_MAP = {
+        "pitch_deck": ["company_overview", "market", "business_model", "competitive_position"],
+        "financial_model": ["financials", "business_model", "financing_overview"],
+        "term_sheet": ["financing_overview"],
+        "cap_table": ["financing_overview"],
+        "legal": ["financing_overview"],
+        "ip_patent": ["technology_ip_moat"],
+        "customer_reference": ["traction", "competitive_position"],
+        "market_research": ["market", "company_overview"],
+        "technical_diligence": ["technology_ip_moat", "company_overview"],
+        "team_bios": ["team"],
+        "board_materials": ["traction", "financing_overview"],
+        "board_report": ["technology_ip_moat", "competitive_position", "market", "traction", "company_overview"],
+        "screenshots": ["company_overview", "technology_ip_moat", "market", "traction", "business_model", "financials"],
+        "other": ["company_overview"],
+    }
+    # Filename-based routing — override category when filename signals a specific section
+    fname = file_name.lower()
+    FILENAME_SIGNALS = [
+        (["competitive", "competition", "landscape", "competitor"], ["competitive_position", "market"]),
+        (["technology", "tech", "platform", "architecture", "system", "resource_evaluation", "evaluation", "technical"], ["technology_ip_moat", "company_overview"]),
+        (["market", "tam", "industry", "sector", "sizing"], ["market", "company_overview"]),
+        (["team", "management", "leadership", "founder", "bio"], ["team"]),
+        (["financial", "revenue", "forecast", "projection", "model", "p&l", "income"], ["financials", "business_model"]),
+        (["traction", "customer", "pipeline", "milestone", "kpi", "growth"], ["traction", "competitive_position"]),
+        (["carbon", "emission", "climate", "sustainability", "ghg"], ["carbon_impact"]),
+        (["patent", "ip", "intellectual"], ["technology_ip_moat"]),
+        (["cap_table", "captable", "ownership", "equity"], ["financing_overview"]),
+    ]
+    for keywords, sections in FILENAME_SIGNALS:
+        if any(kw in fname for kw in keywords):
+            return sections
+    return CATEGORY_MAP.get(category, ["company_overview"])
 
 
 def _markdown_to_html(md: str) -> str:
@@ -1673,7 +2512,45 @@ async def get_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Memo not found")
-        return dict(row)
+        result = dict(row)
+        # Parse sections_json so frontend can use it directly
+        try:
+            result["sections"] = json.loads(row["sections_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            result["sections"] = {}
+        # Include report_data for chart injection
+        if row["report_id"]:
+            rpt_row = conn.execute(
+                "SELECT report_json FROM deal_reports WHERE id=? AND owner_id=?",
+                (row["report_id"], user.id),
+            ).fetchone()
+            if rpt_row:
+                try:
+                    result["report_data"] = json.loads(rpt_row["report_json"] or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    result["report_data"] = None
+        # Include image_docs from the memo's session so frontend can inject them
+        image_docs = []
+        session_id = (result.get("memo_session_id") or "")
+        if session_id:
+            img_rows = conn.execute(
+                """SELECT id, file_name, doc_category, file_type, file_path
+                   FROM memo_documents
+                   WHERE memo_session_id=? AND owner_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')""",
+                (session_id, user.id),
+            ).fetchall()
+            for ir in img_rows:
+                fpath = Path(ir["file_path"]) if ir["file_path"] else None
+                if fpath and fpath.exists():
+                    image_docs.append({
+                        "doc_id": ir["id"],
+                        "file_name": ir["file_name"],
+                        "category": ir["doc_category"],
+                        "file_type": ir["file_type"],
+                        "section_targets": _image_category_to_sections(ir["doc_category"], ir["file_name"]),
+                    })
+        result["image_docs"] = image_docs
+        return result
     finally:
         conn.close()
 
@@ -1695,7 +2572,7 @@ async def delete_memo(memo_id: int, user: CurrentUser = Depends(get_current_user
 
 @router.get("/history/{memo_id}/docx")
 async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
-    """Export memo as .docx. Supports token via query param for direct browser download."""
+    """Export memo as .docx with embedded data room images. Supports token via query param."""
     if not token:
         raise HTTPException(status_code=401, detail="Token required")
     payload = decode_token(token)
@@ -1705,11 +2582,41 @@ async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT company_name, memo_markdown FROM generated_memos WHERE id=? AND owner_id=?",
+            "SELECT company_name, memo_markdown, report_id, memo_session_id FROM generated_memos WHERE id=? AND owner_id=?",
             (memo_id, user.id),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Memo not found")
+
+        # Fetch image documents scoped to THIS memo's session only
+        image_docs = []
+        memo_session_id = row["memo_session_id"] or ""
+        if memo_session_id:
+            session_rows = conn.execute(
+                """SELECT id, file_name, file_path, file_type, doc_category
+                   FROM memo_documents
+                   WHERE memo_session_id=? AND owner_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')
+                   ORDER BY uploaded_at""",
+                (memo_session_id, user.id),
+            ).fetchall()
+        else:
+            # Fallback for older memos without a session_id: use most recent images for this user
+            session_rows = conn.execute(
+                """SELECT id, file_name, file_path, file_type, doc_category
+                   FROM memo_documents
+                   WHERE owner_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')
+                   ORDER BY uploaded_at DESC LIMIT 20""",
+                (user.id,),
+            ).fetchall()
+        for sr in session_rows:
+            fpath = Path(sr["file_path"]) if sr["file_path"] else None
+            if fpath and fpath.exists():
+                image_docs.append({
+                    "file_path": str(fpath),
+                    "file_name": sr["file_name"],
+                    "category": sr["doc_category"],
+                    "section_targets": _image_category_to_sections(sr["doc_category"], sr["file_name"]),
+                })
     finally:
         conn.close()
 
@@ -1740,8 +2647,34 @@ async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
 
     doc.add_paragraph("")  # spacer
 
-    # Parse markdown into doc
+    # Build section → image mapping (one image per section max)
+    section_images = {}  # section_title_keyword → file_path
+    used_sections = set()
+    SECTION_KEYWORDS = {
+        'company_overview': 'company overview',
+        'market': 'market',
+        'business_model': 'business model',
+        'team': 'team',
+        'traction': 'traction',
+        'competitive_position': 'competitive position',
+        'carbon_impact': 'carbon impact',
+        'technology_ip_moat': 'technology',
+        'financing_overview': 'financing overview',
+    }
+    for img in image_docs:
+        for sec_key in img.get("section_targets", []):
+            kw = SECTION_KEYWORDS.get(sec_key)
+            if kw and kw not in used_sections:
+                section_images[kw] = img
+                used_sections.add(kw)
+                break
+
+    # Parse markdown into doc, injecting images after section headings
     lines = row["memo_markdown"].split('\n')
+    current_section = None
+    image_injected_for_section = set()
+    para_count_in_section = 0
+
     for line in lines:
         line = line.rstrip()
         if line.startswith('#### '):
@@ -1749,18 +2682,47 @@ async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
         elif line.startswith('### '):
             doc.add_heading(line[4:], level=3)
         elif line.startswith('## '):
-            doc.add_heading(line[3:], level=2)
+            heading_text = line[3:]
+            doc.add_heading(heading_text, level=2)
+            current_section = heading_text.lower()
+            para_count_in_section = 0
         elif line.startswith('# '):
-            doc.add_heading(line[2:], level=1)
+            heading_text = line[2:]
+            doc.add_heading(heading_text, level=1)
+            current_section = heading_text.lower()
+            para_count_in_section = 0
         elif line.startswith('- '):
             doc.add_paragraph(line[2:], style='List Bullet')
         elif re.match(r'^\d+\. ', line):
             doc.add_paragraph(re.sub(r'^\d+\. ', '', line), style='List Number')
         elif line.strip():
-            # Handle bold/italic inline
             p = doc.add_paragraph()
             _add_formatted_text(p, line)
-        # Skip empty lines
+            para_count_in_section += 1
+
+            # Inject image after the first substantial paragraph of matching sections
+            if current_section and para_count_in_section == 1:
+                for kw, img in section_images.items():
+                    if kw in current_section and kw not in image_injected_for_section:
+                        try:
+                            img_path = Path(img["file_path"])
+                            if img_path.exists():
+                                doc.add_picture(str(img_path), width=Inches(5.5))
+                                last_para = doc.paragraphs[-1]
+                                last_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                # Caption
+                                cap_name = img["file_name"].rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').title()
+                                cap_cat = img["category"].replace('_', ' ').title()
+                                cap = doc.add_paragraph(f"{cap_cat}: {cap_name}")
+                                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                                cap_run = cap.runs[0] if cap.runs else cap.add_run("")
+                                cap_run.font.size = Pt(9)
+                                cap_run.font.color.rgb = RGBColor(0x6B, 0x72, 0x80)
+                                cap_run.font.italic = True
+                                image_injected_for_section.add(kw)
+                        except Exception as img_err:
+                            logger.warning(f"Could not embed image {img['file_name']}: {img_err}")
+                        break
 
     # Save to temp file
     tmp = tempfile.NamedTemporaryFile(suffix='.docx', delete=False)
@@ -1792,3 +2754,398 @@ def _add_formatted_text(paragraph, text):
             run.italic = True
         else:
             paragraph.add_run(part)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SECTION-LEVEL REVIEW & REVISION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class SectionReviseRequest(BaseModel):
+    memo_id: int
+    section_key: str
+    instructions: str  # e.g. "make the tone more positive", "add more detail on competitors"
+    model: Optional[str] = None
+    additional_doc_text: Optional[str] = None  # optional new document content to incorporate
+
+
+class SectionDirectEditRequest(BaseModel):
+    memo_id: int
+    section_key: str
+    new_text: str  # the manually edited markdown text
+
+
+@router.post("/revise-section")
+async def revise_section(
+    req: SectionReviseRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Revise a single memo section using LLM based on reviewer instructions.
+
+    Takes the current section text + reviewer instructions and regenerates
+    just that section, preserving all other sections. Records the revision
+    in memo_revisions for change tracking.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM generated_memos WHERE id=? AND owner_id=?",
+            (req.memo_id, user.id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Memo not found")
+
+        # Load section texts
+        try:
+            sections = json.loads(row["sections_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            sections = {}
+
+        if req.section_key not in sections:
+            raise HTTPException(404, f"Section '{req.section_key}' not found in this memo")
+
+        old_text = sections[req.section_key]
+
+        # Find the section definition for title and guidance
+        section_def = None
+        for s in MEMO_SECTIONS:
+            if s["key"] == req.section_key:
+                section_def = s
+                break
+        if not section_def:
+            raise HTTPException(400, f"Unknown section key: {req.section_key}")
+
+        # Get report context if available
+        report_context = ""
+        if row["report_id"]:
+            rpt_row = conn.execute(
+                "SELECT report_json FROM deal_reports WHERE id=? AND owner_id=?",
+                (row["report_id"], user.id),
+            ).fetchone()
+            if rpt_row:
+                try:
+                    rpt = json.loads(rpt_row["report_json"]) if isinstance(rpt_row["report_json"], str) else rpt_row["report_json"]
+                    report_context = _build_report_context_from_parsed(rpt, section_def)
+                except Exception:
+                    pass
+
+        # Resolve model
+        model_prefs = get_model_preferences(user.id)
+        model = req.model or model_prefs.get("memo", "claude-sonnet-4-20250514")
+
+        # Build the revision prompt
+        def _run_revision():
+            import anthropic
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY not set")
+            client = anthropic.Anthropic(api_key=api_key)
+
+            system_prompt = f"""{_SECTION_WRITER_SYSTEM}
+
+REVISION MODE: You are revising an existing section of an investment memo.
+You will receive the current section text and specific revision instructions from a reviewer.
+Apply the requested changes while maintaining consistency with the rest of the memo.
+Preserve citations [n] and [RVM] references. Keep the same general structure unless told otherwise.
+Do NOT include the section title as a header — it will be added automatically."""
+
+            user_parts = [
+                f"# SECTION: {section_def['title']}",
+                f"## Section Purpose\n{section_def['guidance']}",
+                f"## Current Section Text\n{old_text}",
+                f"## Reviewer Instructions\n{req.instructions}",
+            ]
+            if report_context:
+                user_parts.append(f"## Quantitative Report Data [RVM]\n{report_context}")
+            if req.additional_doc_text:
+                user_parts.append(f"## Additional Document Content\n{req.additional_doc_text}")
+
+            user_parts.append(f"\nRevise the '{section_def['title']}' section according to the reviewer's instructions. Maintain IC-quality writing.")
+
+            response = client.messages.create(
+                model=model,
+                max_tokens=3000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": "\n\n".join(user_parts)}],
+            )
+            text = "".join(b.text for b in response.content if b.type == "text")
+            tokens_in = response.usage.input_tokens if response.usage else 0
+            tokens_out = response.usage.output_tokens if response.usage else 0
+            return text.strip(), tokens_in, tokens_out
+
+        new_text, tokens_in, tokens_out = await asyncio.to_thread(_run_revision)
+
+        # Update sections_json
+        sections[req.section_key] = new_text
+        sections_json_str = json.dumps(sections)
+
+        # Reassemble full memo markdown and HTML
+        memo_md, memo_html = _reassemble_memo(sections, row["company_name"])
+
+        # Save updated memo
+        conn.execute(
+            """UPDATE generated_memos
+               SET sections_json=?, memo_markdown=?, memo_html=?
+               WHERE id=? AND owner_id=?""",
+            (sections_json_str, memo_md, memo_html, req.memo_id, user.id),
+        )
+
+        # Record revision
+        conn.execute(
+            """INSERT INTO memo_revisions
+               (memo_id, section_key, revision_type, old_text, new_text,
+                instructions, revised_by, model_used, tokens_in, tokens_out)
+               VALUES (?, ?, 'llm', ?, ?, ?, ?, ?, ?, ?)""",
+            (req.memo_id, req.section_key, old_text, new_text,
+             req.instructions, user.username, model, tokens_in, tokens_out),
+        )
+        conn.commit()
+
+        # Convert just the new section to HTML for immediate frontend update
+        section_html = _markdown_to_html(f"## {section_def['title']}\n\n{new_text}\n")
+
+        return {
+            "section_key": req.section_key,
+            "new_text": new_text,
+            "section_html": section_html,
+            "model_used": model,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "memo_html": memo_html,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/edit-section")
+async def edit_section_direct(
+    req: SectionDirectEditRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """
+    Save a direct manual edit to a memo section.
+    Records the change in memo_revisions for tracking.
+    """
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM generated_memos WHERE id=? AND owner_id=?",
+            (req.memo_id, user.id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Memo not found")
+
+        try:
+            sections = json.loads(row["sections_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            sections = {}
+
+        if req.section_key not in sections:
+            raise HTTPException(404, f"Section '{req.section_key}' not found")
+
+        old_text = sections[req.section_key]
+        sections[req.section_key] = req.new_text
+        sections_json_str = json.dumps(sections)
+
+        memo_md, memo_html = _reassemble_memo(sections, row["company_name"])
+
+        conn.execute(
+            """UPDATE generated_memos
+               SET sections_json=?, memo_markdown=?, memo_html=?
+               WHERE id=? AND owner_id=?""",
+            (sections_json_str, memo_md, memo_html, req.memo_id, user.id),
+        )
+
+        conn.execute(
+            """INSERT INTO memo_revisions
+               (memo_id, section_key, revision_type, old_text, new_text,
+                instructions, revised_by)
+               VALUES (?, ?, 'manual', ?, ?, '', ?)""",
+            (req.memo_id, req.section_key, old_text, req.new_text, user.username),
+        )
+        conn.commit()
+
+        section_def = next((s for s in MEMO_SECTIONS if s["key"] == req.section_key), None)
+        title = section_def["title"] if section_def else req.section_key
+        section_html = _markdown_to_html(f"## {title}\n\n{req.new_text}\n")
+
+        return {
+            "section_key": req.section_key,
+            "new_text": req.new_text,
+            "section_html": section_html,
+            "memo_html": memo_html,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/revisions/{memo_id}")
+async def get_revisions(memo_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Get revision history for a memo, grouped by section."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT r.* FROM memo_revisions r
+               JOIN generated_memos m ON r.memo_id = m.id
+               WHERE r.memo_id=? AND m.owner_id=?
+               ORDER BY r.created_at DESC""",
+            (memo_id, user.id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/revisions/{memo_id}/{section_key}")
+async def get_section_revisions(
+    memo_id: int, section_key: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Get revision history for a specific section."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT r.* FROM memo_revisions r
+               JOIN generated_memos m ON r.memo_id = m.id
+               WHERE r.memo_id=? AND r.section_key=? AND m.owner_id=?
+               ORDER BY r.created_at DESC""",
+            (memo_id, section_key, user.id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _strip_section_heading(text: str, section_title: str) -> str:
+    """Remove any leading markdown heading the LLM added to a section body."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    first = lines[0].lstrip()
+    if first.startswith("#"):
+        heading_text = first.lstrip("#").strip().lower()
+        title_lower  = section_title.lower()
+        if (heading_text in title_lower or title_lower in heading_text
+                or heading_text.replace(" ", "") == title_lower.replace(" ", "")):
+            lines = lines[1:]
+            while lines and not lines[0].strip():
+                lines = lines[1:]
+    return "\n".join(lines)
+
+
+def _reassemble_memo(sections: dict, company_name: str) -> tuple:
+    """Reassemble full memo markdown + HTML from section texts dict."""
+    memo_parts = [f"# Investment Memorandum: {company_name or 'Deal Analysis'}\n"]
+    memo_parts.append(f"*VoLo Earth Ventures — Confidential*\n")
+
+    for section in MEMO_SECTIONS:
+        text = sections.get(section["key"], "")
+        if text:
+            text = _strip_section_heading(text, section["title"])
+            memo_parts.append(f"## {section['title']}\n\n{text}\n")
+
+    memo_md = "\n".join(memo_parts)
+    memo_html = _markdown_to_html(memo_md)
+    return memo_md, memo_html
+
+
+def _build_report_context_from_parsed(rpt: dict, section_def: dict) -> str:
+    """Build report context string from parsed report JSON for a specific section."""
+    parts = []
+    report_fields = section_def.get("report_fields", [])
+
+    if "simulation" in report_fields or "inputs" in report_fields:
+        sim = rpt.get("simulation", {})
+        if sim:
+            parts.append(f"Monte Carlo simulation ({sim.get('n_simulations', 'N/A')} paths):")
+            moic = sim.get("moic_unconditional", {})
+            if moic:
+                parts.append(f"  MOIC: mean={moic.get('mean', 'N/A')}x, median={moic.get('median', 'N/A')}x")
+            prob = sim.get("probability", {})
+            if prob:
+                parts.append(f"  P(>3x)={prob.get('gt_3x', 'N/A')}, P(loss)={prob.get('total_loss', 'N/A')}")
+
+    if "carbon" in report_fields:
+        carbon = rpt.get("carbon_impact", {})
+        outputs = carbon.get("outputs", {})
+        intermediates = carbon.get("intermediates", {})
+        ci = carbon.get("carbon_inputs", {})
+        ov = rpt.get("deal_overview", {})
+        risk_div = carbon.get("risk_divisor_used", "N/A")
+        if outputs:
+            parts.append("=== CARBON IMPACT (RVM Section 4) ===")
+            # Inputs
+            if ci:
+                parts.append(f"Displacement Chain Inputs:")
+                parts.append(f"  Unit definition: {ci.get('unit_definition', 'N/A')}")
+                parts.append(f"  Unit service life: {ci.get('unit_service_life_yrs', 'N/A')} years")
+                parts.append(f"  Displaced resource: {ci.get('displaced_resource', 'N/A')}")
+                parts.append(f"  Baseline lifetime production: {ci.get('baseline_lifetime_prod', 'N/A')} {ci.get('specific_production_units', '')}")
+                parts.append(f"  Range improvement (fraction displaced): {ci.get('range_improvement', 'N/A')}")
+                parts.append(f"  Commercial launch year: {ci.get('commercial_launch_yr', 'N/A')}")
+                vols = ci.get('year_volumes', [])
+                if vols:
+                    parts.append(f"  10-year volume forecast (units): {', '.join(str(round(v,1)) for v in vols[:10])}")
+                if ci.get('emb_displaced_resource'):
+                    parts.append(f"  Embodied carbon resource: {ci.get('emb_displaced_resource')} "
+                                 f"(baseline: {ci.get('emb_baseline_production', 0)}, "
+                                 f"range_improvement: {ci.get('emb_range_improvement', 0)})")
+            # Intermediates
+            if intermediates:
+                parts.append(f"Calculated Intermediates:")
+                parts.append(f"  JD (displaced vol per unit): {intermediates.get('jd', 'N/A')}")
+                ci_ser = intermediates.get('operating_ci_series', [])
+                if ci_ser:
+                    parts.append(f"  Operating CI series (tCO2/unit-prod, Y1-Y10): {', '.join(f'{v:.4f}' for v in ci_ser[:10])}")
+                ann_op = intermediates.get('annual_operating', [])
+                if ann_op:
+                    parts.append(f"  Annual operating impact (tCO2): {', '.join(f'{v:.1f}' for v in ann_op[:10])}")
+                ann_emb = intermediates.get('annual_embodied', [])
+                if any(v and v > 0 for v in (ann_emb or [])):
+                    parts.append(f"  Annual embodied impact (tCO2): {', '.join(f'{v:.1f}' for v in ann_emb[:10])}")
+                ann_lc = intermediates.get('annual_lifecycle', [])
+                if ann_lc:
+                    parts.append(f"  Annual lifecycle impact (tCO2): {', '.join(f'{v:.1f}' for v in ann_lc[:10])}")
+                parts.append(f"  Total operating: {intermediates.get('total_operating', 'N/A')} tCO2")
+                parts.append(f"  Total embodied: {intermediates.get('total_embodied', 'N/A')} tCO2")
+                parts.append(f"  Total lifecycle: {intermediates.get('total_lifecycle', 'N/A')} tCO2")
+            # Outputs
+            parts.append(f"VoLo-Level Outputs:")
+            parts.append(f"  Total lifecycle tCO2 (company): {outputs.get('company_tonnes', 'N/A')}")
+            parts.append(f"  VoLo pro-rata tCO2 ({ov.get('entry_ownership_pct', '?')}% ownership): {outputs.get('volo_prorata', 'N/A')}")
+            parts.append(f"  Risk divisor: {risk_div} ({carbon.get('risk_divisor_source', '')})")
+            parts.append(f"  Risk-adjusted tCO2: {outputs.get('volo_risk_adj', 'N/A')}")
+            parts.append(f"  t/$ (unadjusted): {outputs.get('tonnes_per_dollar', 'N/A')}")
+            parts.append(f"  t/$ (risk-adjusted): {outputs.get('risk_adj_tpd', 'N/A')}")
+
+    if "check_optimization" in report_fields or "portfolio_impact" in report_fields:
+        ps = rpt.get("position_sizing", {})
+        gso = (ps.get("grid_search") or {}).get("optimal") or {}
+        constraints = ps.get("fund_constraints") or {}
+        kelly = ps.get("kelly_reference") or {}
+        if ps.get("has_data"):
+            parts.append(f"Check size optimization:")
+            parts.append(f"  Fund-optimized check: ${gso.get('check_m', 'N/A')}M (ownership: {gso.get('ownership_pct', 'N/A')}%)")
+            parts.append(f"  Fund P50 impact: {gso.get('fund_p50_pct_chg', 'N/A')}")
+            parts.append(f"  Fund constraints: min=${constraints.get('min_check_m', 'N/A')}M, max=${constraints.get('max_check_m', 'N/A')}M, fund_size=${constraints.get('fund_size_m', 'N/A')}M")
+            parts.append(f"  Kelly full=${kelly.get('optimal_check_m', 'N/A')}M, half-Kelly=${kelly.get('half_kelly_check_m', 'N/A')}M")
+        pi = rpt.get("portfolio_impact", {})
+        if pi.get("has_data"):
+            parts.append(f"Portfolio impact (Section 3):")
+            parts.append(f"  TVPI base={pi.get('tvpi_base_mean', 'N/A')}x -> with deal={pi.get('tvpi_new_mean', 'N/A')}x (lift={pi.get('tvpi_mean_lift', 'N/A')}x)")
+            parts.append(f"  TVPI P50 base={pi.get('tvpi_base_p50', 'N/A')}x -> with deal={pi.get('tvpi_new_p50', 'N/A')}x")
+            parts.append(f"  IRR base={pi.get('irr_base_mean', 'N/A')} -> with deal={pi.get('irr_new_mean', 'N/A')} (lift={pi.get('irr_mean_lift', 'N/A')})")
+            parts.append(f"  N committed deals: {pi.get('n_committed_deals', 0)}, narrative: {pi.get('narrative', '')}")
+
+    if "valuation_comps" in report_fields:
+        vc = rpt.get("valuation_context", {})
+        if vc:
+            parts.append(f"Valuation comps: IPO EV/EBITDA mean={vc.get('ipo_ev_ebitda_mean', 'N/A')}x")
+
+    if "adoption" in report_fields:
+        adopt = rpt.get("adoption_analysis", {})
+        scurve = adopt.get("scurve", {})
+        if scurve:
+            parts.append(f"S-curve: bass_p={scurve.get('bass_p_mean', 'N/A')}, bass_q={scurve.get('bass_q_mean', 'N/A')}")
+
+    return "\n".join(parts) if parts else ""

@@ -61,6 +61,7 @@ class DealPipelineRequest(BaseModel):
     financial_model: Optional[dict] = None
     extraction_source: Optional[str] = None
     extraction_confidence: Optional[dict] = None
+    extraction_data: Optional[dict] = None   # Full deck/FM extraction object for persistence
     custom_bass_p_mean: Optional[float] = None
     custom_bass_p_std: Optional[float] = None
     custom_bass_q_mean: Optional[float] = None
@@ -75,6 +76,20 @@ class DealPipelineRequest(BaseModel):
     round_size_m: Optional[float] = None
     deal_commitment_type: str = "first_check"
     deal_follow_on_year: int = 2
+    # Follow-on optimization parameters
+    investment_type: str = "first"  # "first" or "followon"
+    # Structured multi-round list (new, preferred)
+    prior_investments: Optional[List[dict]] = None
+    # Legacy flat params (preserved for backward compatibility)
+    prior_first_check_m: Optional[float] = None
+    prior_first_pre_money_m: Optional[float] = None
+    prior_first_round_size_m: Optional[float] = None
+    prior_first_entry_year: Optional[int] = None
+    prior_first_entry_stage: Optional[str] = None
+    followon_round_size_m_actual: Optional[float] = None
+    followon_fund_year: Optional[int] = None
+    entry_year: Optional[int] = None        # Calendar year of this specific investment
+    fund_vintage_year: Optional[int] = None  # Fund Year 1 calendar year — master anchor for all charts
     save: bool = True
 
 
@@ -158,6 +173,17 @@ def run_pipeline(req: DealPipelineRequest, user: CurrentUser = Depends(get_curre
             committed_deals=committed_deals,
             deal_commitment_type=req.deal_commitment_type,
             deal_follow_on_year=req.deal_follow_on_year,
+            investment_type=req.investment_type,
+            prior_investments=req.prior_investments,
+            prior_first_check_m=req.prior_first_check_m,
+            prior_first_pre_money_m=req.prior_first_pre_money_m,
+            prior_first_round_size_m=req.prior_first_round_size_m,
+            prior_first_entry_year=req.prior_first_entry_year,
+            prior_first_entry_stage=req.prior_first_entry_stage,
+            followon_round_size_m_actual=req.followon_round_size_m_actual,
+            followon_fund_year=req.followon_fund_year,
+            entry_year=req.entry_year,
+            fund_vintage_year=req.fund_vintage_year,
         )
     except Exception as e:
         raise HTTPException(500, f"Pipeline failed: {e}")
@@ -234,6 +260,42 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
             "inputs": json.loads(row["inputs_json"]),
             "created_at": row["created_at"],
         }
+    finally:
+        db.close()
+
+
+class QAReviewRequest(BaseModel):
+    memo_markdown: Optional[str] = None   # current memo text to audit (may be empty)
+    run_llm: bool = True                  # set False for a fast offline-only check
+
+
+@router.post("/report/{rid}/qa-review")
+def run_qa_review_endpoint(rid: int, req: QAReviewRequest, user: CurrentUser = Depends(get_current_user)):
+    """
+    Run a quality-assurance review on a saved deal report.
+    Pass 1 — deterministic math/logic checks against stored data.
+    Pass 2 — Claude scans memo text for number discrepancies and internal inconsistencies.
+    """
+    from ..engine.qa_review import run_qa_review
+
+    db = get_db()
+    try:
+        row = db.execute("SELECT * FROM deal_reports WHERE id=?", (rid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Report not found")
+        if row["owner_id"] != user.id and user.role != "admin":
+            raise HTTPException(403, "Forbidden")
+
+        report = json.loads(row["report_json"] or "{}")
+        inputs = json.loads(row["inputs_json"] or "{}")
+
+        result = run_qa_review(
+            report=report,
+            inputs=inputs,
+            memo_markdown=req.memo_markdown or "",
+            run_llm=req.run_llm,
+        )
+        return result
     finally:
         db.close()
 

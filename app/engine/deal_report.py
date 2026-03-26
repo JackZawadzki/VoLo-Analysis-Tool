@@ -11,6 +11,7 @@ for the Monte Carlo, not just displayed decoratively.
 
 import time
 import logging
+import datetime
 import numpy as np
 from typing import Optional, Tuple
 
@@ -24,9 +25,85 @@ from .rvm_carbon import (
     build_carbon_intermediates, compute_portfolio_outputs,
     get_risk_divisor_for_trl, get_carbon_defaults,
 )
-from .position_sizing import optimize_position_size
+from .position_sizing import (
+    optimize_position_size,
+    optimize_followon_position,
+    optimize_followon_multi,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_prior_investments(
+    prior_investments: list,
+    current_pre_money_m: float,
+) -> list:
+    """
+    Compute effective pre-money and ownership fraction for each prior investment.
+
+    For **priced rounds**: ownership = check / (pre_money + round_size).
+    For **convertibles** (SAFE / note): the investor converts at whichever price
+    is more favourable — cap or discount-adjusted pre-money — so:
+
+        effective_pre = min(cap, current_pre_money * (1 − discount/100))
+
+    If only a cap is specified:   effective_pre = cap
+    If only a discount:           effective_pre = current_pre_money * (1-d)
+    If neither:                   effective_pre = current_pre_money (face value)
+
+    Returns the input list augmented with ``effective_pre_m`` and ``ownership``.
+    """
+    resolved = []
+    for inv in prior_investments:
+        inv_type = inv.get("type", "priced")
+        check_m  = float(inv.get("check_m") or 0)
+        stage    = inv.get("stage", "Seed")
+        year     = int(inv.get("year") or 1)
+
+        if check_m <= 0:
+            continue
+
+        if inv_type == "priced":
+            pre_money_m = float(inv.get("pre_money_m") or 10)
+            round_size_m = float(inv.get("round_size_m") or check_m)
+            post_money_m = pre_money_m + round_size_m
+            ownership    = check_m / post_money_m if post_money_m > 0 else 0
+            effective_pre_m = pre_money_m
+        else:
+            # SAFE / convertible note — convert at current priced round
+            raw_cap      = inv.get("cap_m")
+            raw_disc     = inv.get("discount_pct")
+            cap_m        = float(raw_cap)      if raw_cap  not in (None, "", 0) else None
+            discount_pct = float(raw_disc)     if raw_disc not in (None, "", 0) else None
+
+            cap_pre  = cap_m                                    if cap_m        else float("inf")
+            disc_pre = current_pre_money_m * (1 - discount_pct / 100) if discount_pct else float("inf")
+
+            effective_pre_m = min(cap_pre, disc_pre)
+            if not isfinite(effective_pre_m) or effective_pre_m <= 0:
+                effective_pre_m = current_pre_money_m  # fallback: face value
+
+            ownership    = check_m / effective_pre_m if effective_pre_m > 0 else 0
+            pre_money_m  = float(inv.get("pre_money_m") or effective_pre_m)
+            round_size_m = check_m
+
+        resolved.append({
+            **inv,
+            "type":          inv_type,
+            "check_m":       check_m,
+            "stage":         stage,
+            "year":          year,
+            "pre_money_m":   pre_money_m,
+            "round_size_m":  round_size_m,
+            "effective_pre_m": effective_pre_m,
+            "ownership":     ownership,
+        })
+
+    return resolved
+
+
+# import math.isfinite for the helper above
+from math import isfinite
 
 
 def generate_deal_report(
@@ -70,6 +147,22 @@ def generate_deal_report(
     committed_deals: list = None,
     deal_commitment_type: str = "first_check",
     deal_follow_on_year: int = 2,
+    # Follow-on optimization: prior deal terms (sunk cost)
+    investment_type: str = "first",  # "first" or "followon"
+    # Structured multi-round list (preferred) — each item: {type, check_m, stage, year,
+    #   pre_money_m/round_size_m for priced, cap_m/discount_pct for convertibles}
+    prior_investments: list = None,
+    # Legacy flat-param equivalents (used when prior_investments is None)
+    prior_first_check_m: float = None,
+    prior_first_pre_money_m: float = None,
+    prior_first_round_size_m: float = None,
+    prior_first_entry_year: int = None,
+    prior_first_entry_stage: str = None,
+    prior_first_moic_distribution: list = None,
+    followon_round_size_m_actual: float = None,
+    followon_fund_year: int = None,
+    entry_year: int = None,         # Calendar year of this investment (e.g. 2026). Anchors FM ↔ simulation.
+    fund_vintage_year: int = None,  # Fund Year 1 calendar year (e.g. 2024). Master anchor for all chart X-axes.
 ) -> dict:
     start = time.time()
     report = {}
@@ -85,6 +178,19 @@ def generate_deal_report(
         emb_carbon = {}
     if portfolio is None:
         portfolio = {}
+
+    # ── Resolve entry year (calendar year of investment) ──────────────────────
+    # This anchors FM fiscal years to simulation time: T = fiscal_year - entry_year
+    if not entry_year or entry_year < 2010 or entry_year > 2060:
+        entry_year = datetime.datetime.now().year
+
+    # ── Resolve fund_vintage_year — Fund Year 1 calendar year ─────────────────
+    # Defaults to entry_year if not set (single-deal view = fund-view).
+    # Must be <= entry_year (the fund starts before or at deal entry).
+    if not fund_vintage_year or fund_vintage_year < 2010 or fund_vintage_year > 2060:
+        fund_vintage_year = entry_year
+    if fund_vintage_year > entry_year:
+        fund_vintage_year = entry_year  # can't start after the deal
 
     # ── Auto-derive risk divisor from TRL ─────────────────────────────────────
     if risk_divisor is None:
@@ -110,6 +216,23 @@ def generate_deal_report(
     post_money = pre_money_millions + effective_round_size
     entry_ownership = check_size_millions / post_money if post_money > 0 else 0
 
+    # ── Resolve prior investments (multi-round follow-on support) ─────────────
+    # If the caller passed the new structured list, use it directly.
+    # If only the legacy flat params are present, synthesise a 1-item list.
+    if prior_investments is None and prior_first_check_m is not None:
+        prior_investments = [{
+            "type":          "priced",
+            "check_m":       prior_first_check_m,
+            "pre_money_m":   prior_first_pre_money_m or 10.0,
+            "round_size_m":  prior_first_round_size_m,
+            "stage":         prior_first_entry_stage or entry_stage,
+            "year":          prior_first_entry_year or 1,
+        }]
+
+    resolved_priors: list = []
+    if investment_type == "followon" and prior_investments:
+        resolved_priors = _resolve_prior_investments(prior_investments, pre_money_millions)
+
     # ── Auto-fill carbon defaults from archetype ──────────────────────────────
     carbon_defaults = get_carbon_defaults(archetype)
     if not op_carbon.get("displaced_resource"):
@@ -127,23 +250,29 @@ def generate_deal_report(
 
     # ── Pre-compute founder revenue in $M for the simulation ────────────────
     # If a financial model was uploaded, extract revenue by fiscal year and
-    # convert to $M.  These become the anchor trajectory for the Monte Carlo.
+    # convert to $M, ALIGNED to entry_year so T=0 = entry_year.
+    # FM years before entry_year are historical and are EXCLUDED.
+    # FM years >= entry_year map to T = fiscal_year - entry_year.
     _sim_founder_rev_m = None
     if financial_model and isinstance(financial_model, dict):
         fm_fin = financial_model.get("financials", {})
         fm_years = financial_model.get("fiscal_years", [])
         fm_rev = fm_fin.get("revenue", {})
         if fm_rev and fm_years:
-            rev_list = []
-            for y in fm_years:
-                val = fm_rev.get(str(y)) or fm_rev.get(y) or fm_rev.get(
-                    int(y) if isinstance(y, str) else str(y)) or 0
-                if isinstance(val, dict):
-                    val = val.get("value", 0) or 0
-                rev_list.append(float(val or 0) / 1_000_000)
-            if any(v > 0 for v in rev_list):
-                _sim_founder_rev_m = rev_list
-    # Fallback: use wizard-provided founder projections (already in $M)
+            # Only include fiscal years at or after entry_year
+            future_years = [int(y) for y in fm_years if int(y) >= entry_year]
+            if future_years:
+                rev_list = [0.0] * (max(future_years) - entry_year + 1)
+                for y in future_years:
+                    t = y - entry_year
+                    val = fm_rev.get(str(y)) or fm_rev.get(y) or fm_rev.get(
+                        int(y) if isinstance(y, str) else str(y)) or 0
+                    if isinstance(val, dict):
+                        val = val.get("value", 0) or 0
+                    rev_list[t] = float(val or 0) / 1_000_000
+                if any(v > 0 for v in rev_list):
+                    _sim_founder_rev_m = rev_list
+    # Fallback: use wizard-provided founder projections (already in $M, start at T=0)
     if (not _sim_founder_rev_m) and founder_revenue_projections:
         if any(float(v or 0) > 0 for v in founder_revenue_projections):
             _sim_founder_rev_m = [float(v) for v in founder_revenue_projections]
@@ -181,39 +310,45 @@ def generate_deal_report(
     scurve = _build_scurve_data(archetype, tam_millions, custom_bass_p, custom_bass_q)
 
     # ── Auto-fill founder projections from financial model if not provided ───
+    # NOTE: entry_year-aligned — only fiscal years >= entry_year are used.
+    # T=0 in each list = entry_year; years before entry_year are historical and excluded.
     scenario_revenue = {}
+    fm_future_years = []  # calendar years used for projection display
     if financial_model and isinstance(financial_model, dict):
         fm_fin = financial_model.get("financials", {})
-        fm_years = financial_model.get("fiscal_years", [])
+        fm_years_all = financial_model.get("fiscal_years", [])
+        # Separate historical years (< entry_year) from forward-looking years
+        fm_future_years = sorted([int(y) for y in fm_years_all if int(y) >= entry_year])
+
         if (not founder_revenue_projections or all(v == 0 for v in founder_revenue_projections)):
             fm_rev = fm_fin.get("revenue", {})
-            if fm_rev and fm_years:
+            if fm_rev and fm_future_years:
                 founder_revenue_projections = [
                     (fm_rev.get(str(y), fm_rev.get(y, 0)) or 0) / 1_000_000
-                    for y in fm_years
+                    for y in fm_future_years
                 ]
         if (not founder_volume_projections or all(v == 0 for v in founder_volume_projections)):
             fm_units = financial_model.get("units", {})
-            if fm_units and fm_years:
+            if fm_units and fm_future_years:
                 first_unit_key = next(iter(fm_units), None)
                 if first_unit_key:
                     series = fm_units[first_unit_key]
                     founder_volume_projections = []
-                    for y in fm_years:
-                        entry = series.get(str(y), series.get(y, 0))
-                        val = entry.get("value", 0) if isinstance(entry, dict) else (entry or 0)
+                    for y in fm_future_years:
+                        entry_val = series.get(str(y), series.get(y, 0))
+                        val = entry_val.get("value", 0) if isinstance(entry_val, dict) else (entry_val or 0)
                         founder_volume_projections.append(val)
 
-        # Extract bear/bull scenario revenue for cone overlay
+        # Extract bear/bull scenario revenue for cone overlay (entry_year aligned)
         fm_scenarios = financial_model.get("scenarios")
         if fm_scenarios and isinstance(fm_scenarios, dict):
             for sc_name in ("bear", "bull"):
                 sc_data = fm_scenarios.get(sc_name, {})
                 sc_rev = sc_data.get("financials", {}).get("revenue", {})
-                if sc_rev and fm_years:
+                if sc_rev and fm_future_years:
                     scenario_revenue[sc_name] = [
                         (sc_rev.get(str(y), sc_rev.get(y, 0)) or 0) / 1_000_000
-                        for y in fm_years
+                        for y in fm_future_years
                     ]
 
     # ── Section 4: Founder projection comparison ──────────────────────────────
@@ -232,9 +367,12 @@ def generate_deal_report(
     founder_comparison = _build_founder_comparison(
         founder_revenue_projections, founder_volume_projections,
         normalized_rev, scurve,
+        entry_year=entry_year,
+        fm_calendar_years=fm_future_years or None,
     )
     if scenario_revenue:
         founder_comparison["scenario_revenue"] = scenario_revenue
+        founder_comparison["scenario_start_year"] = entry_year
 
     # ── Section 5: Sensitivity analysis ───────────────────────────────────────
     sensitivity = _compute_sensitivity(
@@ -286,6 +424,29 @@ def generate_deal_report(
         "comps_derived_multiples": comps_derived_multiples is not None,
         "extraction_source": extraction_source,
         "extraction_confidence": extraction_confidence,
+        "entry_year": entry_year,
+        "fund_vintage_year": fund_vintage_year,
+        "deal_offset_years": entry_year - fund_vintage_year,  # how many years into the fund this deal is made
+        # Follow-on summary
+        "investment_type": investment_type,
+        "prior_investments": [
+            {
+                "round_num":       i + 1,
+                "type":            p.get("type", "priced"),
+                "check_m":         round(float(p.get("check_m", 0)), 2),
+                "stage":           p.get("stage", ""),
+                "year":            p.get("year", 1),
+                "effective_pre_m": round(float(p.get("effective_pre_m") or p.get("pre_money_m", 0)), 2),
+                "ownership_pct":   round(float(p.get("ownership", 0)) * 100, 2),
+                "cap_m":           p.get("cap_m"),
+                "discount_pct":    p.get("discount_pct"),
+            }
+            for i, p in enumerate(resolved_priors)
+        ] if resolved_priors else [],
+        "total_prior_exposure_m": round(sum(float(p.get("check_m", 0)) for p in resolved_priors), 2) if resolved_priors else 0,
+        "total_exposure_m": round(
+            sum(float(p.get("check_m", 0)) for p in resolved_priors) + check_size_millions, 2
+        ) if resolved_priors else check_size_millions,
     }
 
     survival = sim.get("summary", {}).get("survival_rate")
@@ -322,6 +483,22 @@ def generate_deal_report(
     report["carbon_impact"] = carbon
     report["carbon_impact"]["risk_divisor_used"] = risk_divisor
     report["carbon_impact"]["risk_divisor_source"] = f"Auto-derived from TRL {trl}"
+    # Store raw carbon inputs so the memo writer can explain each calculation step
+    report["carbon_impact"]["carbon_inputs"] = {
+        "displaced_resource": op_carbon.get("displaced_resource", ""),
+        "baseline_lifetime_prod": op_carbon.get("baseline_lifetime_prod"),
+        "range_improvement": op_carbon.get("range_improvement"),
+        "specific_production_units": op_carbon.get("specific_production_units", ""),
+        "unit_definition": volume.get("unit_definition", ""),
+        "unit_service_life_yrs": volume.get("unit_service_life_yrs"),
+        "commercial_launch_yr": volume.get("commercial_launch_yr"),
+        "year_volumes": volume.get("year_volumes", []),
+        "tam_10y": volume.get("tam_10y"),
+        "sam_10y": volume.get("sam_10y"),
+        "emb_displaced_resource": emb_carbon.get("displaced_resource", "") or "",
+        "emb_baseline_production": emb_carbon.get("baseline_production"),
+        "emb_range_improvement": emb_carbon.get("range_improvement"),
+    }
 
     report["valuation_context"] = valuation
     report["valuation_context"]["exit_multiples_used"] = list(exit_multiple_range)
@@ -381,6 +558,38 @@ def generate_deal_report(
     else:
         report["position_sizing"] = {"has_data": False}
 
+    # ── Section 8b: Follow-on position sizing (when investment_type == "followon") ──
+    if investment_type == "followon" and raw_moic and len(raw_moic) > 100 and resolved_priors:
+        try:
+            # Multi-prior optimizer — handles 1 or 2 prior rounds, priced or convertible
+            fo_sizing = optimize_followon_multi(
+                followon_moic_distribution=raw_moic,
+                prior_investments=resolved_priors,
+                followon_pre_money_m=pre_money_millions,
+                followon_round_size_m=(
+                    followon_round_size_m_actual
+                    or round_size_m
+                    or pre_money_millions * 0.25
+                ),
+                followon_fund_year=followon_fund_year or deal_follow_on_year,
+                fund_size_m=fund_size_m,
+                n_deals=n_deals,
+                mgmt_fee_pct=mgmt_fee_pct,
+                reserve_pct=reserve_pct,
+                max_concentration_pct=max_concentration_pct,
+                company_name=company_name,
+                survival_rate=sim.get("summary", {}).get("survival_rate", 0.3),
+                moic_conditional_mean=sim.get("moic_conditional", {}).get("mean", 3.0),
+                exit_year_range=exit_year_range,
+                committed_deals=committed_deals,
+            )
+            report["followon_position_sizing"] = {"has_data": True, **fo_sizing}
+        except Exception as e:
+            logger.warning("Follow-on position sizing failed: %s", e, exc_info=True)
+            report["followon_position_sizing"] = {"has_data": False, "error": str(e)}
+    else:
+        report["followon_position_sizing"] = {"has_data": False}
+
     if financial_model and isinstance(financial_model, dict):
         fm_provenance = []
         for metric_name, metric_data in financial_model.get("financials", {}).items():
@@ -433,13 +642,17 @@ def generate_deal_report(
 
 
 def _build_founder_comparison(
-    founder_revenue, founder_volumes, sim_revenue_trajectories, scurve_data
+    founder_revenue, founder_volumes, sim_revenue_trajectories, scurve_data,
+    entry_year: int = None, fm_calendar_years: list = None,
 ) -> dict:
     """
     Compare founder's stated projections against simulated trajectories.
     Returns year-by-year divergence (signed %) rather than an opaque 0-100 score.
+    Each entry includes both a relative 'year' (T from investment) and
+    a 'calendar_year' for unambiguous axis labelling.
     """
-    result = {"has_data": False, "revenue": None, "volumes": None}
+    result = {"has_data": False, "revenue": None, "volumes": None,
+              "entry_year": entry_year}
 
     if founder_revenue and sim_revenue_trajectories:
         sim_rev = sim_revenue_trajectories
@@ -457,8 +670,16 @@ def _build_founder_comparison(
                 med = sm[i] if i < len(sm) else 0
                 pct_diff = ((fr[i] - med) / med * 100) if med != 0 else 0
                 in_band = (sp25[i] if i < len(sp25) else 0) <= fr[i] <= (sp75[i] if i < len(sp75) else 0)
+                # calendar_year: if fm_calendar_years provided use those; else entry_year + i
+                if fm_calendar_years and i < len(fm_calendar_years):
+                    cal_yr = fm_calendar_years[i]
+                elif entry_year:
+                    cal_yr = entry_year + i
+                else:
+                    cal_yr = None
                 divergence.append({
-                    "year": i + 1,
+                    "year": i + 1,          # relative T (1-indexed)
+                    "calendar_year": cal_yr, # actual calendar year
                     "founder": round(fr[i], 2),
                     "simulated_median": round(med, 2),
                     "simulated_p25": round(sp25[i] if i < len(sp25) else 0, 2),
@@ -515,8 +736,10 @@ def _build_founder_comparison(
                 med = sm[i] if i < len(sm) else 0
                 pct_diff = ((fv[i] - med) / med * 100) if med != 0 else 0
                 in_band = (sp25[i] if i < len(sp25) else 0) <= fv[i] <= (sp75[i] if i < len(sp75) else 0)
+                cal_yr = (entry_year + i) if entry_year else None
                 vol_div.append({
                     "year": i + 1,
+                    "calendar_year": cal_yr,
                     "founder": round(fv[i], 2),
                     "simulated_median": round(med, 2),
                     "divergence_pct": round(pct_diff, 1),

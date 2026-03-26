@@ -79,26 +79,31 @@ def get_risk_divisor_for_trl(trl: int) -> int:
 # Pre-fills displaced resource, baseline production, unit definition, etc.
 # =============================================================================
 ARCHETYPE_CARBON_DEFAULTS = {
+    # range_improvement is a CI improvement factor: how many times lower the new
+    # technology's carbon intensity is vs. the displaced conventional resource.
+    # Displacement fraction = 1 − 1/factor.
+    # Near-zero-CI technologies (solar, wind, nuclear) use factor=1000 (≈99.9% displacement).
+    # Efficiency gains > 1× are absorbed into baseline_lifetime_prod (e.g. solar 1.15× → ×1725).
     "utility_solar": {
         "displaced_resource": "US electricity",
-        "baseline_lifetime_prod": 1500.0,
-        "range_improvement": 1.15,
+        "baseline_lifetime_prod": 1725.0,   # 1500 × 1.15 efficiency gain absorbed
+        "range_improvement": 1000.0,         # near-zero CI → full displacement
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 25,
         "specific_production_units": "MWh/MW/year",
     },
     "commercial_solar": {
         "displaced_resource": "US electricity",
-        "baseline_lifetime_prod": 1200.0,
-        "range_improvement": 1.10,
+        "baseline_lifetime_prod": 1320.0,   # 1200 × 1.10
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 25,
         "specific_production_units": "MWh/MW/year",
     },
     "residential_solar": {
         "displaced_resource": "US electricity",
-        "baseline_lifetime_prod": 1100.0,
-        "range_improvement": 1.05,
+        "baseline_lifetime_prod": 1155.0,   # 1100 × 1.05
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 25,
         "specific_production_units": "MWh/MW/year",
@@ -106,7 +111,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "onshore_wind": {
         "displaced_resource": "US electricity",
         "baseline_lifetime_prod": 2500.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 20,
         "specific_production_units": "MWh/MW/year",
@@ -114,7 +119,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "offshore_wind": {
         "displaced_resource": "Global electricity",
         "baseline_lifetime_prod": 3800.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 25,
         "specific_production_units": "MWh/MW/year",
@@ -122,7 +127,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "geothermal": {
         "displaced_resource": "US electricity",
         "baseline_lifetime_prod": 7000.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 30,
         "specific_production_units": "MWh/MW/year",
@@ -130,7 +135,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "battery_storage_utility": {
         "displaced_resource": "Natural Gas (CCGT)",
         "baseline_lifetime_prod": 2000.0,
-        "range_improvement": 0.85,
+        "range_improvement": 6.667,          # 1/(1−0.85): 85% of baseline displaced
         "unit_definition": "MWh storage capacity",
         "unit_service_life_yrs": 15,
         "specific_production_units": "MWh displaced/MWh/year",
@@ -138,7 +143,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "nuclear_smr": {
         "displaced_resource": "Global electricity",
         "baseline_lifetime_prod": 8000.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "MW installed capacity",
         "unit_service_life_yrs": 40,
         "specific_production_units": "MWh/MW/year",
@@ -146,7 +151,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "ev_electrification": {
         "displaced_resource": "Gasoline",
         "baseline_lifetime_prod": 12000.0,
-        "range_improvement": 0.85,
+        "range_improvement": 6.667,          # 1/(1−0.85): 85% of gasoline baseline displaced
         "unit_definition": "vehicles",
         "unit_service_life_yrs": 12,
         "specific_production_units": "L gasoline displaced/vehicle/year",
@@ -154,7 +159,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "climate_software": {
         "displaced_resource": "US electricity",
         "baseline_lifetime_prod": 50.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "enterprise customers",
         "unit_service_life_yrs": 10,
         "specific_production_units": "MWh saved/customer/year",
@@ -162,7 +167,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "industrial_decarb": {
         "displaced_resource": "Natural Gas",
         "baseline_lifetime_prod": 500.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "industrial installations",
         "unit_service_life_yrs": 15,
         "specific_production_units": "MMBtu displaced/unit/year",
@@ -170,7 +175,7 @@ ARCHETYPE_CARBON_DEFAULTS = {
     "ai_ml": {
         "displaced_resource": "US electricity",
         "baseline_lifetime_prod": 10.0,
-        "range_improvement": 1.0,
+        "range_improvement": 1000.0,
         "unit_definition": "enterprise deployments",
         "unit_service_life_yrs": 5,
         "specific_production_units": "MWh optimized/deployment/year",
@@ -185,7 +190,7 @@ ARCHETYPE_CARBON_DEFAULTS["base_hard_tech"] = ARCHETYPE_CARBON_DEFAULTS["nuclear
 ARCHETYPE_CARBON_DEFAULTS["custom"] = {
     "displaced_resource": "US electricity",
     "baseline_lifetime_prod": 100.0,
-    "range_improvement": 1.0,
+    "range_improvement": 1.4,   # default example: 1.4× CI improvement → 28.6% displacement
     "unit_definition": "units",
     "unit_service_life_yrs": 10,
     "specific_production_units": "",
@@ -235,7 +240,7 @@ class CarbonIntensityDB:
         "Polypropylene":            1_600_000.0,      # tCO₂/Mt     (row 43, incineration)
         "Limestone calcination":    0.7857142857,     # tCO₂/tonne  (row 47)
         "Crushed Limestone":        0.002015929423,   # tCO₂/tonne  (row 48)
-        "Nickel":                   4.9,              # tCO₂/tonne  (row 49, BNEF)
+        "Nickel":                   22.0,             # tCO₂/tonne  (laterite ore pathway, updated from 4.9 BNEF avg)
         "Gas to Electricity":       0.144752,         # tCO₂/MWh    (row 54, net grid benefit)
         "Gas Turbine (CCGT)":       0.603,            # tCO₂/MWh    (row 60, same as CCGT)
     }
@@ -399,8 +404,12 @@ class OperatingCarbonInputs:
                                      e.g. for BF HVAC: 10/0.3 * service_life (MWh)
                                           for Banyan: 1500 * service_life * 1000 * 0.5
     JB  specific_production_units  – INPUT (text, documentation only)
-    JC  range_improvement          – INPUT; fraction of baseline displaced (0-1+)
-    JD  displaced_volume_per_unit  – CALCULATED: = JC * JA
+    JC  range_improvement          – INPUT; CI improvement factor (how many times lower
+                                     the new technology's CI is vs. conventional).
+                                     factor=1.4 → displacement fraction = 1−1/1.4 = 0.286
+                                     factor=1000 → near-zero-CI (solar/wind/nuclear, ≈99.9%)
+                                     factor=0   → no displacement
+    JD  displaced_volume_per_unit  – CALCULATED: = (1 − 1/JC) × JA
     JE–JN ci_year1 / ci_series     – Lookup from CI database rows (MN:NR) at the
                                      specific column offset for this company's Year 1.
                                      Each company has a manually-set pointer in the sheet.
@@ -594,13 +603,14 @@ def _build_ci_series(
             # Unknown resource – no CI available
             return [0.0] * n_years
 
-    # Determine annual decline step
+    # Determine annual decline step — use STEPS dict as authoritative source.
+    # Falls back to base/30 only for unknown resources not in the DB.
     if ci_step is None:
-        base = CarbonIntensityDB.BASES.get(resource, 0.0)
-        if resource in ("Natural Gas", "Limestone"):
-            ci_step = 0.0   # flat resources
+        if resource in CarbonIntensityDB.STEPS:
+            ci_step = CarbonIntensityDB.STEPS[resource]
         else:
-            ci_step = base / 30  # linear decline to zero over 30 years
+            base = CarbonIntensityDB.BASES.get(resource, 0.0)
+            ci_step = base / 30  # linear decline to zero over 30 years (unknown resource fallback)
 
     series, val = [], ci_y1
     for _ in range(n_years):
@@ -627,8 +637,14 @@ def build_carbon_intermediates(
     # ------------------------------------------------------------------
     # OPERATING CARBON
     # ------------------------------------------------------------------
-    # JD: displaced volume per unit = range_improvement (JC) × baseline_lifetime_prod (JA)
-    jd = oc.range_improvement * oc.baseline_lifetime_prod
+    # JD: displaced volume per unit = (1 - 1/factor) × baseline_lifetime_prod (JA)
+    # range_improvement is an "improvement factor": how many times lower the new
+    # technology's carbon intensity is vs. the displaced conventional resource.
+    #   factor = 1.4  →  new CI is 1/1.4 of conventional  →  fraction displaced = 1 − 1/1.4 = 0.286
+    #   factor = 1000 →  near-zero-CI technology (solar, wind)  →  fraction ≈ 0.999
+    #   factor = 0    →  no displacement (guard: returns 0)
+    _oc_factor = oc.range_improvement
+    jd = (1.0 - 1.0 / _oc_factor) * oc.baseline_lifetime_prod if _oc_factor > 0 else 0.0
 
     # JE:JN: carbon intensity time series for operating displacement
     op_ci = _build_ci_series(oc, v.commercial_launch_yr, n)
@@ -642,8 +658,9 @@ def build_carbon_intermediates(
     # ------------------------------------------------------------------
     # EMBODIED CARBON
     # ------------------------------------------------------------------
-    # KE: embodied displaced volume per unit = KD × KB (always per-company)
-    ke_used = ec.range_improvement * ec.baseline_production
+    # KE: embodied displaced volume per unit — same improvement-factor convention
+    _ec_factor = ec.range_improvement
+    ke_used = (1.0 - 1.0 / _ec_factor) * ec.baseline_production if _ec_factor > 0 else 0.0
 
     # KF:KO: embodied carbon intensity series
     emb_ci = _build_ci_series(ec, v.commercial_launch_yr, n)
@@ -777,7 +794,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             # JA = 1500 MWh/MW * service_life * 1000 MW/$B * 0.5 recycled
             baseline_lifetime_prod=1500 * 40 * 1000 * 0.5,
             specific_production_units="MWh electricity / $B invested",
-            range_improvement=1 / 8,    # JC = 1/8
+            range_improvement=8/7,      # JC was 1/8 → factor = 1/(1−1/8) = 8/7 ≈ 1.1429
             # JE6 = MZ25: Global elec series, step 11 from base year 2011
             ci_year1_override=0.48 - 11 * (0.48 / 30),  # 0.304 tCO₂/MWh
         ),
@@ -824,7 +841,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             # JA = 10/0.3 * service_life = 666.7 MWh over 20y life
             baseline_lifetime_prod=10 / 0.3 * 20,
             specific_production_units="MWh of HVAC runtime over service life",
-            range_improvement=0.78,
+            range_improvement=4.545455,  # was 0.78 → factor = 1/(1−0.78) = 1/0.22 ≈ 4.5455
             # JE8 = MU8: per-company US elec CI at step 6 from MO8=0.40 (base yr~2017)
             ci_year1_override=0.40 - 6 * (0.40 / 30),   # 0.32 tCO₂/MWh
             ci_annual_decline=0.40 / 30,
@@ -869,7 +886,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Global electricity",
             baseline_lifetime_prod=1500 * 10,   # JA = 1500 * IA = 15,000 MWh/MW
             specific_production_units="MWh/MW over 10y life",
-            range_improvement=0.1,
+            range_improvement=1.111111,  # was 0.1 → factor = 1/(1−0.1) = 10/9 ≈ 1.1111
             # JE10 = NC25: step 14 from MO25 (base 2011) → aligns to 2025 launch
             ci_year1_override=0.48 - 14 * (0.48 / 30),  # 0.256 tCO₂/MWh
         ),
@@ -910,9 +927,9 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
         ),
         operating_carbon=OperatingCarbonInputs(
             displaced_resource="Global electricity",
-            baseline_lifetime_prod=32500,     # JA=32500 (data_only); JC=0.1; JD=3250
+            baseline_lifetime_prod=32500,     # JA=32500 (data_only); JC was 0.1; JD=3250
             specific_production_units="MWh electricity / MW over service life",
-            range_improvement=0.1,
+            range_improvement=1.111111,  # was 0.1 → factor = 1/(1−0.1) = 10/9 ≈ 1.1111
             ci_year1_override=0.48 - 14 * (0.48 / 30),  # NC25 = 0.256
         ),
         embodied_carbon=EmbodiedCarbonInputs(
@@ -954,7 +971,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Global electricity",
             baseline_lifetime_prod=125,    # JA = 125 MWh / EV over 10y life
             specific_production_units="MWh per EV over service life",
-            range_improvement=1.0,
+            range_improvement=1000.0,    # was 1.0 (full displacement) → factor=1000
             # JE25 = MU25: step 6 from Global elec MO25 (2011 base)
             ci_year1_override=0.48 - 6 * (0.48 / 30),   # 0.384 tCO₂/MWh
         ),
@@ -962,7 +979,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Li-ion Battery embodied",
             baseline_production=0.085,    # KB: 0.085 MWh battery per EV (data_only)
             specific_production_units="MWh battery per EV",
-            range_improvement=0.1,        # KD: 10% embodied carbon reduction
+            range_improvement=1.111111,   # KD was 0.1 → factor = 1/(1−0.1) ≈ 1.1111
             # KE25 = 0.1*0.085 = 0.0085; KF25=MR27=59.4 (step 3 from MO27=66)
             ci_year1_override=59.4,       # KF25 = MR27 (Li-ion row 27, col MR)
             ci_annual_decline=2.2,        # = 66 / 30 (row 27 Li-ion battery step)
@@ -998,9 +1015,9 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
         ),
         operating_carbon=OperatingCarbonInputs(
             displaced_resource="Global electricity",
-            baseline_lifetime_prod=1350,   # JA=1350 (data_only); JC=0.02; JD=27
+            baseline_lifetime_prod=1350,   # JA=1350 (data_only); JC was 0.02; JD=27
             specific_production_units="MWh of clean energy per MW",
-            range_improvement=0.02,
+            range_improvement=1.020408,  # was 0.02 → factor = 1/(1−0.02) = 50/49 ≈ 1.0204
             # JE26 = MO25: base year (step 0)
             ci_year1_override=0.48,
         ),
@@ -1044,9 +1061,9 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Natural Gas",
             baseline_lifetime_prod=1.0,    # JA = 1
             specific_production_units="tonne CO₂ captured",
-            range_improvement=1.0,
+            range_improvement=1000.0,    # was 1.0 (full: JD=1×1=1) → factor=1000 (≈0.999)
             # JO24 = II24 (volume only; JD and JE not applied in spreadsheet formula)
-            # Set CI=1.0 so annual_op = JD*vol*1 = 1*36*1 = 36, matching JO=II
+            # Set CI=1.0 so annual_op = JD*vol*1 ≈ 1*36*1 = 36, matching JO=II
             ci_year1_override=1.0,
             ci_annual_decline=0.0,
         ),
@@ -1054,7 +1071,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Limestone",     # custom embodied CI row 24
             baseline_production=1.0,           # KB24 = 1 (kg crushed / kg limestone)
             specific_production_units="Kg Crushed/Kg Limestone",
-            range_improvement=1.0,             # KD24 = 1; KE24 = 1
+            range_improvement=1000.0,          # KD24 was 1 (full) → factor=1000
             # KF24 = 0.002015929423 (flat custom row, confirmed data_only)
             ci_year1_override=0.002015929423,
             ci_annual_decline=0.0,
@@ -1090,9 +1107,9 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
         ),
         operating_carbon=OperatingCarbonInputs(
             displaced_resource="Natural Gas",   # proxy for diesel (tCO₂/gallon)
-            baseline_lifetime_prod=50000,       # JA=50000 (data_only); JC=0.1; JD=5000
+            baseline_lifetime_prod=50000,       # JA=50000 (data_only); JC was 0.1; JD=5000
             specific_production_units="gallons diesel per truck over service life",
-            range_improvement=0.1,
+            range_improvement=1.111111,  # was 0.1 → factor = 1/(1−0.1) = 10/9 ≈ 1.1111
             ci_year1_override=0.0102,           # JE61=MT10: diesel tCO₂/gallon
             ci_annual_decline=0.0,
         ),
@@ -1134,7 +1151,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Limestone",
             baseline_lifetime_prod=0.44,     # tCO₂ per tonne concrete (clinker process)
             specific_production_units="tCO₂ per tonne concrete",
-            range_improvement=0.07,          # 7% reduction
+            range_improvement=1.075269,  # was 0.07 → factor = 1/(1−0.07) = 100/93 ≈ 1.0753
             ci_year1_override=44/100 + 3/1000,   # constant limestone CI
             ci_annual_decline=0.0,
         ),
@@ -1142,7 +1159,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Limestone",
             baseline_production=1.5 * (1 / 7),   # KB: tonnes limestone per tonne concrete
             specific_production_units="tonnes limestone per tonne concrete",
-            range_improvement=0.07,
+            range_improvement=1.075269,  # was 0.07 → factor = 1/(1−0.07) ≈ 1.0753
             ci_year1_override=44/100 + 3/1000,
             ci_annual_decline=0.0,
         ),
@@ -1176,10 +1193,10 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
         ),
         operating_carbon=OperatingCarbonInputs(
             displaced_resource="Natural Gas",
-            # JA = 246.857 (data_only confirmed); JD = JC * JA = 0.4776 * 246.857 = 117.9
+            # JA = 246.857 (data_only confirmed); JD = (1−1/factor) × JA ≈ 117.9
             baseline_lifetime_prod=246.857,
             specific_production_units="MMBTU Natural Gas displaced per tonne ASHP",
-            range_improvement=0.4776322113,
+            range_improvement=1.914366,  # was 0.4776322113 → factor = 1/(1−0.47763) ≈ 1.9144
             ci_year1_override=0.053 * 1.4,  # JE206 = MO24 (Natural Gas, step 0)
             ci_annual_decline=0.0,
         ),
@@ -1220,7 +1237,7 @@ PORTFOLIO_COMPANIES: list[CompanyModel] = [
             displaced_resource="Natural Gas",
             baseline_lifetime_prod=1.0,
             specific_production_units="MWh of gas turbine generation displaced / MW traded",
-            range_improvement=1.0,
+            range_improvement=1000.0,    # was 1.0 (full displacement) → factor=1000
             # JE97 = MO19 (Atmo custom row): Nat Gas combined cycle + 2% CH₄ leakage = 0.603
             # Confirmed data_only MO19=0.603 tCO₂/MWh
             ci_year1_override=0.603,

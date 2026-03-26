@@ -552,3 +552,545 @@ def optimize_position_size(
             },
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Follow-on check size optimizer
+# ---------------------------------------------------------------------------
+
+def optimize_followon_position(
+    followon_moic_distribution: list,
+    first_check_m: float,
+    first_pre_money_m: float,
+    first_round_size_m: float,
+    first_entry_year: int,
+    first_entry_stage: str,
+    followon_pre_money_m: float,
+    followon_round_size_m: float,
+    followon_fund_year: int,
+    fund_size_m: float = 100.0,
+    n_deals: int = 25,
+    mgmt_fee_pct: float = 2.0,
+    reserve_pct: float = 30.0,
+    max_concentration_pct: float = 15.0,
+    company_name: str = "",
+    survival_rate: float = 0.3,
+    moic_conditional_mean: float = 3.0,
+    exit_year_range: tuple = (5, 10),
+    first_moic_distribution: list = None,
+    committed_deals: list = None,
+) -> dict:
+    """
+    Follow-on check size optimizer.
+
+    Treats the first investment as a **fixed sunk cost** already committed
+    to the portfolio, then sweeps follow-on check sizes to find the optimal
+    additional investment at the new round's post-money valuation.
+
+    The key insight: we evaluate each candidate follow-on check against the
+    *combined* (blended) return of first + follow-on, but only optimise
+    the follow-on amount since the first check is immutable.
+
+    Returns both:
+      - standalone follow-on analysis (TVPI impact of the follow-on alone)
+      - blended analysis (combined first + follow-on return characteristics)
+
+    Parameters
+    ----------
+    followon_moic_distribution : list
+        MOIC distribution for the follow-on investment at the new round's
+        post-money valuation.
+    first_check_m : float
+        Original first check size in $M (fixed, sunk cost).
+    first_pre_money_m : float
+        Pre-money valuation of the first round in $M.
+    first_round_size_m : float
+        Total round size of the first investment in $M.
+    first_entry_year : int
+        Fund year when the first investment was made (1-indexed).
+    first_entry_stage : str
+        Stage at first investment (e.g., "Seed", "Series A").
+    followon_pre_money_m : float
+        Pre-money valuation of the follow-on round in $M.
+    followon_round_size_m : float
+        Total follow-on round size in $M.
+    followon_fund_year : int
+        Fund year when the follow-on occurs (1-indexed).
+    fund_size_m : float
+        Total fund size in $M.
+    first_moic_distribution : list, optional
+        MOIC distribution for the first investment. If None, a simple
+        binary model based on survival_rate and moic_conditional_mean
+        is used.
+    committed_deals : list, optional
+        Other committed deals already in the portfolio.
+    """
+    from app.engine.portfolio.simulator import VCSimulator
+    from app.engine.portfolio.config import DealConfig, strategy_from_dict
+
+    # ---- Build the first investment as a committed deal (sunk cost) --------
+    first_ownership = first_check_m / (first_pre_money_m + first_round_size_m)
+
+    # Estimate first-check MOIC distribution if not provided
+    if first_moic_distribution is not None and len(first_moic_distribution) > 100:
+        first_moic_array = first_moic_distribution
+    else:
+        # Simple binary model: survive at conditional mean, or fail at 0
+        rng = np.random.RandomState(123456)
+        first_moic_array = []
+        for _ in range(5000):
+            if rng.random() < survival_rate:
+                first_moic_array.append(
+                    max(0.0, rng.lognormal(
+                        np.log(moic_conditional_mean) - 0.5 * 0.8**2, 0.8
+                    ))
+                )
+            else:
+                first_moic_array.append(0.0)
+
+    first_committed = {
+        "name": f"{company_name} (First Check)" if company_name else "First Check",
+        "check_size_m": first_check_m,
+        "pre_money_m": first_pre_money_m,
+        "round_size_m": first_round_size_m,
+        "commitment_type": "first_check",
+        "entry_year": first_entry_year,
+        "entry_stage": first_entry_stage,
+        "moic_distribution": first_moic_array,
+    }
+
+    # Combine with any other committed deals
+    all_committed = list(committed_deals or [])
+    all_committed.append(first_committed)
+
+    # ---- Reserve budget for follow-on ----
+    total_reserve = fund_size_m * (reserve_pct / 100.0)
+    committed_fo_used = sum(
+        cd.get("check_size_m", 0)
+        for cd in all_committed
+        if cd.get("commitment_type") == "follow_on"
+    )
+    remaining_reserve = max(total_reserve - committed_fo_used, 0.25)
+
+    # Max follow-on constrained by reserve, round size, and concentration
+    investable = fund_size_m * (1 - min(mgmt_fee_pct * 10, 25.0) / 100 - reserve_pct / 100)
+    investable = max(investable, fund_size_m * 0.3)
+    concentration_cap = investable * max_concentration_pct / 100
+
+    # Follow-on can't exceed remaining reserve or round size
+    max_followon = min(remaining_reserve, followon_round_size_m, concentration_cap)
+
+    # Also cap combined (first + follow-on) at concentration limit
+    combined_cap = concentration_cap - first_check_m
+    if combined_cap > 0:
+        max_followon = min(max_followon, combined_cap)
+    else:
+        max_followon = min(max_followon, 0.5)  # minimal floor if first check exceeds cap
+
+    max_followon = max(max_followon, 0.25)  # always allow at least $250K
+
+    # ---- Stage weights for follow-on (typically later stage) ----
+    # Follow-ons skew toward median/upside since the company has de-risked
+    followon_stage = _infer_followon_stage(first_entry_stage)
+    sw = stage_weights(followon_stage)
+
+    # ---- Run standalone follow-on grid search ----
+    standalone_grid = grid_search_fund_performance(
+        moic_distribution=followon_moic_distribution,
+        fund_size_m=fund_size_m,
+        check_size_m=first_check_m,  # reference: size of original check
+        pre_money_m=followon_pre_money_m,
+        max_check_m=max_followon,
+        w_p10=sw["w_p10"],
+        w_p50=sw["w_p50"],
+        w_p90=sw["w_p90"],
+        round_size_m=followon_round_size_m,
+        company_name=company_name,
+        survival_rate=survival_rate,
+        moic_conditional_mean=moic_conditional_mean,
+        exit_year_range=exit_year_range,
+        committed_deals=all_committed,
+        deal_commitment_type="follow_on",
+        deal_follow_on_year=followon_fund_year,
+    )
+
+    # ---- Compute blended MOIC at each candidate follow-on size ----
+    fo_moic_arr = np.array(followon_moic_distribution, dtype=float)
+    fi_moic_arr = np.array(first_moic_array, dtype=float)
+
+    # Align array lengths by sampling
+    n_sims = min(len(fo_moic_arr), len(fi_moic_arr), 5000)
+    rng2 = np.random.RandomState(999)
+    fo_sample = rng2.choice(fo_moic_arr, size=n_sims, replace=True)
+    fi_sample = rng2.choice(fi_moic_arr, size=n_sims, replace=True)
+
+    blended_analysis = []
+    step_m = 0.25
+    fo_candidates = np.arange(step_m, max_followon + step_m / 2, step_m)
+
+    for fo_check in fo_candidates:
+        fo_check = round(float(fo_check), 2)
+        first_proceeds = fi_sample * first_check_m
+        followon_proceeds = fo_sample * fo_check
+        total_invested = first_check_m + fo_check
+        blended_moic = (first_proceeds + followon_proceeds) / total_invested
+
+        blended_analysis.append({
+            "followon_check_m": fo_check,
+            "total_invested_m": round(total_invested, 2),
+            "blended_moic_p10": round(float(np.percentile(blended_moic, 10)), 2),
+            "blended_moic_p25": round(float(np.percentile(blended_moic, 25)), 2),
+            "blended_moic_p50": round(float(np.percentile(blended_moic, 50)), 2),
+            "blended_moic_p75": round(float(np.percentile(blended_moic, 75)), 2),
+            "blended_moic_p90": round(float(np.percentile(blended_moic, 90)), 2),
+            "blended_moic_mean": round(float(np.mean(blended_moic)), 2),
+            "followon_standalone_moic_p50": round(float(np.percentile(fo_sample, 50)), 2),
+            "pct_invested_followon": round(fo_check / total_invested * 100, 1),
+        })
+
+    # ---- Select optimal follow-on from grid search ----
+    grid_optimal = standalone_grid.get("optimal")
+    if grid_optimal:
+        recommended_followon = grid_optimal["check_m"]
+        sizing_method = standalone_grid["method"]
+    else:
+        # Fallback: pick follow-on size that maximises blended median MOIC
+        if blended_analysis:
+            best = max(blended_analysis, key=lambda x: x["blended_moic_p50"])
+            recommended_followon = best["followon_check_m"]
+            sizing_method = "Blended MOIC P50 maximization (grid search fallback)"
+        else:
+            recommended_followon = step_m
+            sizing_method = "Minimum allocation (no viable grid points)"
+
+    recommended_followon = max(recommended_followon, 0.25)
+
+    # Find the blended stats at the recommended size
+    recommended_blended = None
+    for ba in blended_analysis:
+        if abs(ba["followon_check_m"] - recommended_followon) < 0.01:
+            recommended_blended = ba
+            break
+
+    # ---- Kelly for follow-on ----
+    kelly_fo = kelly_from_moic_distribution(
+        followon_moic_distribution, recommended_followon, fund_size_m
+    )
+
+    # ---- Ownership analysis ----
+    followon_ownership = recommended_followon / (followon_pre_money_m + followon_round_size_m)
+    combined_ownership_approx = first_ownership + followon_ownership  # simplified, ignores dilution
+
+    return {
+        "recommended_followon_check_m": round(recommended_followon, 2),
+        "sizing_method": sizing_method,
+        "first_investment": {
+            "check_m": first_check_m,
+            "pre_money_m": first_pre_money_m,
+            "round_size_m": first_round_size_m,
+            "entry_year": first_entry_year,
+            "entry_stage": first_entry_stage,
+            "ownership_pct": round(first_ownership * 100, 2),
+            "status": "Fixed (sunk cost)",
+        },
+        "followon_investment": {
+            "recommended_check_m": round(recommended_followon, 2),
+            "pre_money_m": followon_pre_money_m,
+            "round_size_m": followon_round_size_m,
+            "fund_year": followon_fund_year,
+            "inferred_stage": followon_stage,
+            "ownership_pct": round(followon_ownership * 100, 2),
+            "max_followon_m": round(max_followon, 2),
+            "remaining_reserve_m": round(remaining_reserve, 2),
+        },
+        "combined": {
+            "total_invested_m": round(first_check_m + recommended_followon, 2),
+            "combined_ownership_pct": round(combined_ownership_approx * 100, 2),
+            "blended_stats": recommended_blended,
+        },
+        "blended_curve": blended_analysis,
+        "standalone_grid_search": standalone_grid,
+        "kelly_reference": kelly_fo,
+        "stage_weights_used": sw,
+    }
+
+
+def _infer_followon_stage(first_stage: str) -> str:
+    """Infer the follow-on investment stage from the first investment stage."""
+    progression = {
+        "Pre-Seed": "Seed",
+        "Seed": "Series A",
+        "Series A": "Series B",
+        "Series B": "Growth",
+        "Growth": "Growth",
+    }
+    return progression.get(first_stage, "Series A")
+
+
+# ---------------------------------------------------------------------------
+# Multi-prior follow-on optimizer (supports 1–2 prior investments,
+# priced rounds and/or convertibles, combined concentration limit)
+# ---------------------------------------------------------------------------
+
+def optimize_followon_multi(
+    followon_moic_distribution: list,
+    prior_investments: list,
+    followon_pre_money_m: float,
+    followon_round_size_m: float,
+    followon_fund_year: int,
+    fund_size_m: float = 100.0,
+    n_deals: int = 25,
+    mgmt_fee_pct: float = 2.0,
+    reserve_pct: float = 30.0,
+    max_concentration_pct: float = 15.0,
+    company_name: str = "",
+    survival_rate: float = 0.3,
+    moic_conditional_mean: float = 3.0,
+    exit_year_range: tuple = (5, 10),
+    committed_deals: list = None,
+) -> dict:
+    """
+    Follow-on optimizer for 1 or 2 prior investments (priced rounds or convertibles).
+
+    All prior investments are treated as sunk cost.  Concentration limits are
+    enforced against *total exposure* (sum of all priors + current follow-on).
+
+    Parameters
+    ----------
+    prior_investments : list of dicts
+        Each dict must contain at minimum:
+          - check_m        : amount invested ($M)
+          - stage          : entry stage string
+          - year           : fund year at investment
+          - effective_pre_m: effective pre-money used for ownership (already
+                             computed for convertibles by deal_report._resolve)
+          - ownership      : pre-computed ownership fraction
+        Optional:
+          - type           : "priced" | "safe" | "note"
+          - cap_m          : valuation cap (for display only, already resolved)
+          - discount_pct   : discount % (for display only, already resolved)
+    followon_moic_distribution : list
+        MOIC distribution for the follow-on investment at this round's valuation.
+    """
+    if not prior_investments:
+        raise ValueError("prior_investments must contain at least one investment")
+
+    rng_gen = np.random.RandomState(123456)
+
+    # 1. Build MOIC estimates and committed-deal dicts for all prior investments
+    prior_moic_arrays = []
+    prior_committed = []
+    total_prior_check = 0.0
+
+    for i, inv in enumerate(prior_investments):
+        check_m = float(inv.get("check_m", 0) or 0)
+        if check_m <= 0:
+            continue
+        total_prior_check += check_m
+
+        stage    = inv.get("stage", "Seed")
+        year     = int(inv.get("year", 1) or 1)
+        pre_m    = float(inv.get("effective_pre_m") or inv.get("pre_money_m") or 10)
+        rnd_m    = float(inv.get("round_size_m") or check_m)
+
+        # Use stored distribution if available, otherwise synthesise
+        stored_dist = inv.get("_moic_distribution")
+        if stored_dist and len(stored_dist) > 100:
+            moic_arr = list(stored_dist)
+        else:
+            moic_arr = []
+            for _ in range(5000):
+                if rng_gen.random() < survival_rate:
+                    moic_arr.append(max(0.0, rng_gen.lognormal(
+                        np.log(max(moic_conditional_mean, 1.01)) - 0.5 * 0.8 ** 2,
+                        0.8,
+                    )))
+                else:
+                    moic_arr.append(0.0)
+
+        prior_moic_arrays.append(np.array(moic_arr, dtype=float))
+        prior_committed.append({
+            "name": f"{company_name} Prior {i + 1}" if company_name else f"Prior {i + 1}",
+            "check_size_m": check_m,
+            "pre_money_m": pre_m,
+            "round_size_m": rnd_m,
+            "commitment_type": "first_check",
+            "entry_year": year,
+            "entry_stage": stage,
+            "moic_distribution": moic_arr,
+        })
+
+    if total_prior_check <= 0:
+        raise ValueError("No valid prior investments found (check_m must be > 0)")
+
+    # 2. Merge with portfolio-level committed deals
+    all_committed = list(committed_deals or [])
+    all_committed.extend(prior_committed)
+
+    # 3. Compute max follow-on respecting total exposure concentration limit
+    total_reserve      = fund_size_m * (reserve_pct / 100.0)
+    committed_fo_used  = sum(
+        cd.get("check_size_m", 0)
+        for cd in all_committed
+        if cd.get("commitment_type") == "follow_on"
+    )
+    remaining_reserve  = max(total_reserve - committed_fo_used, 0.25)
+
+    investable         = fund_size_m * (1 - min(mgmt_fee_pct * 10, 25.0) / 100 - reserve_pct / 100)
+    investable         = max(investable, fund_size_m * 0.3)
+    concentration_cap  = investable * max_concentration_pct / 100
+
+    # Available headroom = concentration cap minus capital already deployed to this company
+    concentration_remaining = max(concentration_cap - total_prior_check, 0.25)
+
+    max_followon = min(remaining_reserve, followon_round_size_m, concentration_remaining)
+    max_followon = max(max_followon, 0.25)
+
+    # 4. Stage weights: based on most recent prior investment's stage
+    latest_stage = prior_investments[-1].get("stage", "Seed") if prior_investments else "Seed"
+    followon_stage = _infer_followon_stage(latest_stage)
+    sw = stage_weights(followon_stage)
+
+    # 5. Standalone grid search for the follow-on increment
+    standalone_grid = grid_search_fund_performance(
+        moic_distribution=followon_moic_distribution,
+        fund_size_m=fund_size_m,
+        check_size_m=max(total_prior_check, 0.1),   # reference = total prior size
+        pre_money_m=followon_pre_money_m,
+        max_check_m=max_followon,
+        w_p10=sw["w_p10"],
+        w_p50=sw["w_p50"],
+        w_p90=sw["w_p90"],
+        round_size_m=followon_round_size_m,
+        company_name=company_name,
+        survival_rate=survival_rate,
+        moic_conditional_mean=moic_conditional_mean,
+        exit_year_range=exit_year_range,
+        committed_deals=all_committed,
+        deal_commitment_type="follow_on",
+        deal_follow_on_year=followon_fund_year,
+    )
+
+    # 6. Blended MOIC curves across all prior rounds + follow-on
+    fo_moic_arr = np.array(followon_moic_distribution, dtype=float)
+    n_sims = min(len(fo_moic_arr), 5000)
+    rng2 = np.random.RandomState(999)
+    fo_sample = rng2.choice(fo_moic_arr, size=n_sims, replace=True)
+
+    prior_samples = [
+        rng2.choice(arr, size=n_sims, replace=True)
+        for arr in prior_moic_arrays
+    ]
+
+    step_m = 0.25
+    fo_candidates = np.arange(step_m, max_followon + step_m / 2, step_m)
+    blended_analysis = []
+
+    for fo_check in fo_candidates:
+        fo_check = round(float(fo_check), 2)
+
+        # Sum up dollar proceeds from all prior rounds
+        prior_proceeds = np.zeros(n_sims, dtype=float)
+        for j, inv in enumerate(prior_investments):
+            if j < len(prior_samples):
+                prior_proceeds += prior_samples[j] * float(inv.get("check_m", 0))
+
+        fo_proceeds    = fo_sample * fo_check
+        total_invested = total_prior_check + fo_check
+        blended_moic   = (prior_proceeds + fo_proceeds) / total_invested
+
+        blended_analysis.append({
+            "followon_check_m":             fo_check,
+            "total_invested_m":             round(total_invested, 2),
+            "blended_moic_p10":             round(float(np.percentile(blended_moic, 10)), 2),
+            "blended_moic_p25":             round(float(np.percentile(blended_moic, 25)), 2),
+            "blended_moic_p50":             round(float(np.percentile(blended_moic, 50)), 2),
+            "blended_moic_p75":             round(float(np.percentile(blended_moic, 75)), 2),
+            "blended_moic_p90":             round(float(np.percentile(blended_moic, 90)), 2),
+            "blended_moic_mean":            round(float(np.mean(blended_moic)), 2),
+            "followon_standalone_moic_p50": round(float(np.percentile(fo_sample, 50)), 2),
+            "pct_invested_followon":        round(fo_check / total_invested * 100, 1),
+            "total_prior_invested_m":       round(total_prior_check, 2),
+            "n_prior_rounds":               len(prior_investments),
+        })
+
+    # 7. Pick optimal follow-on size
+    grid_optimal = standalone_grid.get("optimal")
+    if grid_optimal:
+        recommended_followon = grid_optimal["check_m"]
+        sizing_method = standalone_grid["method"]
+    else:
+        if blended_analysis:
+            best = max(blended_analysis, key=lambda x: x["blended_moic_p50"])
+            recommended_followon = best["followon_check_m"]
+            sizing_method = "Blended MOIC P50 maximization (grid search fallback)"
+        else:
+            recommended_followon = 0.25
+            sizing_method = "Minimum allocation (no viable grid points)"
+
+    recommended_followon = max(recommended_followon, 0.25)
+
+    # Find blended stats at the recommended size
+    recommended_blended = next(
+        (ba for ba in blended_analysis
+         if abs(ba["followon_check_m"] - recommended_followon) < 0.01),
+        None,
+    )
+
+    # Kelly reference for the follow-on increment
+    kelly_fo = kelly_from_moic_distribution(
+        followon_moic_distribution, recommended_followon, fund_size_m
+    )
+
+    # Ownership at the follow-on round
+    fo_post_money  = followon_pre_money_m + followon_round_size_m
+    fo_ownership   = recommended_followon / fo_post_money if fo_post_money > 0 else 0
+    total_ownership_approx = sum(float(inv.get("ownership", 0)) for inv in prior_investments) + fo_ownership
+
+    return {
+        "recommended_followon_check_m": round(recommended_followon, 2),
+        "sizing_method": sizing_method,
+        "prior_investments": [
+            {
+                "round_num":          i + 1,
+                "type":               inv.get("type", "priced"),
+                "check_m":            round(float(inv.get("check_m", 0)), 2),
+                "stage":              inv.get("stage", ""),
+                "year":               inv.get("year", 1),
+                "cap_m":              inv.get("cap_m"),
+                "discount_pct":       inv.get("discount_pct"),
+                "effective_pre_m":    round(float(inv.get("effective_pre_m") or inv.get("pre_money_m", 0)), 2),
+                "ownership_pct":      round(float(inv.get("ownership", 0)) * 100, 2),
+                "status":             "Fixed (sunk cost)",
+            }
+            for i, inv in enumerate(prior_investments)
+        ],
+        "followon_investment": {
+            "recommended_check_m": round(recommended_followon, 2),
+            "pre_money_m":         followon_pre_money_m,
+            "round_size_m":        followon_round_size_m,
+            "fund_year":           followon_fund_year,
+            "inferred_stage":      followon_stage,
+            "ownership_pct":       round(fo_ownership * 100, 2),
+            "max_followon_m":      round(max_followon, 2),
+        },
+        "combined": {
+            "total_prior_m":           round(total_prior_check, 2),
+            "n_prior_rounds":          len(prior_investments),
+            "total_invested_m":        round(total_prior_check + recommended_followon, 2),
+            "total_ownership_pct_approx": round(total_ownership_approx * 100, 2),
+            "blended_stats":           recommended_blended,
+        },
+        "fund_constraints": {
+            "investable_capital_m":      round(investable, 2),
+            "concentration_cap_m":       round(concentration_cap, 2),
+            "total_prior_m":             round(total_prior_check, 2),
+            "concentration_remaining_m": round(concentration_remaining, 2),
+            "remaining_reserve_m":       round(remaining_reserve, 2),
+            "max_followon_m":            round(max_followon, 2),
+        },
+        "blended_curve": blended_analysis,
+        "standalone_grid_search": standalone_grid,
+        "kelly_reference": kelly_fo,
+        "stage_weights_used": sw,
+    }

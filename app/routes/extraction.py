@@ -123,6 +123,216 @@ async def extract_from_source(
         raise HTTPException(500, f"Extraction failed: {exc}")
 
 
+# ── Vision-based financial extraction from screenshots ───────────────────────
+
+_VISION_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# Canonical metric names and their common aliases (mirrors LABEL_SYNONYMS in financial_pipeline.py)
+_VISION_METRIC_ALIASES: dict[str, list[str]] = {
+    "revenue":        ["revenue","total revenue","net revenue","sales","net sales","gross revenue","total net revenue","total sales",
+                       "service revenue","product revenue","processing revenue","tolling revenue","contract revenue","project revenue",
+                       "recurring revenue"],
+    "ebitda":         ["ebitda","adjusted ebitda","adj. ebitda","operating income","ebit","operating profit",
+                       "adj ebitda","adjusted operating income","operating earnings"],
+    "gross_profit":   ["gross profit","gross margin","gross income","gross profit margin"],
+    "net_income":     ["net income","net loss","net profit","net earnings","net income/(loss)","profit/(loss)","earnings",
+                       "net income (loss)","total net income","net loss attributable","loss from operations"],
+    "cash":           ["cash","cash & equivalents","cash and equivalents","ending cash","cash balance","cash position",
+                       "cash & cash equivalents","total cash","cash and short-term investments","available cash",
+                       "cash end of period","cash eop"],
+    "opex":           ["opex","operating expenses","total opex","total expenses","sg&a","r&d","operating costs",
+                       "total operating expenses","selling general and administrative","g&a","general & administrative",
+                       "research and development","total cost of revenue","cost of goods sold","cogs","cost of sales"],
+    "gross_margin_pct": ["gross margin %","gross margin pct","gm%","gross margin percentage"],
+    "capital_raised": ["capital raised","funding","total funding","capital","investment","total capital raised",
+                       "total equity raised","equity raised","total invested capital"],
+    "arr":            ["arr","annual recurring revenue"],
+    "mrr":            ["mrr","monthly recurring revenue"],
+    "customer_count": ["customers","total customers","active customers","customer count","units in field","units deployed",
+                       "number of customers","active accounts","contracted customers","sites"],
+    "churn_rate":     ["churn","churn rate","net churn","annual churn"],
+    "runway_months":  ["runway","months runway","cash runway","months of runway"],
+    "capex":          ["capex","capital expenditures","capital expenditure","property plant and equipment","ppe",
+                       "investments in ppe","property and equipment"],
+    "free_cash_flow": ["free cash flow","fcf","unlevered free cash flow","levered free cash flow","operating cash flow",
+                       "cash from operations","net cash from operating activities"],
+}
+
+def _vision_map_metric(raw_name: str) -> str | None:
+    """Map a raw label from vision output to a canonical metric key."""
+    norm = raw_name.strip().lower()
+    for canonical, aliases in _VISION_METRIC_ALIASES.items():
+        if norm == canonical or norm in aliases:
+            return canonical
+        for alias in aliases:
+            if alias in norm or norm in alias:
+                return canonical
+    return None
+
+
+async def _vision_extract_financials(image_bytes: bytes, filename: str) -> dict:
+    """Use Claude Vision to extract a financial model from a screenshot image.
+
+    Returns the same dict schema as the Excel extraction route so the frontend
+    and downstream pipeline are completely unaware of the difference.
+    """
+    import base64
+    import anthropic
+    import re
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not configured — cannot use vision extraction.")
+
+    ext = os.path.splitext(filename)[1].lower().lstrip(".")
+    media_type_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+    media_type = media_type_map.get(ext, "image/png")
+    b64_image = base64.standard_b64encode(image_bytes).decode()
+
+    prompt = """You are a financial analyst extracting structured data from a financial model screenshot.
+
+Carefully read every row label and column header in this image, then return ONLY a valid JSON object — no prose, no markdown fences.
+
+JSON schema:
+{
+  "scale": "raw" | "thousands" | "millions" | "billions",
+  "currency": "USD",
+  "years": [2024, 2025, 2026],
+  "metrics": {
+    "<row label exactly as written>": {
+      "2024": 1234567,
+      "2025": null
+    }
+  },
+  "notes": "<any important caveats, e.g. partial year, FY ending March>"
+}
+
+Rules:
+1. "scale" means how the numbers are presented IN the table. Do NOT multiply — report values exactly as shown.
+   I will apply the multiplier. Detect scale from headers like "($ in thousands)", "(USD M)", "in millions", etc.
+2. If a year header reads "2027E", "2027F", "FY27", or "FY2027" treat it as 2027.
+3. Use null for blank or unreadable cells.
+4. Use negative numbers for losses (look for parentheses like "(1,234)" = -1234).
+5. Include ALL rows you can read — do not filter. I will map them to canonical names.
+6. Only include years between 2015 and 2040.
+7. CRITICAL: rows labelled "% EBITDA Margin", "EBITDA Margin", "Gross Margin %", or any row whose values are clearly percentages (e.g. 19%, 30%) must be captured with their exact label. NEVER map percentage/margin rows onto a dollar metric like "EBITDA" or "Revenue". Keep each row label exactly as written so I can distinguish them."""
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=8192,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_image}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+
+    raw_text = response.content[0].text.strip()
+
+    # ── Robust JSON extraction ────────────────────────────────────────────────
+    # 1. Strip markdown code fences (```json ... ```)
+    raw_text = re.sub(r"```[a-z]*\s*", "", raw_text)
+    raw_text = raw_text.replace("```", "").strip()
+
+    # 2. If there's still prose before/after the JSON object, extract the outermost { … }
+    brace_start = raw_text.find("{")
+    brace_end   = raw_text.rfind("}")
+    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+        raw_text = raw_text[brace_start : brace_end + 1]
+
+    def _repair_json(text: str) -> str:
+        """Fix common LLM JSON output issues: JS comments, trailing commas, control chars."""
+        # Remove JavaScript-style line comments (// ...)
+        text = re.sub(r"//[^\n]*", "", text)
+        # Remove JavaScript-style block comments (/* ... */)
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+        # Remove trailing commas before closing brace or bracket
+        text = re.sub(r",(\s*[}\]])", r"\1", text)
+        # Replace literal tab/newline characters inside string values that break parsing
+        text = re.sub(r'(?<=")([^"]*?)(?=")', lambda m: m.group(0).replace('\n', ' ').replace('\t', ' '), text)
+        return text
+
+    try:
+        extracted = json.loads(raw_text)
+    except json.JSONDecodeError:
+        # Attempt auto-repair before giving up
+        repaired = _repair_json(raw_text)
+        try:
+            extracted = json.loads(repaired)
+        except json.JSONDecodeError as e:
+            raise HTTPException(422, f"Vision model returned unparseable JSON: {e}. Raw (first 500 chars): {raw_text[:500]}")
+
+    # Apply scale multiplier
+    scale_str = extracted.get("scale", "raw")
+    scale_mult = {"raw": 1, "thousands": 1_000, "millions": 1_000_000, "billions": 1_000_000_000}.get(scale_str, 1)
+
+    raw_metrics: dict = extracted.get("metrics", {})
+    years_raw: list = extracted.get("years", [])
+    valid_years = sorted({int(y) for y in years_raw if isinstance(y, (int, float)) and 2015 <= int(y) <= 2040})
+
+    # Map raw labels → canonical metric names, apply scale
+    financials: dict = {}
+    unmapped: list[str] = []
+    for raw_label, year_vals in raw_metrics.items():
+        if not isinstance(year_vals, dict):
+            continue
+        canonical = _vision_map_metric(raw_label)
+        if canonical is None:
+            unmapped.append(raw_label)
+            continue
+        if canonical not in financials:
+            financials[canonical] = {}
+        for yr_key, val in year_vals.items():
+            try:
+                yr_int = int(float(str(yr_key)))
+            except (ValueError, TypeError):
+                continue
+            if not (2015 <= yr_int <= 2040):
+                continue
+            if val is not None:
+                try:
+                    financials[canonical][str(yr_int)] = float(val) * scale_mult
+                except (ValueError, TypeError):
+                    pass
+
+    # Derive fiscal_years from what was actually extracted
+    all_extracted_years = sorted({int(y) for metric_vals in financials.values() for y in metric_vals.keys()})
+    if not all_extracted_years:
+        all_extracted_years = valid_years
+
+    records_count = sum(len(v) for v in financials.values())
+
+    return {
+        "status": "ok",
+        "file_name": filename,
+        "records_count": records_count,
+        "failures_count": 0,
+        "financials": financials,
+        "units": {},
+        "fiscal_years": all_extracted_years,
+        "scale_info": f"USD (scale={scale_str}, multiplier={scale_mult:,})",
+        "model_summary": {
+            "source": "vision_extraction",
+            "manually_edited": False,
+            "extraction_notes": extracted.get("notes", ""),
+            "vision_model": "claude-opus-4-6",
+        },
+        "scenarios": None,
+        "detected_scenarios": ["base"],
+        "primary_scenario": "base",
+        "_diagnostics": {
+            "vision_extraction": True,
+            "scale_detected": scale_str,
+            "scale_multiplier": scale_mult,
+            "unmapped_labels": unmapped,
+            "raw_years": years_raw,
+        },
+    }
+
+
 # ── Routes: Standalone financial model extraction (wizard flow) ───────────────
 
 @router.post("/api/extract-model")
@@ -130,10 +340,16 @@ async def extract_financial_model_standalone(
     file: UploadFile = File(...),
     user: CurrentUser = Depends(get_optional_user),
 ):
-    """Extract financial data from an Excel model without requiring a company record."""
+    """Extract financial data from an Excel/CSV model or a screenshot image."""
     ext = os.path.splitext(file.filename)[1].lower()
+
+    # ── Image path: vision extraction ────────────────────────────────────────
+    if ext in _VISION_IMAGE_EXTS:
+        content = await file.read()
+        return await _vision_extract_financials(content, file.filename)
+
     if ext not in (".xlsx", ".xlsm", ".xls", ".csv"):
-        raise HTTPException(400, f"Unsupported file type: {ext}. Upload .xlsx, .xls, or .csv")
+        raise HTTPException(400, f"Unsupported file type: {ext}. Upload .xlsx/.xls/.csv or a screenshot (.png/.jpg/.jpeg)")
 
     upload_dir = os.path.join(tempfile.gettempdir(), f"fm_wiz_{secrets.token_hex(6)}")
     os.makedirs(upload_dir, exist_ok=True)

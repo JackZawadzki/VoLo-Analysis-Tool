@@ -4,10 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=76">
+    <link rel="stylesheet" href="/static/styles.css?v=109">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <script>
+    // Clear stale token if URL has ?reset
+    if (location.search.includes('reset')) {
+        localStorage.removeItem('rvm_token');
+        location.href = '/';
+    }
+    </script>
 </head>
 <body>
     <!-- AUTH OVERLAY -->
@@ -47,6 +54,8 @@
                 <a href="#" class="nav-link active" data-tab="pipeline">Deal Pipeline</a>
                 <a href="#" class="nav-link" data-tab="scurves">S-Curve Atlas</a>
                 <a href="#" class="nav-link" data-tab="memo">Investment Memo</a>
+                <a href="#" class="nav-link" data-tab="ddanalysis">DD Financial Analysis</a>
+                <a href="#" class="nav-link" data-tab="funddeployment">Fund II Deployment</a>
                 <a href="#" class="nav-link" data-tab="references">References</a>
                 <a href="#" class="nav-link" data-tab="models">Models</a>
                 <a href="#" class="nav-link" data-tab="developer" id="nav-dev-link">Developer</a>
@@ -65,11 +74,11 @@
         <div id="tab-pipeline" class="tab-content active">
             <!-- Wizard Step Indicator -->
             <div class="wizard-steps">
-                <div class="wizard-step active" data-step="1"><span class="wizard-step-num">1</span><span class="wizard-step-label">Upload</span></div>
+                <div class="wizard-step active" data-step="1" onclick="wizNavBack(1)" title="Go back to Upload"><span class="wizard-step-num">1</span><span class="wizard-step-label">Upload</span></div>
                 <div class="wizard-step-line"></div>
-                <div class="wizard-step" data-step="2"><span class="wizard-step-num">2</span><span class="wizard-step-label">Review</span></div>
+                <div class="wizard-step" data-step="2" onclick="wizNavBack(2)" title="Go back to Review"><span class="wizard-step-num">2</span><span class="wizard-step-label">Review</span></div>
                 <div class="wizard-step-line"></div>
-                <div class="wizard-step" data-step="3"><span class="wizard-step-num">3</span><span class="wizard-step-label">Configure</span></div>
+                <div class="wizard-step" data-step="3" onclick="wizNavBack(3)" title="Go back to Configure"><span class="wizard-step-num">3</span><span class="wizard-step-label">Configure</span></div>
                 <div class="wizard-step-line"></div>
                 <div class="wizard-step" data-step="4"><span class="wizard-step-num">4</span><span class="wizard-step-label">Report</span></div>
             </div>
@@ -77,6 +86,15 @@
             <!-- Step 1: Upload -->
             <div id="wiz-step-1" class="wizard-panel">
                 <div class="page-header"><h1>New Deal Analysis</h1><p class="page-subtitle">Upload a pitch deck and/or financial model to begin.</p></div>
+                <!-- Loaded data banner — shown when deck/FM data is already in memory from a previous deal -->
+                <div id="wiz-loaded-banner" style="display:none; background:var(--accent-bg,#e8f4fd); border:1px solid var(--accent,#3b82f6); border-radius:8px; padding:12px 16px; margin-bottom:16px; align-items:center; gap:12px; flex-wrap:wrap;">
+                    <span style="font-size:1rem;">&#128203;</span>
+                    <div style="flex:1; min-width:0;">
+                        <div id="wiz-loaded-banner-text" style="font-weight:600; font-size:0.88rem;"></div>
+                        <div style="font-size:0.78rem; color:var(--text-secondary); margin-top:2px;">You can skip upload and continue with the data already in memory, or upload new files to replace it.</div>
+                    </div>
+                    <button onclick="wizSkipUpload()" class="btn-primary" style="white-space:nowrap; font-size:0.82rem; padding:6px 14px;">Skip to Review &#8594;</button>
+                </div>
                 <div class="upload-grid">
                     <div class="upload-zone" id="wiz-deck-zone">
                         <div class="upload-icon">&#128196;</div>
@@ -88,8 +106,8 @@
                     <div class="upload-zone" id="wiz-model-zone">
                         <div class="upload-icon">&#128202;</div>
                         <h3>Financial Model</h3>
-                        <p>XLSX, XLS, or CSV</p>
-                        <input type="file" id="wiz-model-file" accept=".xlsx,.xls,.xlsm,.csv" class="upload-input">
+                        <p>XLSX, XLS, CSV — or a screenshot (PNG/JPG)</p>
+                        <input type="file" id="wiz-model-file" accept=".xlsx,.xls,.xlsm,.csv,.png,.jpg,.jpeg,.webp" class="upload-input">
                         <div id="wiz-model-name" class="upload-filename"></div>
                     </div>
                 </div>
@@ -140,6 +158,7 @@
                             <div class="form-row">
                                 <div class="form-group"><label>Entry Stage</label><select id="wiz-entry-stage"><option value="Pre-Seed">Pre-Seed</option><option value="Seed" selected>Seed</option><option value="Series A">Series A</option><option value="Series B">Series B</option><option value="Series C">Series C</option></select></div>
                                 <div class="form-group"><label>TRL</label><select id="wiz-trl" onchange="_wizAutoCalcOwnership()"><option value="3">TRL 3</option><option value="4">TRL 4</option><option value="5" selected>TRL 5</option><option value="6">TRL 6</option><option value="7">TRL 7</option><option value="8">TRL 8</option><option value="9">TRL 9</option></select></div>
+                                <div class="form-group"><label title="Calendar year of this investment. Anchors financial model and volume timelines.">Investment Year</label><input type="number" id="wiz-entry-year" value="2026" step="1" min="2010" max="2040" onchange="_wizUpdateVolumeLabels()"></div>
                             </div>
                             <div class="form-row">
                                 <div class="form-group"><label>Check Size ($M)</label><input type="number" id="wiz-check-size" value="2.0" step="0.5" min="0.1" oninput="_wizAutoCalcOwnership()"></div>
@@ -224,11 +243,144 @@
                             <div class="form-row">
                                 <div class="form-group"><label>Fund Size ($M)</label><input type="number" id="wiz-fund-size" value="135" step="5" min="10"></div>
                                 <div class="form-group"><label>Target # Deals</label><input type="number" id="wiz-n-deals" value="22" step="1" min="5"></div>
+                                <div class="form-group"><label title="Calendar year when the fund began deploying (Fund Year 1). All projections and charts are anchored to this year.">Fund Vintage Year</label><input type="number" id="wiz-fund-vintage-year" value="2024" step="1" min="2010" max="2040"></div>
                             </div>
                             <div class="form-row">
                                 <div class="form-group"><label>Mgmt Fee (%/yr)</label><input type="number" id="wiz-mgmt-fee" value="2" step="0.25" min="0"></div>
                                 <div class="form-group"><label>Reserve (%)</label><input type="number" id="wiz-reserve" value="45" step="5" min="0"></div>
                                 <div class="form-group"><label>Max Concentration (%)</label><input type="number" id="wiz-max-conc" value="15" step="1" min="5"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:16px;">
+                        <div class="card-header"><h2>Investment Type</h2><span class="card-header-note">First check or follow-on?</span></div>
+                        <div class="card-body">
+                            <div class="form-group">
+                                <select id="wiz-investment-type" onchange="_wizInvestTypeChanged()">
+                                    <option value="first">First Investment</option>
+                                    <option value="followon">Follow-on Investment</option>
+                                </select>
+                            </div>
+                            <div id="wiz-followon-panel" style="display:none;">
+                                <p style="font-size:0.85rem;color:var(--text-secondary);margin:8px 0 12px;">Prior investments are fixed (sunk cost). The optimizer finds the best follow-on check accounting for total exposure across all rounds.</p>
+
+                                <!-- ── Number of prior rounds ──────────────────────── -->
+                                <div class="form-group" style="margin-bottom:10px;">
+                                    <label style="display:block;margin-bottom:6px;">Prior Rounds</label>
+                                    <div style="display:flex;gap:6px;">
+                                        <button type="button" id="wiz-prior-btn-1" class="btn-sm btn-secondary btn-prior-active" onclick="_wizSetPriorCount(1)">1 Round</button>
+                                        <button type="button" id="wiz-prior-btn-2" class="btn-sm btn-secondary" onclick="_wizSetPriorCount(2)">2 Rounds</button>
+                                    </div>
+                                </div>
+
+                                <!-- ── Prior Investment 1 ───────────────────────────── -->
+                                <div class="prior-round-card" id="wiz-prior-card-1">
+                                    <div class="prior-card-label">Prior Investment 1</div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Type</label>
+                                            <select id="wiz-prior-1-type" onchange="_wizPriorTypeChanged(1)">
+                                                <option value="priced">Priced Round</option>
+                                                <option value="safe">SAFE</option>
+                                                <option value="note">Convertible Note</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group"><label>Check ($M)</label><input type="number" id="wiz-prior-1-check" step="0.25" min="0.1" placeholder="e.g. 1.5" oninput="_wizUpdateExposure()"></div>
+                                        <div class="form-group">
+                                            <label>Stage</label>
+                                            <select id="wiz-prior-1-stage">
+                                                <option value="Pre-Seed">Pre-Seed</option>
+                                                <option value="Seed" selected>Seed</option>
+                                                <option value="Series A">Series A</option>
+                                                <option value="Series B">Series B</option>
+                                                <option value="Growth">Growth</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group"><label>Fund Yr</label><input type="number" id="wiz-prior-1-year" value="1" step="1" min="1" max="12"></div>
+                                    </div>
+                                    <!-- Priced round fields -->
+                                    <div id="wiz-prior-1-priced">
+                                        <div class="form-row">
+                                            <div class="form-group"><label>Pre-Money ($M)</label><input type="number" id="wiz-prior-1-premoney" step="1" placeholder="e.g. 8" oninput="_wizUpdateExposure()"></div>
+                                            <div class="form-group"><label>Round Size ($M) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-1-roundsize" step="0.5" placeholder="Defaults to check"></div>
+                                        </div>
+                                    </div>
+                                    <!-- Convertible fields -->
+                                    <div id="wiz-prior-1-conv" style="display:none;">
+                                        <div class="form-row">
+                                            <div class="form-group"><label>Val. Cap ($M) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-1-cap" step="1" placeholder="e.g. 20" oninput="_wizUpdateExposure()"></div>
+                                            <div class="form-group"><label>Discount (%) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-1-discount" step="1" min="0" max="50" placeholder="e.g. 20" oninput="_wizUpdateExposure()"></div>
+                                        </div>
+                                        <div class="conv-formula-note">Converts at current round. Ownership = check ÷ min(cap, pre-money × (1 − discount%))</div>
+                                    </div>
+                                    <div id="wiz-prior-1-preview" class="ownership-preview" style="display:none;"></div>
+                                </div>
+
+                                <!-- ── Prior Investment 2 (hidden by default) ──────── -->
+                                <div class="prior-round-card" id="wiz-prior-card-2" style="display:none;">
+                                    <div class="prior-card-label">Prior Investment 2</div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label>Type</label>
+                                            <select id="wiz-prior-2-type" onchange="_wizPriorTypeChanged(2)">
+                                                <option value="priced">Priced Round</option>
+                                                <option value="safe">SAFE</option>
+                                                <option value="note">Convertible Note</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group"><label>Check ($M)</label><input type="number" id="wiz-prior-2-check" step="0.25" min="0.1" placeholder="e.g. 2.0" oninput="_wizUpdateExposure()"></div>
+                                        <div class="form-group">
+                                            <label>Stage</label>
+                                            <select id="wiz-prior-2-stage">
+                                                <option value="Pre-Seed">Pre-Seed</option>
+                                                <option value="Seed">Seed</option>
+                                                <option value="Series A" selected>Series A</option>
+                                                <option value="Series B">Series B</option>
+                                                <option value="Growth">Growth</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group"><label>Fund Yr</label><input type="number" id="wiz-prior-2-year" value="2" step="1" min="1" max="12"></div>
+                                    </div>
+                                    <!-- Priced round fields -->
+                                    <div id="wiz-prior-2-priced">
+                                        <div class="form-row">
+                                            <div class="form-group"><label>Pre-Money ($M)</label><input type="number" id="wiz-prior-2-premoney" step="1" placeholder="e.g. 20" oninput="_wizUpdateExposure()"></div>
+                                            <div class="form-group"><label>Round Size ($M) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-2-roundsize" step="0.5" placeholder="Defaults to check"></div>
+                                        </div>
+                                    </div>
+                                    <!-- Convertible fields -->
+                                    <div id="wiz-prior-2-conv" style="display:none;">
+                                        <div class="form-row">
+                                            <div class="form-group"><label>Val. Cap ($M) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-2-cap" step="1" placeholder="e.g. 30" oninput="_wizUpdateExposure()"></div>
+                                            <div class="form-group"><label>Discount (%) <em class="field-opt">opt.</em></label><input type="number" id="wiz-prior-2-discount" step="1" min="0" max="50" placeholder="e.g. 20" oninput="_wizUpdateExposure()"></div>
+                                        </div>
+                                        <div class="conv-formula-note">Converts at current round. Ownership = check ÷ min(cap, pre-money × (1 − discount%))</div>
+                                    </div>
+                                    <div id="wiz-prior-2-preview" class="ownership-preview" style="display:none;"></div>
+                                </div>
+
+                                <!-- ── Current follow-on round details ─────────────── -->
+                                <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
+                                    <div class="form-row">
+                                        <div class="form-group"><label>New Round Size ($M)</label><input type="number" id="wiz-fo-round-size" step="0.5" min="0.25" placeholder="Current round size"></div>
+                                        <div class="form-group"><label>Follow-on Fund Year</label><input type="number" id="wiz-fo-fund-year" value="3" step="1" min="1" max="12"></div>
+                                    </div>
+                                </div>
+
+                                <!-- ── Total exposure summary ──────────────────────── -->
+                                <div class="exposure-summary" id="wiz-exposure-summary" style="display:none;">
+                                    <div class="exposure-row">
+                                        <div class="exposure-item"><div class="exposure-lbl">Prior Invested</div><div class="exposure-val" id="wiz-prior-total">—</div></div>
+                                        <div class="exposure-sep">+</div>
+                                        <div class="exposure-item"><div class="exposure-lbl">Current Round</div><div class="exposure-val" id="wiz-current-total">—</div></div>
+                                        <div class="exposure-sep">=</div>
+                                        <div class="exposure-item"><div class="exposure-lbl">Total Exposure</div><div class="exposure-val exposure-total" id="wiz-total-exp">—</div></div>
+                                    </div>
+                                    <div style="font-size:0.72rem;color:var(--text-tertiary);margin-top:4px;">Concentration limit applied to total exposure across all rounds.</div>
+                                </div>
+
+                                <button type="button" class="btn-secondary btn-sm" onclick="_wizExtractDealTerms()" id="wiz-extract-terms-btn" style="margin-top:10px;">Extract from Prior IC Memo</button>
+                                <span id="wiz-extract-terms-status" style="font-size:0.8rem;color:var(--text-secondary);margin-left:8px;"></span>
                             </div>
                         </div>
                     </div>
@@ -247,6 +399,19 @@
                     <button onclick="wizExportPDF()" class="btn-primary">Export PDF</button>
                     <button onclick="wizGoStep(1)" class="btn-secondary">New Deal</button>
                 </div>
+                <!-- QA Review Banner -->
+                <div id="qa-banner" class="qa-banner" style="display:none;">
+                    <div class="qa-banner-left">
+                        <span class="qa-banner-icon">&#9888;</span>
+                        <span id="qa-banner-summary" class="qa-banner-summary"></span>
+                        <span id="qa-spinner" class="qa-spinner" style="display:none;">&#8635; Scanning…</span>
+                    </div>
+                    <div class="qa-banner-right">
+                        <button class="qa-toggle-btn" onclick="wizToggleQAPanel()">View Findings</button>
+                    </div>
+                </div>
+                <!-- QA Findings Panel (expandable) -->
+                <div id="qa-panel" class="qa-panel" style="display:none;"></div>
                 <div id="deal-report" class="deal-report">
                     <!-- Report rendered by JS -->
                 </div>
@@ -605,6 +770,65 @@
                 <!-- LEFT PANEL: Inputs & Configuration -->
                 <div class="memo-input-panel">
 
+                    <!-- Section 0: Investment Type -->
+                    <div class="memo-section-card">
+                        <div class="memo-section-header" onclick="memoToggleSection('memo-sec-invtype')">
+                            <h3>Investment Type</h3>
+                            <span class="memo-section-chevron" id="memo-sec-invtype-chev">&#9660;</span>
+                        </div>
+                        <div class="memo-section-body" id="memo-sec-invtype">
+                            <p class="memo-helper-text">Is this a new investment or a follow-on to an existing portfolio company?</p>
+                            <div class="memo-invtype-toggle">
+                                <label class="memo-invtype-option">
+                                    <input type="radio" name="memo-inv-type" value="first" checked onchange="memoInvTypeChanged()">
+                                    <span class="memo-invtype-label">
+                                        <strong>First Investment</strong>
+                                        <small>New deal — initial underwriting</small>
+                                    </span>
+                                </label>
+                                <label class="memo-invtype-option">
+                                    <input type="radio" name="memo-inv-type" value="followon" onchange="memoInvTypeChanged()">
+                                    <span class="memo-invtype-label">
+                                        <strong>Follow-on Investment</strong>
+                                        <small>Existing portfolio company — include tracking scorecard</small>
+                                    </span>
+                                </label>
+                            </div>
+
+                            <!-- Follow-on uploads (hidden by default) -->
+                            <div id="memo-followon-panel" style="display:none;">
+                                <div class="memo-followon-divider"></div>
+                                <p class="memo-helper-text"><strong>Prior Investment Materials</strong> — Upload the original IC memo and any periodic board reports to generate the Portfolio Tracking Scorecard.</p>
+
+                                <div class="memo-followon-upload-group">
+                                    <label class="memo-followon-upload-label">Original Investment Memo</label>
+                                    <div class="memo-upload-dropzone memo-followon-dropzone" id="memo-followon-memo-dropzone">
+                                        <div class="memo-upload-icon">&#128196;</div>
+                                        <div class="memo-upload-text">
+                                            Drop original IC memo or <label for="memo-followon-memo-input" class="memo-upload-link">browse</label>
+                                        </div>
+                                        <div class="memo-upload-hint">PDF, DOCX, or TXT</div>
+                                        <input type="file" id="memo-followon-memo-input" accept=".pdf,.docx,.doc,.txt,.md" style="display:none">
+                                    </div>
+                                    <div class="memo-doc-list" id="memo-followon-memo-list"></div>
+                                </div>
+
+                                <div class="memo-followon-upload-group">
+                                    <label class="memo-followon-upload-label">Board Reports &amp; Updates</label>
+                                    <div class="memo-upload-dropzone memo-followon-dropzone" id="memo-followon-board-dropzone">
+                                        <div class="memo-upload-icon">&#128202;</div>
+                                        <div class="memo-upload-text">
+                                            Drop board reports / updates or <label for="memo-followon-board-input" class="memo-upload-link">browse</label>
+                                        </div>
+                                        <div class="memo-upload-hint">PDF, DOCX, XLSX, PPTX — upload multiple</div>
+                                        <input type="file" id="memo-followon-board-input" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.pptx,.ppt,.md,.html" style="display:none">
+                                    </div>
+                                    <div class="memo-doc-list" id="memo-followon-board-list"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Section 1: Select Deal Report -->
                     <div class="memo-section-card">
                         <div class="memo-section-header" onclick="memoToggleSection('memo-sec-report')">
@@ -668,8 +892,8 @@
                                     <div class="memo-upload-text">
                                         Drop files here or <label for="memo-file-input" class="memo-upload-link">browse</label>
                                     </div>
-                                    <div class="memo-upload-hint">PDF, DOCX, XLSX, PPTX, CSV, TXT (max 50MB each)</div>
-                                    <input type="file" id="memo-file-input" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.pptx,.ppt,.md,.html,.json,.png,.jpg,.jpeg" style="display:none">
+                                    <div class="memo-upload-hint">PDF, DOCX, XLSX, PPTX, CSV, TXT · PNG, JPG, GIF, WEBP screenshots (max 50MB each)</div>
+                                    <input type="file" id="memo-file-input" multiple accept=".pdf,.docx,.doc,.xlsx,.xls,.csv,.txt,.pptx,.ppt,.md,.html,.json,.png,.jpg,.jpeg,.gif,.webp,.svg" style="display:none">
                                 </div>
                             </div>
                             <div class="memo-doc-category-row" id="memo-category-row" style="display:none;">
@@ -686,10 +910,19 @@
                                     <option value="technical_diligence">Technical Diligence</option>
                                     <option value="team_bios">Team Bios</option>
                                     <option value="board_materials">Board Materials</option>
+                                    <option value="prior_ic_memo">Prior IC Memo</option>
+                                    <option value="board_report">Board Report / Update</option>
+                                    <option value="screenshots">Screenshots / Images</option>
                                     <option value="other" selected>Other</option>
                                 </select>
                             </div>
                             <div class="memo-doc-list" id="memo-doc-list"></div>
+                            <div style="margin-top:8px;">
+                                <button onclick="memoReprocessImages()" class="btn-secondary btn-sm" id="memo-reprocess-btn" title="Extract images embedded inside uploaded PDFs so they appear inline in the memo">
+                                    &#128247; Extract Images from PDFs
+                                </button>
+                                <span id="memo-reprocess-status" style="margin-left:8px;font-size:12px;color:#666;"></span>
+                            </div>
                         </div>
                     </div>
 
@@ -748,10 +981,9 @@
                             <div class="memo-model-select">
                                 <label>Model:</label>
                                 <select id="memo-model-select">
-                                    <option value="qwen-rfnt">Refiant qwen-rfnt</option>
-                                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
                                     <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
                                     <option value="claude-opus-4-20250514">Claude Opus 4</option>
+                                    <option value="qwen-rfnt">Refiant qwen-rfnt</option>
                                 </select>
                             </div>
                             <button onclick="memoGenerate()" class="btn-primary memo-generate-btn" id="memo-generate-btn">
@@ -779,6 +1011,7 @@
                         </div>
                         <div class="memo-output-actions" id="memo-output-actions" style="display:none;">
                             <button onclick="memoExportDocx()" class="btn-secondary btn-sm" id="memo-export-docx-btn">Export .docx</button>
+                            <button onclick="memoPrintPDF()" class="btn-secondary btn-sm" title="Save as PDF preserving charts and styling">Export PDF</button>
                             <button onclick="memoCopyMarkdown()" class="btn-secondary btn-sm">Copy Markdown</button>
                             <span class="memo-output-meta" id="memo-output-meta"></span>
                         </div>
@@ -794,6 +1027,242 @@
                 </div>
             </div>
         </div>
+
+<!-- ══════════════════════════════════════════════════════════════ -->
+<!-- DD FINANCIAL ANALYSIS TAB — Scenario-Based P&L Modeling      -->
+<!-- ══════════════════════════════════════════════════════════════ -->
+<div id="tab-ddanalysis" class="tab-content">
+    <div class="dd-header">
+        <div class="dd-header-content">
+            <h2 class="dd-title">DD Financial Analysis</h2>
+            <p class="dd-subtitle">Build conservative, base, and best-case financial scenarios from your due diligence findings</p>
+        </div>
+        <div class="dd-header-actions">
+            <select id="dd-report-select" class="dd-select" onchange="ddReportChanged()">
+                <option value="">Select a Deal Report...</option>
+            </select>
+            <button class="dd-btn dd-btn-secondary" onclick="ddLoadDefaults()" id="dd-defaults-btn" disabled>Load Defaults</button>
+            <button class="dd-btn dd-btn-primary" onclick="ddRunAnalysis()" id="dd-run-btn" disabled>Run Analysis</button>
+            <button class="dd-btn dd-btn-save" onclick="ddSaveScenarios()" id="dd-save-btn" disabled>Save</button>
+        </div>
+    </div>
+
+    <!-- Scenario Tabs -->
+    <div class="dd-scenario-tabs">
+        <button class="dd-scenario-tab active" data-scenario="conservative" onclick="ddSwitchScenario('conservative')">Conservative</button>
+        <button class="dd-scenario-tab" data-scenario="base" onclick="ddSwitchScenario('base')">Base Case</button>
+        <button class="dd-scenario-tab" data-scenario="best_case" onclick="ddSwitchScenario('best_case')">Best Case</button>
+        <button class="dd-scenario-tab dd-tab-comparison" data-scenario="comparison" onclick="ddSwitchScenario('comparison')">Comparison</button>
+    </div>
+
+    <!-- Assumption Editor Panel (shown for conservative/base/best_case) -->
+    <div id="dd-editor-panel" class="dd-editor-panel">
+        <div class="dd-editor-grid">
+            <!-- Revenue Assumptions -->
+            <div class="dd-card">
+                <h3 class="dd-card-title">Revenue Assumptions</h3>
+                <div class="dd-field">
+                    <label data-tip="dd_time_to_launch">Time to Commercial Launch (years)</label>
+                    <input type="number" id="dd-time-to-launch" step="0.5" min="0" max="8" value="0">
+                    <div class="dd-field-hint">Years of pre-revenue burn before first commercial sales (testing, certification, sales cycle)</div>
+                </div>
+                <div class="dd-field">
+                    <label data-tip="dd_revenue_y1">Year 1 Revenue ($M)</label>
+                    <input type="number" id="dd-revenue-y1" step="0.1" min="0" value="1.0">
+                </div>
+                <div class="dd-field">
+                    <label data-tip="dd_revenue_cagr">Revenue CAGR (%)</label>
+                    <input type="number" id="dd-revenue-cagr" step="5" min="0" max="500" value="100">
+                </div>
+                <div class="dd-field">
+                    <label data-tip="dd_proj_years">Projection Years</label>
+                    <input type="number" id="dd-proj-years" step="1" min="3" max="15" value="10">
+                </div>
+                <div class="dd-field dd-field-wide">
+                    <label data-tip="dd_custom_rev">Custom Revenue Override ($M per year, comma-separated)</label>
+                    <input type="text" id="dd-custom-rev" placeholder="e.g. 0, 0, 0.5, 1.2, 3.5, 8, 18, 35, 60, 90">
+                </div>
+            </div>
+
+            <!-- Margin Assumptions -->
+            <div class="dd-card">
+                <h3 class="dd-card-title">Margin Profile</h3>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_gm_start">Gross Margin Start (%)</label>
+                        <input type="number" id="dd-gm-start" step="1" min="0" max="100" value="40">
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_gm_end">Gross Margin End (%)</label>
+                        <input type="number" id="dd-gm-end" step="1" min="0" max="100" value="65">
+                    </div>
+                </div>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_rd_start">R&D % Rev (Start → End)</label>
+                        <div class="dd-range-pair">
+                            <input type="number" id="dd-rd-start" step="1" min="0" max="200" value="50">
+                            <span>→</span>
+                            <input type="number" id="dd-rd-end" step="1" min="0" max="100" value="15">
+                        </div>
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_sm_start">S&M % Rev (Start → End)</label>
+                        <div class="dd-range-pair">
+                            <input type="number" id="dd-sm-start" step="1" min="0" max="200" value="30">
+                            <span>→</span>
+                            <input type="number" id="dd-sm-end" step="1" min="0" max="100" value="12">
+                        </div>
+                    </div>
+                </div>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_ga_start">G&A % Rev (Start → End)</label>
+                        <div class="dd-range-pair">
+                            <input type="number" id="dd-ga-start" step="1" min="0" max="100" value="15">
+                            <span>→</span>
+                            <input type="number" id="dd-ga-end" step="1" min="0" max="50" value="7">
+                        </div>
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_da_pct">D&A % Revenue</label>
+                        <input type="number" id="dd-da-pct" step="0.5" min="0" max="30" value="3">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Valuation & Exit -->
+            <div class="dd-card">
+                <h3 class="dd-card-title">Valuation & Exit</h3>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_exit_type">Exit Multiple Type</label>
+                        <select id="dd-exit-type">
+                            <option value="ev_revenue">EV / Revenue</option>
+                            <option value="ev_ebitda">EV / EBITDA</option>
+                        </select>
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_exit_mult">Exit Multiple</label>
+                        <input type="number" id="dd-exit-mult" step="0.5" min="0" max="100" value="10">
+                    </div>
+                </div>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_discount">Discount Rate / WACC (%)</label>
+                        <input type="number" id="dd-discount" step="1" min="5" max="60" value="25">
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_terminal_g">Terminal Growth (%)</label>
+                        <input type="number" id="dd-terminal-g" step="0.5" min="0" max="10" value="3">
+                    </div>
+                </div>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_tax">Tax Rate (%)</label>
+                        <input type="number" id="dd-tax" step="1" min="0" max="50" value="0">
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_capex">CapEx % Revenue</label>
+                        <input type="number" id="dd-capex" step="0.5" min="0" max="50" value="5">
+                    </div>
+                </div>
+                <div class="dd-field-row">
+                    <div class="dd-field">
+                        <label data-tip="dd_nwc">NWC % Revenue</label>
+                        <input type="number" id="dd-nwc" step="1" min="0" max="30" value="10">
+                    </div>
+                    <div class="dd-field">
+                        <label data-tip="dd_dilution_rounds">Future Dilution Rounds</label>
+                        <input type="number" id="dd-dilution-rounds" step="1" min="0" max="6" value="2">
+                    </div>
+                </div>
+                <div class="dd-field">
+                    <label data-tip="dd_dilution_pct">Dilution per Round (%)</label>
+                    <input type="number" id="dd-dilution-pct" step="1" min="0" max="50" value="20">
+                </div>
+            </div>
+
+            <!-- Fundraising Timeline -->
+            <div class="dd-card dd-card-wide">
+                <h3 class="dd-card-title">Fundraising Timeline</h3>
+                <p class="dd-field-hint">Model future fundraising rounds and potential bridge financing. Bridges add dilution and extend the hold period, reducing IRR.</p>
+                <div id="dd-fundraising-rounds">
+                    <!-- Dynamically populated round rows -->
+                </div>
+                <button class="dd-btn dd-btn-sm" id="dd-add-round" title="Add a planned fundraising round">+ Add Round</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dilution Waterfall (shown in results) -->
+    <div id="dd-dilution-panel" class="dd-results-panel" style="display:none;">
+        <h3 class="dd-section-title">Ownership & Dilution Waterfall</h3>
+        <div id="dd-dilution-waterfall" class="dd-dilution-waterfall"></div>
+    </div>
+
+    <!-- Results Panel (P&L table + charts) -->
+    <div id="dd-results-panel" class="dd-results-panel" style="display:none;">
+        <!-- Hero Metrics (shown for each scenario) -->
+        <div id="dd-hero" class="dd-hero"></div>
+
+        <!-- P&L Table -->
+        <div class="dd-pnl-container">
+            <h3 class="dd-section-title">Projected P&L ($M)</h3>
+            <div class="dd-table-scroll">
+                <table id="dd-pnl-table" class="dd-pnl-table"></table>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="dd-charts-grid">
+            <div class="dd-chart-card">
+                <h4>Revenue & EBITDA Trajectory</h4>
+                <canvas id="dd-chart-rev-ebitda"></canvas>
+            </div>
+            <div class="dd-chart-card">
+                <h4>Margin Evolution</h4>
+                <canvas id="dd-chart-margins"></canvas>
+            </div>
+            <div class="dd-chart-card">
+                <h4>Free Cash Flow</h4>
+                <canvas id="dd-chart-fcf"></canvas>
+            </div>
+            <div class="dd-chart-card">
+                <h4>OpEx Breakdown (% of Revenue)</h4>
+                <canvas id="dd-chart-opex"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Comparison Panel (shown when "Comparison" tab active) -->
+    <div id="dd-comparison-panel" class="dd-comparison-panel" style="display:none;">
+        <div id="dd-comp-hero" class="dd-hero"></div>
+        <div class="dd-charts-grid">
+            <div class="dd-chart-card dd-chart-wide">
+                <h4>Revenue Comparison by Scenario</h4>
+                <canvas id="dd-chart-comp-rev"></canvas>
+            </div>
+            <div class="dd-chart-card dd-chart-wide">
+                <h4>EBITDA Comparison by Scenario</h4>
+                <canvas id="dd-chart-comp-ebitda"></canvas>
+            </div>
+            <div class="dd-chart-card">
+                <h4>MOIC by Scenario</h4>
+                <canvas id="dd-chart-comp-moic"></canvas>
+            </div>
+            <div class="dd-chart-card">
+                <h4>IRR by Scenario</h4>
+                <canvas id="dd-chart-comp-irr"></canvas>
+            </div>
+        </div>
+        <!-- Comparison table -->
+        <div class="dd-pnl-container">
+            <h3 class="dd-section-title">Scenario Comparison Summary</h3>
+            <table id="dd-comp-table" class="dd-pnl-table"></table>
+        </div>
+    </div>
+</div>
 
 <div id="tab-models" class="tab-content">
   <!-- Header Section -->
@@ -1442,6 +1911,160 @@
   </div>
 </div>
 
+<!-- ════════════════════════════════════════════════════════════════════
+     FUND II DEPLOYMENT TAB
+     ════════════════════════════════════════════════════════════════════ -->
+<div id="tab-funddeployment" class="tab-content">
+  <div class="fd-header">
+    <div class="fd-header-left">
+      <h2 class="fd-title">Fund II Deployment Tracker</h2>
+      <p class="fd-subtitle">Deployment cadence, portfolio construction, and sector allocation</p>
+    </div>
+    <div class="fd-header-right">
+      <button class="fd-btn fd-btn-primary" onclick="fdRefresh()">Refresh</button>
+    </div>
+  </div>
+
+  <!-- ── Summary KPI Strip ──────────────────────────────────────────── -->
+  <div class="fd-kpi-strip" id="fd-kpi-strip">
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">AUM</div>
+      <div class="fd-kpi-value" id="fd-kpi-aum">$130M</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">Target Companies</div>
+      <div class="fd-kpi-value" id="fd-kpi-target">22</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">Deployed (NIC)</div>
+      <div class="fd-kpi-value" id="fd-kpi-deployed">—</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">% Entry Capital Deployed</div>
+      <div class="fd-kpi-value" id="fd-kpi-pct">—</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">Deals vs Plan</div>
+      <div class="fd-kpi-value" id="fd-kpi-deal-gap">—</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">NIC vs Plan</div>
+      <div class="fd-kpi-value" id="fd-kpi-nic-gap">—</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">Reserve Capital Deployed</div>
+      <div class="fd-kpi-value" id="fd-kpi-rc">—</div>
+    </div>
+    <div class="fd-kpi">
+      <div class="fd-kpi-label">Current Quarter</div>
+      <div class="fd-kpi-value" id="fd-kpi-quarter">—</div>
+    </div>
+  </div>
+
+  <!-- ── Main Grid ──────────────────────────────────────────────────── -->
+  <div class="fd-grid">
+
+    <!-- Deployment Timeline Chart (full width) -->
+    <div class="fd-card fd-card-full">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">Deployment Cadence — New Investment Capital ($M)</h3>
+        <div class="fd-chart-legend">
+          <span class="fd-legend-dot fd-legend-planned"></span> Planned
+          <span class="fd-legend-dot fd-legend-actual"></span> Actual
+          <span class="fd-legend-dot fd-legend-updated"></span> Updated Plan
+        </div>
+      </div>
+      <canvas id="fd-chart-cadence" height="90"></canvas>
+    </div>
+
+    <!-- Cumulative Deployment Chart -->
+    <div class="fd-card fd-card-half">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">Cumulative NIC Deployment ($M)</h3>
+      </div>
+      <canvas id="fd-chart-cumulative" height="140"></canvas>
+    </div>
+
+    <!-- Deal Count Chart -->
+    <div class="fd-card fd-card-half">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">Deal Count — Planned vs Actual</h3>
+      </div>
+      <canvas id="fd-chart-deals" height="140"></canvas>
+    </div>
+
+  </div><!-- /fd-grid -->
+
+  <!-- ── Sector Allocation ──────────────────────────────────────────── -->
+  <div class="fd-section-header">
+    <h3>Portfolio Sector Allocation</h3>
+    <p class="fd-section-sub">Based on actual deployed capital by company</p>
+  </div>
+  <div class="fd-grid">
+
+    <!-- Industry Vertical Donut -->
+    <div class="fd-card fd-card-third">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">By Vertical</h3>
+      </div>
+      <canvas id="fd-chart-vertical" height="200"></canvas>
+      <div id="fd-vertical-legend" class="fd-pie-legend"></div>
+    </div>
+
+    <!-- Technology Type Donut -->
+    <div class="fd-card fd-card-third">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">By Technology Type</h3>
+      </div>
+      <canvas id="fd-chart-type" height="200"></canvas>
+      <div id="fd-type-legend" class="fd-pie-legend"></div>
+    </div>
+
+    <!-- Software / Hardware / HE-SaaS Bar -->
+    <div class="fd-card fd-card-third">
+      <div class="fd-card-header">
+        <h3 class="fd-card-title">Software / Hardware / HE-SaaS</h3>
+        <span class="fd-card-subtitle">Capital deployed by type ($M)</span>
+      </div>
+      <canvas id="fd-chart-shs" height="200"></canvas>
+    </div>
+
+  </div>
+
+  <!-- ── Company Portfolio Table ────────────────────────────────────── -->
+  <div class="fd-section-header">
+    <h3>Portfolio Companies</h3>
+    <p class="fd-section-sub">Assign verticals and technology types. Changes update sector charts immediately.</p>
+  </div>
+  <div class="fd-card fd-card-full">
+    <div class="fd-card-header">
+      <h3 class="fd-card-title">Actual Investments</h3>
+      <div class="fd-table-actions">
+        <button class="fd-btn fd-btn-sm fd-btn-secondary" onclick="fdAddCompany()">+ Add Company</button>
+        <button class="fd-btn fd-btn-sm fd-btn-primary" onclick="fdSaveCompanies()">Save Assignments</button>
+      </div>
+    </div>
+    <div class="fd-table-wrap">
+      <table class="fd-table" id="fd-company-table">
+        <thead>
+          <tr>
+            <th>Quarter</th>
+            <th>Company</th>
+            <th>Capital ($M)</th>
+            <th>Sector / Vertical</th>
+            <th>SW / HW / HE-SaaS</th>
+            <th></th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="fd-company-tbody"></tbody>
+      </table>
+    </div>
+    <div class="fd-save-status" id="fd-save-status"></div>
+  </div>
+
+</div><!-- /tab-funddeployment -->
+
     </main>
 
     <footer class="site-footer">
@@ -1467,7 +2090,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=77"></script>
+    <script src="/static/app.js?v=111"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

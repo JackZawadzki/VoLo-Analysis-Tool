@@ -172,6 +172,21 @@ CREATE TABLE IF NOT EXISTS generated_memos (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS memo_revisions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    memo_id         INTEGER NOT NULL REFERENCES generated_memos(id) ON DELETE CASCADE,
+    section_key     TEXT    NOT NULL,
+    revision_type   TEXT    NOT NULL DEFAULT 'llm',
+    old_text        TEXT    NOT NULL DEFAULT '',
+    new_text        TEXT    NOT NULL DEFAULT '',
+    instructions    TEXT    NOT NULL DEFAULT '',
+    revised_by      TEXT    NOT NULL DEFAULT '',
+    model_used      TEXT    NOT NULL DEFAULT '',
+    tokens_in       INTEGER NOT NULL DEFAULT 0,
+    tokens_out      INTEGER NOT NULL DEFAULT 0,
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS deal_document_libraries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -203,6 +218,18 @@ CREATE TABLE IF NOT EXISTS deal_documents (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(library_id, drive_file_id)
+);
+
+CREATE TABLE IF NOT EXISTS dd_scenarios (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    report_id       INTEGER NOT NULL REFERENCES deal_reports(id) ON DELETE CASCADE,
+    scenario_name   TEXT    NOT NULL DEFAULT 'base',
+    assumptions_json TEXT   NOT NULL DEFAULT '{}',
+    deal_params_json TEXT   NOT NULL DEFAULT '{}',
+    notes           TEXT    NOT NULL DEFAULT '',
+    created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 """
 
@@ -385,6 +412,43 @@ def migrate_db():
             UNIQUE(owner_id, task_key)
         )""",
     ]
+    # Add sections_json column to generated_memos for per-section editing
+    migrations.append("ALTER TABLE generated_memos ADD COLUMN sections_json TEXT NOT NULL DEFAULT '{}'")
+    # dd_scenarios table
+    migrations.append("""CREATE TABLE IF NOT EXISTS dd_scenarios (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        report_id       INTEGER NOT NULL REFERENCES deal_reports(id) ON DELETE CASCADE,
+        scenario_name   TEXT    NOT NULL DEFAULT 'base',
+        assumptions_json TEXT   NOT NULL DEFAULT '{}',
+        deal_params_json TEXT   NOT NULL DEFAULT '{}',
+        notes           TEXT    NOT NULL DEFAULT '',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    # fund_ii_companies table for sector assignments
+    migrations.append("""CREATE TABLE IF NOT EXISTS fund_ii_companies (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        companies_json  TEXT    NOT NULL DEFAULT '[]',
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+        updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
+    # memo_revisions table
+    migrations.append("""CREATE TABLE IF NOT EXISTS memo_revisions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        memo_id         INTEGER NOT NULL REFERENCES generated_memos(id) ON DELETE CASCADE,
+        section_key     TEXT    NOT NULL,
+        revision_type   TEXT    NOT NULL DEFAULT 'llm',
+        old_text        TEXT    NOT NULL DEFAULT '',
+        new_text        TEXT    NOT NULL DEFAULT '',
+        instructions    TEXT    NOT NULL DEFAULT '',
+        revised_by      TEXT    NOT NULL DEFAULT '',
+        model_used      TEXT    NOT NULL DEFAULT '',
+        tokens_in       INTEGER NOT NULL DEFAULT 0,
+        tokens_out      INTEGER NOT NULL DEFAULT 0,
+        created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+    )""")
     for sql in migrations:
         try:
             conn.execute(sql)
