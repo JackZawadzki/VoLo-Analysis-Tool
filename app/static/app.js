@@ -7135,13 +7135,13 @@ function _memoInjectCharts(container, report) {
         </div>`, ['moic', 'irr', 'return', 'monte carlo', 'simulation', 'rvm', 'deal structure']);
 
         // MOIC + Outcome charts — inline after return/MOIC discussion
-        if (sim.moic_histogram) {
+        if (sim.moic_histogram || sim.outcome_breakdown) {
             insertInline(finH2, `<div class="memo-chart-context">
                 <p class="memo-chart-label">Return Distribution Analysis</p>
                 <p class="memo-chart-caption">MOIC distribution conditional on survival to exit. Outcome breakdown shows probability-weighted split across exit scenarios.</p>
                 <div class="memo-chart-row">
-                    <div class="memo-chart-wrap"><canvas id="memo-moic-chart" height="260"></canvas></div>
-                    <div class="memo-chart-wrap"><canvas id="memo-outcome-chart" height="260"></canvas></div>
+                    ${sim.moic_histogram ? `<div class="memo-chart-wrap"><canvas id="memo-moic-chart" height="260"></canvas></div>` : ''}
+                    ${sim.outcome_breakdown ? `<div class="memo-chart-wrap"><canvas id="memo-outcome-chart" height="260"></canvas></div>` : ''}
                 </div>
             </div>`, ['moic', 'distribution', 'return', 'outcome', 'exit', 'probability', 'loss']);
         }
@@ -7540,7 +7540,7 @@ function _memoInjectCharts(container, report) {
                 ${blStats2.blended_moic_p50 != null ? `<p style="margin-top:8px;">Blended MOIC: <strong>${fmt(blStats2.blended_moic_p50,2)}x</strong> (P50), <strong>${fmt(blStats2.blended_moic_p10,2)}x</strong> (P10), <strong>${fmt(blStats2.blended_moic_p90,2)}x</strong> (P90)</p>` : ''}
                 <div class="memo-chart-row">
                     <div class="memo-chart-wrap"><canvas id="memo-frm-fo-blended-chart" height="260"></canvas></div>
-                    <div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>
+                    ${foPs2.standalone_grid_search?.grid?.length ? `<div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>` : ''}
                 </div>
             </div>`);
         }
@@ -7585,7 +7585,14 @@ function _memoInjectCharts(container, report) {
         const unitDef = cInp.unit_definition || 'unit';
         const dispRes = cInp.displaced_resource || 'N/A';
         const baselifeProd = cInp.baseline_lifetime_prod != null ? Number(cInp.baseline_lifetime_prod).toLocaleString() : 'N/A';
-        const rangeImp = cInp.range_improvement != null ? (Number(cInp.range_improvement) * 100).toFixed(0) + '%' : 'N/A';
+        // range_improvement is now a CI improvement factor (how many times lower the tech CI is vs conventional)
+        // Display as the derived displacement fraction: (1 - 1/factor) × 100%
+        const _rangeFactor = cInp.range_improvement != null ? Number(cInp.range_improvement) : null;
+        const rangeImp = _rangeFactor != null && _rangeFactor > 0
+            ? (_rangeFactor >= 100
+                ? `~100% (factor=${_rangeFactor.toFixed(0)}×, near-zero-CI)`
+                : `${((1 - 1 / _rangeFactor) * 100).toFixed(1)}% displaced (factor=${_rangeFactor.toFixed(3)}×)`)
+            : 'N/A';
         const specProdUnits = cInp.specific_production_units || '';
         const jd = ci.jd != null ? Number(ci.jd).toLocaleString(undefined, {maximumFractionDigits: 2}) : 'N/A';
         const ciY1 = (ci.operating_ci_series || [])[0];
@@ -7651,14 +7658,14 @@ function _memoInjectCharts(container, report) {
                         <td>Total production of the displaced resource per unit over its service life</td>
                     </tr>
                     <tr>
-                        <td><strong>Range Improvement (JC)</strong></td>
+                        <td><strong>CI Improvement Factor (JC)</strong></td>
                         <td>—</td>
                         <td>${rangeImp}</td>
-                        <td>Fraction of baseline resource that this technology displaces</td>
+                        <td>How many times lower the technology's carbon intensity is vs. conventional. Factor 1.4 → 1/1.4 ≈ 71% of conventional CI → 28.6% displaced. Factor 1000 → near-zero-CI (solar/wind/nuclear).</td>
                     </tr>
                     <tr>
                         <td><strong>Displaced Vol/Unit (JD)</strong></td>
-                        <td>JC × JA</td>
+                        <td>(1 − 1/JC) × JA</td>
                         <td>${jd} ${specProdUnits}</td>
                         <td>Net resource displaced per deployed unit over its life</td>
                     </tr>
@@ -7774,7 +7781,7 @@ function _memoInjectCharts(container, report) {
                         </tr>
                     </tbody>
                 </table>
-                <div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>
+                ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>` : ''}
             </div>
             <p class="memo-chart-note">Risk divisor is TRL-derived: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Typical VoLo portfolio range: 0.005–0.10 t/$.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
