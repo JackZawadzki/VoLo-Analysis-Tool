@@ -6635,7 +6635,7 @@ const _MEMO_SECTION_KEYS = {
     'financing overview': 'financing_overview',
     'fund return model': 'fund_return_model',
     'portfolio tracking scorecard': 'portfolio_tracking_scorecard',
-    'investment recommendation': 'investment_recommendation',
+    'investment recommendation': 'recommendation',
 };
 
 function _memoMatchSectionKey(h2Text) {
