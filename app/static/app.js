@@ -1133,6 +1133,9 @@ async function wizExtractAndNext() {
         document.getElementById('wiz-extract-btn').disabled = false;
         wizPopulateReview();
         wizGoStep(2);
+
+        // Auto-trigger DDR in background for PDF pitch decks
+        if (deckFile) ddrAutoTrigger(deckFile);
     } catch(e) {
         status.className = 'wiz-status error';
         status.textContent = 'Extraction error: ' + e.message;
@@ -9503,4 +9506,172 @@ switchTab = function(tab) {
     if (tab === 'funddeployment') {
         setTimeout(() => fdInit(), 50);
     }
+    if (tab === 'ddr') ddrLoadHistory();
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DDR (Due Diligence Report) — Background analysis with polling
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _ddrCurrentJobId = null;
+let _ddrPollTimer = null;
+let _ddrPdfFilename = null;
+
+function ddrAutoTrigger(deckFile) {
+    if (!deckFile) return;
+    const ext = deckFile.name.split('.').pop().toLowerCase();
+    if (ext !== 'pdf') return;
+
+    const fd = new FormData();
+    fd.append('file', deckFile);
+    const headers = {};
+    if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
+
+    fetch('/api/ddr/start', { method: 'POST', headers, body: fd })
+        .then(r => r.json())
+        .then(d => {
+            if (d.job_id) {
+                _ddrCurrentJobId = d.job_id;
+                ddrShowActive(deckFile.name);
+                ddrStartPolling(d.job_id);
+                showToast('Due diligence report started in background');
+            } else {
+                console.warn('[DDR] Start failed:', d.detail || d);
+            }
+        })
+        .catch(err => console.warn('[DDR] Auto-trigger error:', err));
+}
+
+function ddrShowActive(filename) {
+    const emptyEl = document.getElementById('ddr-empty');
+    const progressCard = document.getElementById('ddr-progress-card');
+    const downloadArea = document.getElementById('ddr-download-area');
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (progressCard) { progressCard.style.display = 'block'; progressCard.className = 'ddr-progress-card'; }
+    if (downloadArea) downloadArea.style.display = 'none';
+
+    const filenameEl = document.getElementById('ddr-file-name');
+    if (filenameEl) filenameEl.textContent = filename || '';
+
+    const titleEl = document.getElementById('ddr-progress-title');
+    if (titleEl) titleEl.textContent = 'Generating Due Diligence Report...';
+
+    const bar = document.getElementById('ddr-progress-bar');
+    if (bar) bar.style.width = '0%';
+    const msg = document.getElementById('ddr-progress-msg');
+    if (msg) { msg.textContent = 'Queued...'; msg.style.color = ''; }
+    const pct = document.getElementById('ddr-progress-pct');
+    if (pct) pct.textContent = '0%';
+
+    const badge = document.getElementById('ddr-company-badge');
+    if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
+}
+
+function ddrStartPolling(jobId) {
+    if (_ddrPollTimer) clearInterval(_ddrPollTimer);
+    _ddrPollTimer = setInterval(() => ddrPollStatus(jobId), 3000);
+    ddrPollStatus(jobId);
+}
+
+async function ddrPollStatus(jobId) {
+    try {
+        const headers = _rvmHeaders();
+        const r = await fetch(`/api/ddr/status/${jobId}`, { headers });
+        if (!r.ok) return;
+        const d = await r.json();
+
+        const bar = document.getElementById('ddr-progress-bar');
+        const msg = document.getElementById('ddr-progress-msg');
+        const pct = document.getElementById('ddr-progress-pct');
+        if (bar) bar.style.width = (d.progress_pct || 0) + '%';
+        if (msg) msg.textContent = d.progress_msg || '';
+        if (pct) pct.textContent = (d.progress_pct || 0) + '%';
+
+        if (d.company_name) {
+            const badge = document.getElementById('ddr-company-badge');
+            if (badge) { badge.textContent = d.company_name; badge.style.display = 'inline-block'; }
+        }
+
+        if (d.status === 'complete') {
+            clearInterval(_ddrPollTimer);
+            _ddrPollTimer = null;
+            ddrShowComplete(d);
+        } else if (d.status === 'error') {
+            clearInterval(_ddrPollTimer);
+            _ddrPollTimer = null;
+            ddrShowError(d.error);
+        }
+    } catch (err) {
+        console.warn('[DDR] Poll error:', err);
+    }
+}
+
+function ddrShowComplete(data) {
+    const titleEl = document.getElementById('ddr-progress-title');
+    if (titleEl) titleEl.textContent = 'Due Diligence Report Complete';
+
+    const progressCard = document.getElementById('ddr-progress-card');
+    if (progressCard) progressCard.classList.add('ddr-complete');
+
+    const downloadArea = document.getElementById('ddr-download-area');
+    if (downloadArea) downloadArea.style.display = 'flex';
+
+    const meta = document.getElementById('ddr-download-meta');
+    if (meta) meta.textContent = `${data.company_name || 'Unknown'} — Generated ${new Date(data.finished_at).toLocaleString()}`;
+
+    _ddrPdfFilename = data.pdf_filename || null;
+}
+
+function ddrShowError(errorMsg) {
+    const titleEl = document.getElementById('ddr-progress-title');
+    if (titleEl) titleEl.textContent = 'Due Diligence Report Failed';
+    const msg = document.getElementById('ddr-progress-msg');
+    if (msg) { msg.textContent = errorMsg || 'Unknown error'; msg.style.color = '#dc3545'; }
+    const progressCard = document.getElementById('ddr-progress-card');
+    if (progressCard) progressCard.classList.add('ddr-error');
+}
+
+async function ddrDownload() {
+    if (!_ddrCurrentJobId) return;
+    try {
+        const r = await fetch(`/api/ddr/download/${_ddrCurrentJobId}`, {headers: _rvmHeaders()});
+        if (!r.ok) {
+            const err = await r.text();
+            showToast('Download failed: ' + err);
+            return;
+        }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = _ddrPdfFilename || `DDR_Report_${_ddrCurrentJobId}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showToast('Download failed: ' + e.message);
+    }
+}
+
+async function ddrLoadHistory() {
+    try {
+        const headers = _rvmHeaders();
+        const r = await fetch('/api/ddr/jobs', { headers });
+        if (!r.ok) return;
+        const d = await r.json();
+        const jobs = d.jobs || [];
+        const listEl = document.getElementById('ddr-history-list');
+        if (!listEl) return;
+        if (jobs.length === 0) { listEl.innerHTML = '<p class="text-muted">No previous reports.</p>'; return; }
+        listEl.innerHTML = jobs.map(j => {
+            const sc = j.status==='complete'?'ddr-job-complete':j.status==='error'?'ddr-job-error':'ddr-job-running';
+            const sl = j.status==='complete'?'Complete':j.status==='error'?'Failed':`${j.progress_pct}%`;
+            return `<div class="ddr-history-item ${sc}" onclick="ddrResumeJob('${j.job_id}')"><span class="ddr-hist-name">${j.company_name||j.filename||'Processing...'}</span><span class="ddr-hist-status">${sl}</span><span class="ddr-hist-date">${j.started_at?new Date(j.started_at).toLocaleDateString():''}</span></div>`;
+        }).join('');
+    } catch (err) { console.warn('[DDR] History error:', err); }
+}
+
+function ddrResumeJob(jobId) {
+    _ddrCurrentJobId = jobId;
+    ddrShowActive('');
+    ddrStartPolling(jobId);
+}

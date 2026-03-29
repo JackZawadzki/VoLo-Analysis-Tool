@@ -73,6 +73,7 @@ from .routes.memo import router as memo_router
 from .routes.drive import router as drive_router
 from .routes.dd_analysis import router as dd_analysis_router
 from .routes.fund_deployment import router as fund_deployment_router
+from .routes.ddr import router as ddr_router
 
 app.include_router(auth_router)
 app.include_router(resources_router)
@@ -82,6 +83,7 @@ app.include_router(memo_router)
 app.include_router(drive_router)
 app.include_router(dd_analysis_router)
 app.include_router(fund_deployment_router)
+app.include_router(ddr_router)
 
 # Load data on startup
 DATA_STORE = {}

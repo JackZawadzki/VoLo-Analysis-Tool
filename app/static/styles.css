@@ -4352,3 +4352,24 @@ h2 .info-tip-body {
 .qa-finding-error   .qa-finding-icon { color: #ef4444; }
 .qa-finding-warning .qa-finding-icon { color: #f59e0b; }
 .qa-finding-info    .qa-finding-icon { color: #3b82f6; }
+
+/* ── DDR (Due Diligence Report) ──────────────────────────────────────────── */
+.ddr-empty-state { padding: 3rem 2rem; text-align: center; color: #888; background: #f9f9f7; border-radius: 8px; }
+.ddr-progress-card { border: 2px solid #e0e0d8; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
+.ddr-progress-card.ddr-complete { border-color: #4a7c59; }
+.ddr-progress-card.ddr-error { border-color: #dc3545; }
+.ddr-file-info { margin: 0.75rem 0; display: flex; align-items: center; gap: 0.75rem; }
+.ddr-file-info code { font-size: 0.85rem; background: #f0f0ec; padding: 2px 8px; border-radius: 4px; }
+.ddr-company-badge { background: #4a7c59; color: #fff; font-size: 0.75rem; padding: 2px 10px; border-radius: 12px; }
+.ddr-progress-bar-track { width: 100%; height: 10px; background: #e8e8e4; border-radius: 5px; overflow: hidden; }
+.ddr-progress-bar-fill { height: 100%; background: linear-gradient(90deg, #4a7c59, #6aa876); border-radius: 5px; transition: width 0.5s ease; }
+.ddr-progress-meta { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.85rem; color: #666; }
+.ddr-history-list { margin-top: 0.75rem; }
+.ddr-history-item { display: flex; justify-content: space-between; padding: 0.6rem 1rem; border: 1px solid #e0e0d8; border-radius: 6px; margin-bottom: 0.5rem; cursor: pointer; transition: background 0.15s; }
+.ddr-history-item:hover { background: #f5f5f0; }
+.ddr-hist-name { font-weight: 500; }
+.ddr-hist-status { font-size: 0.8rem; padding: 2px 8px; border-radius: 10px; }
+.ddr-job-complete .ddr-hist-status { background: #e6f4ea; color: #2d6a3f; }
+.ddr-job-error .ddr-hist-status { background: #fde8e8; color: #b91c1c; }
+.ddr-job-running .ddr-hist-status { background: #e0f0ff; color: #1e6bb8; }
+.ddr-hist-date { color: #888; font-size: 0.8rem; }

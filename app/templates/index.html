@@ -56,6 +56,7 @@
                 <a href="#" class="nav-link" data-tab="memo">Investment Memo</a>
                 <a href="#" class="nav-link" data-tab="ddanalysis">DD Financial Analysis</a>
                 <a href="#" class="nav-link" data-tab="funddeployment">Fund II Deployment</a>
+                <a href="#" class="nav-link" data-tab="ddr">Due Diligence Report</a>
                 <a href="#" class="nav-link" data-tab="references">References</a>
                 <a href="#" class="nav-link" data-tab="models">Models</a>
                 <a href="#" class="nav-link" data-tab="developer" id="nav-dev-link">Developer</a>
@@ -525,6 +526,47 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <!-- DDR TAB -->
+        <div id="tab-ddr" class="tab-content">
+            <div class="page-header">
+                <h2>Due Diligence Report</h2>
+                <p class="section-subtitle">AI-powered due diligence runs automatically when a PDF pitch deck is uploaded. View progress and results here.</p>
+            </div>
+
+            <!-- Empty state -->
+            <div id="ddr-empty" class="ddr-empty-state">
+                <p>No due diligence report yet. Upload a PDF pitch deck in the Deal Pipeline tab to automatically generate one.</p>
+            </div>
+
+            <!-- Progress card -->
+            <div id="ddr-progress-card" class="ddr-progress-card" style="display:none">
+                <h3 id="ddr-progress-title">Generating Due Diligence Report...</h3>
+                <div class="ddr-file-info">
+                    <code id="ddr-file-name"></code>
+                    <span id="ddr-company-badge" class="ddr-company-badge" style="display:none"></span>
+                </div>
+                <div class="ddr-progress-bar-track">
+                    <div id="ddr-progress-bar" class="ddr-progress-bar-fill" style="width:0%"></div>
+                </div>
+                <div class="ddr-progress-meta">
+                    <span id="ddr-progress-msg">Initializing...</span>
+                    <span id="ddr-progress-pct">0%</span>
+                </div>
+            </div>
+
+            <!-- Download button area -->
+            <div id="ddr-download-area" style="display:none; margin:1.5rem 0; align-items:center; gap:1rem;">
+                <button id="ddr-download-btn" class="btn btn-primary" onclick="ddrDownload()">📄 Download PDF Report</button>
+                <span id="ddr-download-meta" class="text-muted"></span>
+            </div>
+
+            <!-- History -->
+            <div id="ddr-history" style="margin-top:2rem;">
+                <h3>Previous Reports</h3>
+                <div id="ddr-history-list" class="ddr-history-list"><p class="text-muted">No previous reports.</p></div>
             </div>
         </div>
 
