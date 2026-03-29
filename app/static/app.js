@@ -6981,6 +6981,9 @@ function _memoInjectCharts(container, report) {
     _memoChartInstances.forEach(c => { try { c.destroy(); } catch(e) {} });
     _memoChartInstances.length = 0;
 
+    // Remove all previously injected blocks so re-runs don't stack duplicates
+    container.querySelectorAll('.memo-chart-inline').forEach(el => el.remove());
+
     const r = report;
     const sim = r.simulation || {};
     const carbon = r.carbon_impact || {};
