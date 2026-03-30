@@ -1341,7 +1341,11 @@ function _wizRenderFmInto(el) {
         for (const y of years) h += `<th style="text-align:right; padding:6px 8px; border-bottom:2px solid var(--border); font-size:0.7rem;">${y}</th>`;
         h += '</tr></thead><tbody>';
         for (const m of metrics) {
-            const hasData = years.some(y => (fin[m]?.[String(y)] ?? fin[m]?.[y]) != null);
+            // Skip metrics where every value is null or zero (e.g. capex when not extracted)
+            const hasData = years.some(y => {
+                const v = fin[m]?.[String(y)] ?? fin[m]?.[y];
+                return v != null && v !== 0;
+            });
             if (!hasData) continue;
             h += `<tr data-metric="${m}"><td style="padding:4px 8px; border-bottom:1px solid var(--border); font-weight:500; text-transform:capitalize;">${m.replace(/_/g, ' ')}</td>`;
             for (const y of years) {
@@ -2389,7 +2393,11 @@ function wizRenderReport(r) {
             fmYears.forEach(y => html += `<th class="rpt-num">${y}</th>`);
             html += '</tr></thead><tbody>';
             for (const [metric, series] of Object.entries(fmFin)) {
-                const hasVals = fmYears.some(y => (series[String(y)] ?? series[y]) != null);
+                // Skip metrics where every value is null or zero (e.g. capex when not extracted)
+                const hasVals = fmYears.some(y => {
+                    const v = series[String(y)] ?? series[y];
+                    return v != null && v !== 0;
+                });
                 if (!hasVals) continue;
                 html += `<tr data-metric="${metric}"><td style="text-transform:capitalize;font-weight:500;">${metric.replace(/_/g,' ')}</td>`;
                 fmYears.forEach(y => {
