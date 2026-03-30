@@ -92,10 +92,10 @@ const _GLOSSARY = {
     marginal_lift: "The incremental improvement (or reduction) in fund metrics attributable to adding this specific deal.",
 
     // ── Carbon Impact Metrics ────────────────────────────
-    total_lifecycle_tco2: "Total avoided CO₂ emissions over the full deployment horizon, summing annual operating and embodied emissions across all projected units.",
-    volo_prorata: "VoLo's attributable share of total avoided emissions, calculated as total lifecycle tCO₂ × VoLo's entry ownership percentage.",
-    risk_adjusted_carbon: "Pro-rata emissions adjusted for survival probability using a risk divisor. Reflects the expected avoided emissions accounting for the chance the company fails.",
-    carbon_tpd: "Risk-adjusted tonnes of CO₂ avoided per dollar invested. Key metric for comparing carbon efficiency across deals — higher = more carbon impact per investment dollar.",
+    total_lifecycle_tco2: "Total potential carbon impact over the 10-year analysis horizon, summing annual operating and embodied avoided emissions across all projected deployment cohorts. Calculated per PRIME ERP methodology (Project Frame Pre-Investment Considerations). Mitigation definitions align with GIIN IRIS+ metrics.",
+    volo_prorata: "Fund pro-rata share of forecasted carbon impact — total lifecycle tCO₂ × VoLo's entry ownership percentage. Attributed per the GHG Protocol.",
+    risk_adjusted_carbon: "P-50 risk-adjusted cumulative carbon impact. Pro-rata tCO₂ adjusted for survival probability using likelihood-of-success curves fitted to each company's technical and commercial risk (TRL modifiers applied to Carta benchmark graduation rates). Reflects expected avoided emissions accounting for the probability the company reaches a meaningful exit.",
+    carbon_tpd: "TCPI — Tonnes CO₂ to Paid In Capital. Risk-adjusted tonnes of CO₂ avoided per dollar invested. VoLo's primary cross-deal carbon efficiency metric — higher = more climate impact per investment dollar. Calculated as P-50 risk-adjusted tCO₂ ÷ VoLo check size.",
     annual_carbon_chart: "Year-by-year breakdown of avoided CO₂ emissions from the technology deployment, based on unit volume projections and per-unit carbon displacement calculations.",
 
     // ── Deal Metrics Charts ──────────────────────────────
@@ -2165,16 +2165,16 @@ function wizRenderReport(r) {
     html += `<div class="rpt-section">${secNum()}
         <h3 class="rpt-section-title">Carbon Impact Assessment ${infoTip('carbon_impact')}</h3>
         <div class="rpt-hero-row compact">
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.company_tonnes, 0)}</div><div class="rpt-hero-label">Total Lifecycle tCO2 ${infoTip('total_lifecycle_tco2')}</div></div>
-            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_prorata, 0)}</div><div class="rpt-hero-label">VoLo Pro-Rata ${infoTip('volo_prorata')}</div></div>
-            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_risk_adj, 0)}</div><div class="rpt-hero-label">Risk-Adjusted ${infoTip('risk_adjusted_carbon')}</div></div>
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.risk_adj_tpd, 4)}</div><div class="rpt-hero-label">t/$ (Risk-Adj) ${infoTip('carbon_tpd')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.company_tonnes, 0)}</div><div class="rpt-hero-label">Total Potential (10yr) ${infoTip('total_lifecycle_tco2')}</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_prorata, 0)}</div><div class="rpt-hero-label">Fund Pro-Rata Share ${infoTip('volo_prorata')}</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_risk_adj, 0)}</div><div class="rpt-hero-label">P-50 Risk-Adjusted ${infoTip('risk_adjusted_carbon')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.risk_adj_tpd, 4)}</div><div class="rpt-hero-label">TCPI (t CO₂/$) ${infoTip('carbon_tpd')}</div></div>
         </div>
         ${trace('Carbon calculation chain', `
             <p><strong>Total lifecycle tCO2</strong> = Σ annual (operating + embodied) over projection period.</p>
             <p><strong>VoLo Pro-Rata</strong> = lifecycle tCO2 x ${fmt(ov.entry_ownership_pct,1)}% ownership.</p>
-            <p><strong>Risk-Adjusted</strong> = pro-rata / risk_divisor (${carbonRD}, ${carbonRDSrc}).</p>
-            <p><strong>t/$</strong> = risk-adjusted tonnes / $${fmt(ov.check_size_millions,1)}M check.</p>
+            <p><strong>P-50 Risk-Adjusted</strong> = fund pro-rata share / risk_divisor (${carbonRD}, ${carbonRDSrc}).</p>
+            <p><strong>TCPI</strong> = P-50 risk-adjusted tonnes / $${fmt(ov.check_size_millions,1)}M check.</p>
             ${ci.total_operating != null ? `<p><strong>Intermediates</strong>: operating = ${fmt(ci.total_operating,0)} tCO2, embodied = ${fmt(ci.total_embodied,0)} tCO2.</p>` : ''}
             ${carbon.error ? `<p style="color:#dc2626;"><strong>Warning</strong>: ${carbon.error}</p>` : ''}
         `)}`;
@@ -7912,7 +7912,7 @@ function _memoInjectCharts(container, report) {
                 This produces the survival rate and outcome distribution below.
                 <span style="color:#dc2626;font-weight:600;">These metrics are VoLo's own risk layer —
                 they are NOT part of the PRIME ERP carbon methodology.</span>
-                They are applied solely to the Risk-Adjusted tCO₂ and t/$ (Risk-Adj) metrics in the
+                They are applied solely to the P-50 Risk-Adjusted tCO₂ and TCPI metrics in the
                 Carbon Impact section.
             </p>
             <div class="memo-rvm-hero" style="margin-bottom:14px;">
@@ -8425,31 +8425,31 @@ function _memoInjectCharts(container, report) {
                     <tr style="border-bottom:1px solid #eee;background:rgba(220,38,38,0.04);">
                         <td style="padding:5px 8px;"><strong>VoLo Risk Layer</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">(not part of PRIME)</span></td>
                         <td style="padding:5px 8px;color:#666;">PRIME has no equivalent — ERP is a deterministic forecast</td>
-                        <td style="padding:5px 8px;">Risk-Adjusted tCO₂ = Pro-Rata tCO₂ × survival_rate (from Monte Carlo simulation). t/$ (Risk-Adj) = Risk-Adjusted tCO₂ ÷ check size. The survival rate is drawn from the same financial model (Carta graduation rates × TRL modifiers × 5,000 paths) — ensuring carbon and financial risk are governed by the same probability.</td>
-                        <td style="padding:5px 8px;color:#dc2626;">✗ VoLo extension only — applies only to Risk-Adjusted tCO₂ and t/$ (Risk-Adj)</td>
+                        <td style="padding:5px 8px;">P-50 Risk-Adjusted tCO₂ = Fund Pro-Rata Share × survival_rate (from Monte Carlo simulation using likelihood-of-success curves). TCPI (Tonnes CO₂ to Paid-In Capital) = P-50 Risk-Adjusted tCO₂ ÷ check size. The survival rate is drawn from the same financial model (Carta graduation rates × TRL modifiers × 5,000 paths) — ensuring carbon and financial risk are governed by the same probability.</td>
+                        <td style="padding:5px 8px;color:#dc2626;">✗ VoLo extension only — applies only to P-50 Risk-Adjusted tCO₂ and TCPI</td>
                     </tr>
                 </tbody>
             </table>
             <div class="memo-rvm-hero">
                 <div class="memo-rvm-hero-card accent">
                     <div class="memo-rvm-hero-num">${fmt(co.company_tonnes, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">Total Lifecycle tCO₂</div>
-                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">PRIME ERP (§5)</div>
+                    <div class="memo-rvm-hero-lbl">Total Potential (10yr)</div>
+                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">PRIME ERP (§5) · GIIN IRIS+</div>
                 </div>
                 <div class="memo-rvm-hero-card">
                     <div class="memo-rvm-hero-num">${fmt(co.volo_prorata, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">VoLo Pro-Rata tCO₂</div>
-                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">PRIME ERP × ownership %</div>
+                    <div class="memo-rvm-hero-lbl">Fund Pro-Rata Share</div>
+                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">GHG Protocol · ownership %</div>
                 </div>
                 <div class="memo-rvm-hero-card">
                     <div class="memo-rvm-hero-num">${fmt(co.volo_risk_adj, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">Risk-Adjusted tCO₂</div>
-                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">VoLo Risk Layer × ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : ''} survival</div>
+                    <div class="memo-rvm-hero-lbl">P-50 Risk-Adjusted</div>
+                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">Likelihood-of-success · ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : ''} survival</div>
                 </div>
                 <div class="memo-rvm-hero-card accent">
                     <div class="memo-rvm-hero-num">${co.risk_adj_tpd != null ? Number(co.risk_adj_tpd).toFixed(4) : 'N/A'}</div>
-                    <div class="memo-rvm-hero-lbl">t/$ (Risk-Adj)</div>
-                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">VoLo Risk Layer ÷ check</div>
+                    <div class="memo-rvm-hero-lbl">TCPI (t CO₂/$)</div>
+                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">Tonnes CO₂ to Paid-In Capital</div>
                 </div>
             </div>
         </div>`, ['theory of change', 'carbon', 'emissions', 'displace', 'avoided', 'tco2', 'lifecycle', 'impact']);
@@ -8704,13 +8704,13 @@ function _memoInjectCharts(container, report) {
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
                 <strong>② → ④ VoLo Risk Layer (not part of PRIME):</strong> The survival rate from the Monte Carlo simulation
                 (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'}) is applied as a probability-weighted discount to yield Risk-Adjusted tCO₂.
-                <em>Only ④ Risk-Adjusted tCO₂ and ⑥ t/$ (Risk-Adj) reflect this layer — ① and ② are PRIME-only.</em>
+                <em>Only ④ P-50 Risk-Adjusted tCO₂ and ⑥ TCPI reflect this layer — ① and ② are PRIME-only.</em>
                 See <strong>Cohort Analysis</strong> section for full derivation of survival rate (Carta graduation rates × TRL modifiers).
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>t/$ metric:</strong> Dividing risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
-                This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales.
-                Typical VoLo portfolio range: 0.005–0.10 t/$. Higher is better, but extremely high values should be interrogated for model assumptions.
+                <strong>TCPI (Tonnes CO₂ to Paid-In Capital):</strong> Dividing P-50 risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
+                This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales, consistent with the metric published in VoLo's annual Impact Report.
+                Typical VoLo portfolio range: 0.005–0.10 t CO₂/$. Higher is better, but extremely high values should be interrogated for model assumptions.
             </p>
             ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="height:260px;margin-bottom:14px;"><canvas id="memo-carbon-waterfall-chart"></canvas></div>` : ''}
             <table class="memo-rvm-table" style="width:100%;table-layout:fixed;">
@@ -8747,20 +8747,20 @@ function _memoInjectCharts(container, report) {
                         <td>VoLo Risk Layer: expected (probability-weighted) avoided CO₂. Not a PRIME output — this is VoLo's own extension to put early-stage and late-stage deals on an equal footing. To replicate: multiply pro-rata tCO₂ (② above) by the simulation survival_rate (③ above).</td>
                     </tr>
                     <tr>
-                        <td><strong>⑤ t/$ Unadjusted</strong></td>
+                        <td><strong>⑤ TCPI (Unadjusted)</strong></td>
                         <td>② ÷ $${fmt(checkM,2)}M check</td>
                         <td style="text-align:right;">${tpdRaw}</td>
-                        <td>Raw carbon capital efficiency before TRL risk adjustment. Represents the theoretical maximum if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential independent of technology maturity.</td>
+                        <td>Raw carbon capital efficiency before survival risk adjustment. Represents the theoretical maximum if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential independent of technology maturity.</td>
                     </tr>
                     <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
-                        <td><strong>⑥ t/$ Risk-Adjusted</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">VoLo only</span></td>
+                        <td><strong>⑥ TCPI (Risk-Adj)</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">VoLo only</span></td>
                         <td>④ ÷ $${fmt(checkM,2)}M check</td>
                         <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
-                        <td>VoLo's primary carbon KPI — risk-adjusted tonnes per dollar invested. VoLo-only: applies the survival risk layer before dividing by check size. To replicate: use ④ (risk-adj tCO₂) ÷ check size in dollars. Use this — not raw company tCO₂ — for cross-deal comparison. Typical VoLo range: 0.005–0.10 t/$.</td>
+                        <td>TCPI — Tonnes CO₂ to Paid-In Capital. VoLo's primary carbon KPI, published in VoLo's annual Impact Report. Applies likelihood-of-success survival discount before dividing by check size. To replicate: use ④ (P-50 risk-adj tCO₂) ÷ check size in dollars. Use this — not raw company tCO₂ — for cross-deal comparison. Typical VoLo range: 0.005–0.10 t CO₂/$.</td>
                     </tr>
                 </tbody>
             </table>
-            <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) multiply by the simulation survival_rate (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'see simulation section'} — from the Monte Carlo financial model), (4) divide by check size in dollars. The result is risk-adjusted t/$. All inputs are shown explicitly in this memo.</p>
+            <p class="memo-chart-note">To replicate this waterfall: (1) compute total potential tCO₂ (10yr) from the year-by-year table above, (2) multiply by entry ownership % per GHG Protocol equity-method attribution, (3) multiply by the simulation survival_rate (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'see simulation section'} — likelihood-of-success curve from the Monte Carlo financial model), (4) divide by check size in dollars to get TCPI. All inputs are shown explicitly in this memo.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
 
         // Grid Carbon Intensity Trajectory chart removed from memo
@@ -9076,7 +9076,7 @@ function _memoRenderCharts(r) {
 
     // Chart 2: Attribution waterfall — dual Y-axis (tCO₂ left, t/$ right)
     if (co2.company_tonnes != null) {
-        const wfLabels = ['① Company\nLifecycle tCO₂', '② VoLo\nPro-Rata tCO₂', '④ Risk-Adjusted\ntCO₂', '⑥ t/$\nRisk-Adjusted'];
+        const wfLabels = ['① Total Potential\n(10yr)', '② Fund\nPro-Rata Share', '④ P-50\nRisk-Adjusted', '⑥ TCPI\n(t CO₂/$)'];
         mkChart('memo-carbon-waterfall-chart', {
             type: 'bar',
             data: {
@@ -9091,7 +9091,7 @@ function _memoRenderCharts(r) {
                         yAxisID: 'y',
                     },
                     {
-                        label: 't/$ Risk-Adjusted (right axis)',
+                        label: 'TCPI t CO₂/$ (right axis)',
                         data: [null, null, null, co2.risk_adj_tpd || 0],
                         backgroundColor: ['transparent', 'transparent', 'transparent', '#e36209cc'],
                         borderColor:     ['transparent', 'transparent', 'transparent', '#e36209'],
