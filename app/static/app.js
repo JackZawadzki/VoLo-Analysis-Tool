@@ -7546,9 +7546,20 @@ function _memoInjectCharts(container, report) {
             const priorRowsHtml2 = priorArr2.length > 1 ? priorArr2.map(p =>
                 `<tr><td style="padding-left:12px;color:var(--color-muted);font-size:11px;">Round ${p.round_num||''}: ${p.type==='convertible'?'Conv/SAFE':'Priced'} ${p.stage||''}</td><td style="text-align:right;color:var(--color-muted);font-size:11px;">$${fmt(p.check_m,2)}M</td><td></td><td></td></tr>`
             ).join('') : '';
+            // Only show sweep charts when there are multiple data points (sweep actually ran)
+            const foSweepMultipoint2 = foPs2.blended_curve.length > 1;
+            const foGridMultipoint2  = (foPs2.standalone_grid_search?.grid?.length > 1) &&
+                foPs2.standalone_grid_search.grid.some(g => g.fund_p50_pct_chg != null);
             appendToSection(frmH2, `<div class="memo-chart-context">
                 <p class="memo-chart-label">Follow-on Check Size Optimization</p>
-                <p class="memo-chart-caption">${priorLabel2} treated as sunk cost. Optimizer finds optimal follow-on check for blended MOIC maximization.</p>
+                <p class="memo-chart-caption">
+                    Prior investment (${priorLabel2}) is treated as sunk cost — its return is fixed regardless of follow-on decision.
+                    The optimizer finds the follow-on check size that maximises <strong>blended MOIC</strong>:
+                    the combined return on <em>all</em> capital VoLo has deployed to this company (prior rounds + follow-on),
+                    measured as total exit proceeds divided by total invested ($${fmt(comb2.total_invested_m,2)}M combined).
+                    This differs from the standalone follow-on MOIC, which measures only the new check in isolation.
+                    ${foSweepMultipoint2 ? 'Blended MOIC shown at P10 (downside), P50 (median), and P90 (upside) across 5,000 simulation paths.' : `Sweep collapsed to a single point ($${fmt(foPs2.recommended_followon_check_m,2)}M) — concentration limit equals minimum check size.`}
+                </p>
                 <table class="memo-rvm-table">
                     <thead><tr><th></th><th style="text-align:right;">Prior Round(s)</th><th style="text-align:right;">Follow-on</th><th style="text-align:right;">Combined</th></tr></thead>
                     <tbody>
@@ -7557,11 +7568,33 @@ function _memoInjectCharts(container, report) {
                         <tr><td>Ownership</td><td style="text-align:right;">${priorOwnCell2}</td><td style="text-align:right;">${fmt(foInv2.ownership_pct,1)}%</td><td style="text-align:right;font-weight:700;">${fmt(combinedOwn2,1)}%</td></tr>
                     </tbody>
                 </table>
-                ${blStats2.blended_moic_p50 != null ? `<p style="margin-top:8px;">Blended MOIC: <strong>${fmt(blStats2.blended_moic_p50,2)}x</strong> (P50), <strong>${fmt(blStats2.blended_moic_p10,2)}x</strong> (P10), <strong>${fmt(blStats2.blended_moic_p90,2)}x</strong> (P90)</p>` : ''}
-                <div class="memo-chart-row">
+                ${blStats2.blended_moic_p50 != null ? `
+                <table class="memo-rvm-table" style="margin-top:8px;">
+                    <thead><tr>
+                        <th>Blended MOIC Percentile</th>
+                        <th style="text-align:right;">P10 (Downside)</th>
+                        <th style="text-align:right;">P50 (Median)</th>
+                        <th style="text-align:right;">P90 (Upside)</th>
+                    </tr></thead>
+                    <tbody>
+                        <tr>
+                            <td style="font-size:11px;color:var(--text-secondary);">Return on $${fmt(comb2.total_invested_m,2)}M total deployed (prior + follow-on)</td>
+                            <td style="text-align:right;color:#dc2626;">${fmt(blStats2.blended_moic_p10,2)}x</td>
+                            <td style="text-align:right;font-weight:700;">${fmt(blStats2.blended_moic_p50,2)}x</td>
+                            <td style="text-align:right;color:#2d6a4f;">${fmt(blStats2.blended_moic_p90,2)}x</td>
+                        </tr>
+                        ${blStats2.followon_standalone_moic_p50 != null ? `<tr>
+                            <td style="font-size:11px;color:var(--text-secondary);">Standalone follow-on MOIC (P50) — new $${fmt(foPs2.recommended_followon_check_m,2)}M only</td>
+                            <td style="text-align:right;">—</td>
+                            <td style="text-align:right;">${fmt(blStats2.followon_standalone_moic_p50,2)}x</td>
+                            <td style="text-align:right;">—</td>
+                        </tr>` : ''}
+                    </tbody>
+                </table>` : ''}
+                ${foSweepMultipoint2 ? `<div class="memo-chart-row">
                     <div class="memo-chart-wrap"><canvas id="memo-frm-fo-blended-chart" height="260"></canvas></div>
-                    ${foPs2.standalone_grid_search?.grid?.length ? `<div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>` : ''}
-                </div>
+                    ${foGridMultipoint2 ? `<div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>` : ''}
+                </div>` : ''}
             </div>`);
         }
     }
@@ -8299,42 +8332,50 @@ function _memoRenderCharts(r) {
     }
 
     const foPs3 = r.followon_position_sizing || {};
-    if (foPs3.has_data && foPs3.blended_curve?.length) {
+    if (foPs3.has_data && foPs3.blended_curve?.length > 1) {
         const bc3 = foPs3.blended_curve;
-        const recFo3 = foPs3.recommended_followon_check_m;
         const bcLabels3 = bc3.map(b => '$' + b.followon_check_m.toFixed(2) + 'M');
         mkChart('memo-frm-fo-blended-chart', {
             type: 'line',
             data: {
                 labels: bcLabels3,
                 datasets: [
-                    { label: 'Blended P90', data: bc3.map(b => b.blended_moic_p90), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
-                    { label: 'Blended P50', data: bc3.map(b => b.blended_moic_p50), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 1 },
-                    { label: 'Blended P10', data: bc3.map(b => b.blended_moic_p10), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'P90 (Upside)',  data: bc3.map(b => b.blended_moic_p90), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'P50 (Median)',  data: bc3.map(b => b.blended_moic_p50), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 1 },
+                    { label: 'P10 (Downside)',data: bc3.map(b => b.blended_moic_p10), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
                 ]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                plugins: { title: { display: true, text: 'Blended MOIC (First + Follow-on)', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
-                scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Blended MOIC' }, ticks: { callback: v => v.toFixed(1)+'x' } } },
+                plugins: {
+                    title: { display: true, text: 'Blended MOIC vs Follow-on Check Size', font: { family: chartFont, size: 13 } },
+                    subtitle: { display: true, text: 'Blended = exit proceeds ÷ (prior rounds + follow-on)', font: { family: chartFont, size: 10 }, color: '#888', padding: { bottom: 6 } },
+                    legend: { position: 'bottom', labels: { font: { size: 10 } } }
+                },
+                scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Blended MOIC (all-in)' }, ticks: { callback: v => v.toFixed(1)+'x' } } },
             }
         });
         const foGrid3 = foPs3.standalone_grid_search?.grid || [];
-        if (foGrid3.length) {
+        const foGridHasFundData3 = foGrid3.some(g => g.fund_p50_pct_chg != null);
+        if (foGrid3.length > 1 && foGridHasFundData3) {
             const foLabels3 = foGrid3.map(g => '$' + g.check_m.toFixed(2) + 'M');
             mkChart('memo-frm-fo-grid-chart', {
                 type: 'line',
                 data: {
                     labels: foLabels3,
                     datasets: [
-                        { label: 'Fund P50 Δ%', data: foGrid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green, borderWidth: 2, fill: false, pointRadius: 1 },
-                        { label: 'Fund P10 Δ%', data: foGrid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
-                        { label: 'Fund P90 Δ%', data: foGrid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                        { label: 'P50 (Median)',  data: foGrid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green,           borderWidth: 2,   fill: false, pointRadius: 1 },
+                        { label: 'P10 (Downside)',data: foGrid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88',     borderWidth: 1.5, fill: false, pointRadius: 0 },
+                        { label: 'P90 (Upside)',  data: foGrid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88',  borderWidth: 1.5, fill: false, pointRadius: 0 },
                     ]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { title: { display: true, text: 'Follow-on Fund TVPI Impact', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                    plugins: {
+                        title: { display: true, text: 'Follow-on Impact on Fund TVPI', font: { family: chartFont, size: 13 } },
+                        subtitle: { display: true, text: '% change in fund-level TVPI at each follow-on check size', font: { family: chartFont, size: 10 }, color: '#888', padding: { bottom: 6 } },
+                        legend: { position: 'bottom', labels: { font: { size: 10 } } }
+                    },
                     scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Δ% Fund TVPI' }, ticks: { callback: v => v.toFixed(2)+'%' } } },
                 }
             });
