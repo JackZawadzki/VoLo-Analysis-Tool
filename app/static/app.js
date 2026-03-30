@@ -7406,6 +7406,98 @@ function _memoInjectCharts(container, report) {
                 }
             }
         }
+
+        // ── Simulation Risk Parameters Documentation Block ────────────────────
+        // Shows TRL modifiers, Carta inputs, realized survival_rate, and outcome
+        // breakdown so analysts can replicate the model without reading source code.
+        const simMeta = r.simulation || {};
+        const trlMods = simMeta.trl_modifiers || {};
+        const cartaIn = simMeta.carta_inputs || {};
+        const outBk = simMeta.outcome_breakdown || {};
+        const _sp = trlMods.survival_penalty;
+        const _cm = trlMods.capital_multiplier;
+        const _bp = trlMods.extra_bridge_prob;
+        const _em = trlMods.exit_multiple_discount;
+        const _sr = simMeta.survival_rate;
+        const _mer = simMeta.meaningful_exit_rate;
+        const _ns = simMeta.n_simulations || 5000;
+        const _pctFmt1 = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+        // Build outcome rows from breakdown object
+        // Breakdown values may be plain fractions OR objects {count, pct, label}
+        let outRows = '';
+        const outLabels = {
+            full_exit: 'Full Exit (acq/IPO)',
+            stage_exit: 'Stage Exit (mid-round)',
+            partial_recovery: 'Partial Recovery',
+            late_small_exit: 'Late Small Exit',
+            bridge_survives: 'Bridge Survives',
+            total_loss: 'Total Loss / Zero',
+        };
+        Object.entries(outLabels).forEach(([k, lbl]) => {
+            const v = outBk[k];
+            if (v == null) return;
+            // Handle both flat fraction (0.19) and nested object {count, pct, label}
+            let pctNum, countNum;
+            if (typeof v === 'object' && v.pct != null) {
+                pctNum = v.pct;       // already in percent (e.g. 19.0)
+                countNum = v.count;
+            } else {
+                pctNum = v * 100;
+                countNum = Math.round(v * _ns);
+            }
+            const pctStr = pctNum.toFixed(1) + '%';
+            const countStr = countNum != null ? `${countNum.toLocaleString()} / ${_ns.toLocaleString()}` : '—';
+            const isLoss = k === 'total_loss';
+            const isWin = k === 'full_exit' || k === 'stage_exit';
+            const rowStyle = isLoss ? 'color:#dc2626;' : isWin ? 'color:#2d6a4f;font-weight:600;' : '';
+            outRows += `<tr><td>${lbl}</td><td style="text-align:right;${rowStyle}">${pctStr}</td><td style="text-align:right;">${countStr}</td></tr>`;
+        });
+        appendToSection(finSectionH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">Monte Carlo Simulation — Risk Parameters &amp; Outcome Breakdown</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
+                These parameters govern the ${_ns.toLocaleString()}-path Monte Carlo simulation. They are documented here so analysts can replicate the financial model and carbon risk adjustment without reading the source code.
+                The simulation uses Carta sector data (graduation rates, round sizes, post-money distributions) as a base, then applies TRL-specific modifiers to reflect technology maturity risk.
+            </p>
+            <div class="memo-chart-row" style="align-items:flex-start;gap:20px;">
+                <div style="flex:1;">
+                    <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">TRL ${trlMods.trl || ov.trl} Modifiers (Applied Per Stage)</p>
+                    <table class="memo-rvm-table">
+                        <thead><tr><th>Parameter</th><th style="text-align:right;">Value</th><th>Effect</th></tr></thead>
+                        <tbody>
+                            <tr><td>Survival Penalty</td><td style="text-align:right;color:#dc2626;">${_sp != null ? (_sp*100).toFixed(0)+'%/stage' : '—'}</td><td style="font-size:0.8rem;">Reduces per-stage graduation rate. Applied as: effective_rate = carta_rate × (1 − penalty × decay)</td></tr>
+                            <tr><td>Capital Multiplier</td><td style="text-align:right;">${_cm != null ? _cm.toFixed(2)+'×' : '—'}</td><td style="font-size:0.8rem;">Scales round sizes upward for higher-TRL companies that need more capital to commercialize</td></tr>
+                            <tr><td>Extra Bridge Prob</td><td style="text-align:right;color:#b45309;">${_bp != null ? (_bp*100).toFixed(0)+'%' : '—'}</td><td style="font-size:0.8rem;">Additional probability of a bridge round at each stage (pre-commercial risk of needing more runway)</td></tr>
+                            <tr><td>Exit Multiple Discount</td><td style="text-align:right;">${_em != null ? _em.toFixed(2)+'×' : '—'}</td><td style="font-size:0.8rem;">Multiplies exit EV/EBITDA multiple. Values &lt;1 apply a haircut for early-stage tech uncertainty</td></tr>
+                        </tbody>
+                    </table>
+                    <p style="font-size:0.8rem;margin:6px 0 0;color:#555;">
+                        <strong>Carta Inputs:</strong> Entry stage = ${cartaIn.entry_stage || ov.entry_stage || '—'}, Sector = ${cartaIn.sector_profile || ov.sector_profile || '—'}.
+                        Carta provides base graduation rates, round size distributions, and pre-money distributions by sector and stage, which TRL modifiers then adjust.
+                    </p>
+                </div>
+                <div style="flex:1;">
+                    <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">Realized Survival Rate &amp; Outcome Distribution (${_ns.toLocaleString()} paths)</p>
+                    <div class="memo-rvm-hero" style="margin-bottom:10px;">
+                        <div class="memo-rvm-hero-card accent">
+                            <div class="memo-rvm-hero-num">${_pctFmt1(_sr)}</div>
+                            <div class="memo-rvm-hero-lbl">Survival Rate<br><span style="font-size:0.7rem;font-weight:400;">(paths with MOIC&gt;0)</span></div>
+                        </div>
+                        <div class="memo-rvm-hero-card">
+                            <div class="memo-rvm-hero-num">${_pctFmt1(_mer)}</div>
+                            <div class="memo-rvm-hero-lbl">Meaningful Exit<br><span style="font-size:0.7rem;font-weight:400;">(full or stage exit)</span></div>
+                        </div>
+                    </div>
+                    <table class="memo-rvm-table">
+                        <thead><tr><th>Outcome</th><th style="text-align:right;">Freq.</th><th style="text-align:right;">Paths</th></tr></thead>
+                        <tbody>${outRows || '<tr><td colspan="3" style="text-align:center;">Outcome data not available</td></tr>'}</tbody>
+                    </table>
+                    <p style="font-size:0.8rem;margin:6px 0 0;color:#555;">
+                        The <strong>survival_rate (${_pctFmt1(_sr)})</strong> is also used as the carbon risk multiplier — risk-adjusted tCO₂ = pro-rata tCO₂ × ${_pctFmt1(_sr)}.
+                        This ensures financial and carbon risk models are consistent.
+                    </p>
+                </div>
+            </div>
+        </div>`);
     }
 
     // ── 5. FUND RETURN MODEL: Section 3 (Portfolio Impact) + Section 8 (Check Size) ──
@@ -7607,6 +7699,8 @@ function _memoInjectCharts(container, report) {
         const cInp = carbon.carbon_inputs || {};
         const riskDiv = carbon.risk_divisor_used || 1;
         const riskSrc = carbon.risk_divisor_source || '';
+        const carbonSurvRate = carbon.survival_rate_used;
+        const carbonSurvSrc = carbon.survival_rate_source || '';
         const entryOwn = ov.entry_ownership_pct || 0;
         const checkM = ov.check_size_millions || 0;
 
@@ -7841,12 +7935,11 @@ function _memoInjectCharts(container, report) {
                 This is analogous to how carbon accounting standards (GHG Protocol, equity method) attribute scope 1/2/3 emissions proportionally to ownership.
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>TRL risk haircut:</strong> Early-stage companies may never reach commercial scale — their technology might fail, the market may not develop, or the projected volumes may not materialize.
-                The risk divisor discounts the carbon impact to reflect this probability-weighted uncertainty.
-                TRL 1–4 (laboratory / concept stage) uses a 6× divisor (only ~17% expected to realize full impact).
-                TRL 5–6 (prototype / pilot validated) uses 3× (~33%).
-                TRL 7–9 (commercial or near-commercial) uses 1× (full credit).
-                As the company de-risks and advances its TRL, this divisor should be reduced.
+                <strong>Simulation survival rate (risk adjustment):</strong> Early-stage companies may never reach commercial scale — their technology might fail, the market may not develop, or the projected volumes may not materialize.
+                Rather than a coarse TRL-bucket divisor, the carbon model uses the same probability-weighted survival rate produced by the Monte Carlo financial simulation.
+                That simulation calibrates base graduation rates from Carta sector data, then applies TRL-specific penalties (survival_penalty, extra_bridge_prob) across 5,000 paths.
+                The result — e.g. ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'} — is the fraction of paths that reached a positive exit.
+                Risk-adjusted tCO₂ = pro-rata tCO₂ × survival rate, so the same risk model governs both financial returns and carbon attribution.
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
                 <strong>t/$ metric:</strong> Dividing risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
@@ -7876,16 +7969,16 @@ function _memoInjectCharts(container, report) {
                         <td>VoLo's proportional share of company-level impact at the entry ownership stake. Uses entry (not diluted) ownership because we measure impact at the time of investment commitment.</td>
                     </tr>
                     <tr>
-                        <td><strong>③ TRL Risk Divisor</strong></td>
-                        <td>÷ ${riskDiv} (${riskDivLabel})</td>
-                        <td style="text-align:right;">${riskSrc ? riskSrc : 'TRL-based'}</td>
-                        <td>Probability-weighted haircut for technology and execution risk. TRL 1–4 = 6× (only ~17% of projected impact expected to materialise); TRL 5–6 = 3× (~33%); TRL 7–9 = 1× (full credit). Reduce as the company de-risks.</td>
+                        <td><strong>③ Simulation Survival Rate</strong></td>
+                        <td>× ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'} survival rate</td>
+                        <td style="text-align:right;">${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : (riskSrc || 'TRL-based')}</td>
+                        <td>Probability-weighted survival rate from the Monte Carlo simulation (${carbonSurvSrc || 'simulation'}). This is the same survival_rate used in the financial model — Carta graduation rates × TRL modifiers across 5,000 paths. Replaces the old coarse TRL bucket divisor so carbon and financial risk are consistent.</td>
                     </tr>
                     <tr style="background:rgba(91,119,68,0.08);">
                         <td><strong>④ Risk-Adjusted tCO₂</strong></td>
-                        <td>② ÷ ${riskDiv}</td>
+                        <td>② × ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'}</td>
                         <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
-                        <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. Use this figure when comparing carbon impact across portfolio companies at different technology maturities — it puts early-stage and late-stage deals on an equal footing.</td>
+                        <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. Use this figure when comparing carbon impact across portfolio companies — it puts early-stage and late-stage deals on an equal footing. To replicate: multiply pro-rata tCO₂ by the simulation survival_rate shown above.</td>
                     </tr>
                     <tr>
                         <td><strong>⑤ t/$ Unadjusted</strong></td>
@@ -7901,7 +7994,7 @@ function _memoInjectCharts(container, report) {
                     </tr>
                 </tbody>
             </table>
-            <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) divide by the TRL risk divisor, (4) divide by check size in dollars. The result is t/$. All inputs are shown explicitly in this memo.</p>
+            <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) multiply by the simulation survival_rate (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'see simulation section'} — from the Monte Carlo financial model), (4) divide by check size in dollars. The result is risk-adjusted t/$. All inputs are shown explicitly in this memo.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
 
         // Grid Carbon Intensity Trajectory chart removed from memo
