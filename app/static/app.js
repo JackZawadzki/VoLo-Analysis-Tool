@@ -7453,26 +7453,79 @@ function _memoInjectCharts(container, report) {
             outRows += `<tr><td>${lbl}</td><td style="text-align:right;${rowStyle}">${pctStr}</td><td style="text-align:right;">${countStr}</td></tr>`;
         });
         appendToSection(finSectionH2, `<div class="memo-chart-context">
-            <p class="memo-chart-label">Monte Carlo Simulation — Risk Parameters &amp; Outcome Breakdown</p>
+            <p class="memo-chart-label">Monte Carlo Simulation — Risk Parameters &amp; Exact Calculation Formulas</p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                These parameters govern the ${_ns.toLocaleString()}-path Monte Carlo simulation. They are documented here so analysts can replicate the financial model and carbon risk adjustment without reading the source code.
-                The simulation uses Carta sector data (graduation rates, round sizes, post-money distributions) as a base, then applies TRL-specific modifiers to reflect technology maturity risk.
+                These parameters govern the ${_ns.toLocaleString()}-path Monte Carlo simulation.
+                Carta sector data provides base graduation rates, round sizes, and pre-money distributions for
+                <strong>${cartaIn.entry_stage || ov.entry_stage || '—'}</strong> entry stage,
+                <strong>${cartaIn.sector_profile || ov.sector_profile || '—'}</strong> sector.
+                TRL ${trlMods.trl || ov.trl} modifiers are then applied at every stage transition.
+                All formulas below are exact — analysts can replicate each path without reading source code.
             </p>
             <div class="memo-chart-row" style="align-items:flex-start;gap:20px;">
-                <div style="flex:1;">
-                    <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">TRL ${trlMods.trl || ov.trl} Modifiers (Applied Per Stage)</p>
-                    <table class="memo-rvm-table">
-                        <thead><tr><th>Parameter</th><th style="text-align:right;">Value</th><th>Effect</th></tr></thead>
+                <div style="flex:1.3;">
+                    <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">TRL ${trlMods.trl || ov.trl} Modifier Values &amp; Exact Formulas</p>
+                    <table class="memo-rvm-table" style="font-size:0.79rem;">
+                        <thead><tr><th style="width:22%;">Parameter</th><th style="text-align:right;width:12%;">Value</th><th>Exact Formula Applied Each Stage</th></tr></thead>
                         <tbody>
-                            <tr><td>Survival Penalty</td><td style="text-align:right;color:#dc2626;">${_sp != null ? (_sp*100).toFixed(0)+'%/stage' : '—'}</td><td style="font-size:0.8rem;">Reduces per-stage graduation rate. Applied as: effective_rate = carta_rate × (1 − penalty × decay)</td></tr>
-                            <tr><td>Capital Multiplier</td><td style="text-align:right;">${_cm != null ? _cm.toFixed(2)+'×' : '—'}</td><td style="font-size:0.8rem;">Scales round sizes upward for higher-TRL companies that need more capital to commercialize</td></tr>
-                            <tr><td>Extra Bridge Prob</td><td style="text-align:right;color:#b45309;">${_bp != null ? (_bp*100).toFixed(0)+'%' : '—'}</td><td style="font-size:0.8rem;">Additional probability of a bridge round at each stage (pre-commercial risk of needing more runway)</td></tr>
-                            <tr><td>Exit Multiple Discount</td><td style="text-align:right;">${_em != null ? _em.toFixed(2)+'×' : '—'}</td><td style="font-size:0.8rem;">Multiplies exit EV/EBITDA multiple. Values &lt;1 apply a haircut for early-stage tech uncertainty</td></tr>
+                            <tr>
+                                <td><strong>Survival Penalty</strong></td>
+                                <td style="text-align:right;color:#dc2626;font-weight:700;">${_sp != null ? (_sp*100).toFixed(0)+'%' : '—'}</td>
+                                <td style="font-family:monospace;font-size:0.78rem;">
+                                    decay(s) = max(0, 1 − s × 0.3) &nbsp;<em>[s = stages elapsed from entry]</em><br>
+                                    grad_rate = carta_grad_rate × (1 − ${_sp != null ? _sp.toFixed(2) : '?'} × decay(s))<br>
+                                    grad_rate = max(grad_rate, 0.05) &nbsp;<em>[floor at 5%]</em><br>
+                                    <span style="color:#888;">e.g. entry stage (s=0): decay=1.0 → grad_rate = carta × ${_sp != null ? (1-_sp).toFixed(2) : '?'}</span><br>
+                                    <span style="color:#888;">     next stage  (s=1): decay=0.7 → grad_rate = carta × ${_sp != null ? (1-_sp*0.7).toFixed(3) : '?'}</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Capital Multiplier</strong></td>
+                                <td style="text-align:right;font-weight:700;">${_cm != null ? _cm.toFixed(2)+'×' : '—'}</td>
+                                <td style="font-family:monospace;font-size:0.78rem;">
+                                    eff_mult(s) = max(${_cm != null ? _cm.toFixed(2) : '?'} × decay(s) + (1 − decay(s)), 0.9)<br>
+                                    log(round_size) ~ Normal(rs_mu + ln(eff_mult(s)), rs_sigma)<br>
+                                    <span style="color:#888;">e.g. entry stage (s=0): eff_mult = ${_cm != null ? _cm.toFixed(2) : '?'} × 1.0 = ${_cm != null ? _cm.toFixed(2) : '?'}× round sizes</span><br>
+                                    <span style="color:#888;">     s=2 (decay=0.4): eff_mult = ${_cm != null ? (_cm*0.4+(1-0.4)).toFixed(3) : '?'}×</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Extra Bridge Prob</strong></td>
+                                <td style="text-align:right;color:#b45309;font-weight:700;">${_bp != null ? (_bp*100).toFixed(0)+'%' : '—'}</td>
+                                <td style="font-family:monospace;font-size:0.78rem;">
+                                    Applies only when company <em>graduates</em> (raises next round):<br>
+                                    P(bridge | graduated) = ${_bp != null ? _bp.toFixed(2) : '?'} × decay(s)<br>
+                                    Bridge size ~ LogNormal(rs_mu − 1.0, rs_sigma × 0.6)<br>
+                                    Bridge pre = post_money × 0.85; dilution = bridge / (pre + bridge)<br>
+                                    <span style="color:#888;">e.g. entry stage: P(bridge) = ${_bp != null ? _bp.toFixed(2) : '?'} × 1.0 = ${_bp != null ? (_bp*100).toFixed(0)+'%' : '?'}</span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><strong>Exit Multiple Discount</strong></td>
+                                <td style="text-align:right;font-weight:700;">${_em != null ? _em.toFixed(2)+'×' : '—'}</td>
+                                <td style="font-family:monospace;font-size:0.78rem;">
+                                    Applied globally to the exit EV/EBITDA draw:<br>
+                                    base_mult ~ Uniform(${ov.exit_multiple_range?.[0] || '?'}×, ${ov.exit_multiple_range?.[1] || '?'}×)<br>
+                                    exit_mult = base_mult × ${_em != null ? _em.toFixed(2) : '?'}<br>
+                                    <span style="color:#888;">Effective range: ${_em != null && ov.exit_multiple_range ? (ov.exit_multiple_range[0]*_em).toFixed(1)+'×'  : '?'} – ${_em != null && ov.exit_multiple_range ? (ov.exit_multiple_range[1]*_em).toFixed(1)+'×' : '?'}</span>
+                                </td>
+                            </tr>
+                            <tr style="background:rgba(91,119,68,0.06);">
+                                <td><strong>Fail Outcomes</strong></td>
+                                <td style="text-align:right;">fixed</td>
+                                <td style="font-family:monospace;font-size:0.78rem;">
+                                    When a company fails to graduate at any stage, draw r ~ Uniform(0,1):<br>
+                                    r &lt; 0.50 → Total Loss (0× return)<br>
+                                    r &lt; 0.65 → Partial Recovery (acqui-hire, small fraction of post-money)<br>
+                                    r &lt; 0.90 → Bridge Survives (dilutive bridge, retry next stage)<br>
+                                    r &lt; 1.00 → Late Small Exit (lingered, small exit value)
+                                </td>
+                            </tr>
                         </tbody>
                     </table>
-                    <p style="font-size:0.8rem;margin:6px 0 0;color:#555;">
-                        <strong>Carta Inputs:</strong> Entry stage = ${cartaIn.entry_stage || ov.entry_stage || '—'}, Sector = ${cartaIn.sector_profile || ov.sector_profile || '—'}.
-                        Carta provides base graduation rates, round size distributions, and pre-money distributions by sector and stage, which TRL modifiers then adjust.
+                    <p style="font-size:0.79rem;margin:8px 0 0;color:#555;font-family:monospace;">
+                        Carbon attribution: risk_adj_tCO₂ = prorata_tCO₂ × survival_rate (${_pctFmt1(_sr)})<br>
+                        Equivalently: risk_adj_tCO₂ = prorata_tCO₂ / (1 / ${_pctFmt1(_sr)}) = prorata_tCO₂ / ${_sr != null ? (1/_sr).toFixed(3) : '?'}
                     </p>
                 </div>
                 <div style="flex:1;">
