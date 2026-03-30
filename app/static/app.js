@@ -7105,6 +7105,7 @@ function _memoInjectCharts(container, report) {
     function appendToSection(h2, html) {
         if (!h2) return null;
         const div = document.createElement('div');
+        div.className = 'memo-chart-inline';
         div.innerHTML = html;
         const contentContainer = getSectionContainer(h2);
         if (contentContainer) {
