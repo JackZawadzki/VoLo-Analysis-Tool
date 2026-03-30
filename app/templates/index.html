@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=109">
+    <link rel="stylesheet" href="/static/styles.css?v=110">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -1013,6 +1013,11 @@
                             <button onclick="memoExportDocx()" class="btn-secondary btn-sm" id="memo-export-docx-btn">Export .docx</button>
                             <button onclick="memoPrintPDF()" class="btn-secondary btn-sm" title="Save as PDF preserving charts and styling">Export PDF</button>
                             <button onclick="memoCopyMarkdown()" class="btn-secondary btn-sm">Copy Markdown</button>
+                            <span style="display:inline-flex;align-items:center;gap:6px;margin-left:8px;border-left:1px solid #ddd;padding-left:10px;">
+                                <button onclick="_memoLockAll()" class="btn-secondary btn-sm" title="Lock all sections so your edits are preserved on regeneration" style="background:#5B7744;color:#fff;border-color:#5B7744;">🔒 Lock All</button>
+                                <button onclick="_memoUnlockAll()" class="btn-secondary btn-sm" title="Unlock all sections">🔓 Unlock All</button>
+                                <span id="memo-lock-badge" style="display:none;background:#5B7744;color:#fff;border-radius:10px;padding:2px 8px;font-size:0.75rem;font-weight:600;"></span>
+                            </span>
                             <span class="memo-output-meta" id="memo-output-meta"></span>
                         </div>
                         <div class="memo-rendered" id="memo-rendered"></div>
@@ -2090,7 +2095,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=122"></script>
+    <script src="/static/app.js?v=131"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {
