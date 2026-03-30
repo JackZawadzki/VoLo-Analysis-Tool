@@ -7853,50 +7853,54 @@ function _memoInjectCharts(container, report) {
                 This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales.
                 Typical VoLo portfolio range: 0.005–0.10 t/$. Higher is better, but extremely high values should be interrogated for model assumptions.
             </p>
-            <div class="memo-chart-row" style="align-items:flex-start; gap: 20px;">
-                <table class="memo-rvm-table" style="flex:1.4;">
-                    <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Why This Step</th></tr></thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>① Company Lifecycle tCO₂</strong></td>
-                            <td>Σ annual lifecycle (above)</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
-                            <td>Gross avoided CO₂ at 100% company scale across 10-year volume forecast. Starting point before any investor-level adjustments.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>② VoLo Pro-Rata tCO₂</strong></td>
-                            <td>① × ${fmt(entryOwn,1)}% entry ownership</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
-                            <td>VoLo's proportional share of company-level impact at the entry ownership stake. Uses entry (not diluted) ownership because we are measuring impact at the time of investment commitment.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>③ TRL Risk Divisor</strong></td>
-                            <td>÷ ${riskDiv} (${riskDivLabel})</td>
-                            <td style="text-align:right;">${riskSrc ? riskSrc : 'TRL-based'}</td>
-                            <td>Probability-weighted haircut for technology and execution risk. A TRL 3 company has much higher probability of never reaching the projected volume than a TRL 8 company. Divisor: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Update this as the company advances.</td>
-                        </tr>
-                        <tr style="background:rgba(91,119,68,0.08);">
-                            <td><strong>④ Risk-Adjusted tCO₂</strong></td>
-                            <td>② ÷ ${riskDiv}</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
-                            <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. This is the figure to use when comparing carbon impact across portfolio companies at different technology maturities.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>⑤ t/$ Unadjusted</strong></td>
-                            <td>② ÷ $${fmt(checkM,2)}M check</td>
-                            <td style="text-align:right;">${tpdRaw}</td>
-                            <td>Raw carbon capital efficiency before TRL risk adjustment. Shows the theoretical maximum efficiency if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential.</td>
-                        </tr>
-                        <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
-                            <td><strong>⑥ t/$ Risk-Adjusted</strong></td>
-                            <td>④ ÷ $${fmt(checkM,2)}M check</td>
-                            <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
-                            <td>VoLo's primary carbon KPI. Risk-adjusted tonnes of CO₂ avoided per dollar invested. To replicate: take ④ (risk-adj tCO₂) and divide by the check size in dollars. Higher = more carbon impact per dollar. Compare across deals using this metric, not raw company tCO₂.</td>
-                        </tr>
-                    </tbody>
-                </table>
-                ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>` : ''}
-            </div>
+            ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="height:260px;margin-bottom:14px;"><canvas id="memo-carbon-waterfall-chart"></canvas></div>` : ''}
+            <table class="memo-rvm-table" style="width:100%;table-layout:fixed;">
+                <colgroup>
+                    <col style="width:16%;">
+                    <col style="width:17%;">
+                    <col style="width:10%;text-align:right;">
+                    <col style="width:57%;">
+                </colgroup>
+                <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Why This Step</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>① Company Lifecycle tCO₂</strong></td>
+                        <td>Σ annual lifecycle (above)</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
+                        <td>Gross avoided CO₂ at 100% company scale across the 10-year volume forecast. Starting point before any investor-level adjustments.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>② VoLo Pro-Rata tCO₂</strong></td>
+                        <td>① × ${fmt(entryOwn,1)}% entry ownership</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
+                        <td>VoLo's proportional share of company-level impact at the entry ownership stake. Uses entry (not diluted) ownership because we measure impact at the time of investment commitment.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>③ TRL Risk Divisor</strong></td>
+                        <td>÷ ${riskDiv} (${riskDivLabel})</td>
+                        <td style="text-align:right;">${riskSrc ? riskSrc : 'TRL-based'}</td>
+                        <td>Probability-weighted haircut for technology and execution risk. TRL 1–4 = 6× (only ~17% of projected impact expected to materialise); TRL 5–6 = 3× (~33%); TRL 7–9 = 1× (full credit). Reduce as the company de-risks.</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.08);">
+                        <td><strong>④ Risk-Adjusted tCO₂</strong></td>
+                        <td>② ÷ ${riskDiv}</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
+                        <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. Use this figure when comparing carbon impact across portfolio companies at different technology maturities — it puts early-stage and late-stage deals on an equal footing.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>⑤ t/$ Unadjusted</strong></td>
+                        <td>② ÷ $${fmt(checkM,2)}M check</td>
+                        <td style="text-align:right;">${tpdRaw}</td>
+                        <td>Raw carbon capital efficiency before TRL risk adjustment. Represents the theoretical maximum if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential independent of technology maturity.</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
+                        <td><strong>⑥ t/$ Risk-Adjusted</strong></td>
+                        <td>④ ÷ $${fmt(checkM,2)}M check</td>
+                        <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
+                        <td>VoLo's primary carbon KPI. Risk-adjusted tonnes of CO₂ avoided per dollar invested. To replicate: take ④ (risk-adj tCO₂) and divide by check size in dollars. Higher = more carbon impact per dollar. Use this — not raw company tCO₂ — for cross-deal comparison. Typical VoLo range: 0.005–0.10 t/$.</td>
+                    </tr>
+                </tbody>
+            </table>
             <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) divide by the TRL risk divisor, (4) divide by check size in dollars. The result is t/$. All inputs are shown explicitly in this memo.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
 
@@ -8210,46 +8214,61 @@ function _memoRenderCharts(r) {
         });
     }
 
-    // Chart 2: Attribution waterfall bar chart
+    // Chart 2: Attribution waterfall — dual Y-axis (tCO₂ left, t/$ right)
     if (co2.company_tonnes != null) {
-        const entryOwn2 = (ov.entry_ownership_pct || 0) / 100;
-        const wfLabels = ['Lifecycle tCO₂', 'VoLo Pro-Rata', 'Risk-Adjusted', 't/$ ×10k'];
-        const wfData = [
-            co2.company_tonnes || 0,
-            co2.volo_prorata || 0,
-            co2.volo_risk_adj || 0,
-            (co2.risk_adj_tpd || 0) * 10000,
-        ];
-        const wfColors = [C.blueSteel + 'cc', C.green + 'cc', C.accent + 'cc', '#e36209cc'];
+        const wfLabels = ['① Company\nLifecycle tCO₂', '② VoLo\nPro-Rata tCO₂', '④ Risk-Adjusted\ntCO₂', '⑥ t/$\nRisk-Adjusted'];
         mkChart('memo-carbon-waterfall-chart', {
             type: 'bar',
             data: {
                 labels: wfLabels,
-                datasets: [{
-                    data: wfData,
-                    backgroundColor: wfColors,
-                    borderColor: wfColors.map(c => c.slice(0,7)),
-                    borderWidth: 1,
-                    borderRadius: 3,
-                }]
+                datasets: [
+                    {
+                        label: 'Avoided CO₂ (left axis)',
+                        data: [co2.company_tonnes || 0, co2.volo_prorata || 0, co2.volo_risk_adj || 0, null],
+                        backgroundColor: [C.blueSteel + 'cc', C.green + 'cc', C.accent + 'cc', 'transparent'],
+                        borderColor:     [C.blueSteel,         C.green,         C.accent,         'transparent'],
+                        borderWidth: 1, borderRadius: 3,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 't/$ Risk-Adjusted (right axis)',
+                        data: [null, null, null, co2.risk_adj_tpd || 0],
+                        backgroundColor: ['transparent', 'transparent', 'transparent', '#e36209cc'],
+                        borderColor:     ['transparent', 'transparent', 'transparent', '#e36209'],
+                        borderWidth: 1, borderRadius: 3,
+                        yAxisID: 'y2',
+                    }
+                ]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
                 plugins: {
-                    legend: { display: false },
+                    legend: { display: true, position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } },
                     title: { display: true, text: 'Carbon Attribution Step-Down', font: { family: chartFont, size: 13 } },
                     tooltip: {
                         callbacks: {
                             label: (item) => {
-                                const raw = item.parsed.y;
-                                if (item.dataIndex === 3) return `t/$ = ${(raw/10000).toFixed(5)}`;
-                                return `${raw.toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
+                                if (item.datasetIndex === 1) return `t/$ = ${(item.parsed.y || 0).toFixed(5)}`;
+                                return `${(item.parsed.y || 0).toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
                             }
                         }
                     }
                 },
                 scales: {
-                    y: { title: { display: true, text: 'tCO₂ (t/$ ×10k for last bar)' } }
+                    x: { ticks: { font: { size: 10 }, maxRotation: 0, minRotation: 0 } },
+                    y: {
+                        type: 'linear', position: 'left',
+                        title: { display: true, text: 'Avoided CO₂ (tonnes)', font: { size: 10 } },
+                        beginAtZero: true,
+                        ticks: { callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v }
+                    },
+                    y2: {
+                        type: 'linear', position: 'right',
+                        title: { display: true, text: 't/$ (risk-adjusted)', font: { size: 10 } },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false },
+                        ticks: { callback: v => v.toFixed(4) }
+                    }
                 }
             }
         });
