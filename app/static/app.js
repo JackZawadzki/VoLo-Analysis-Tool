@@ -7340,10 +7340,18 @@ function _memoInjectCharts(container, report) {
                 const revSeries = fmFin2.revenue || fmFin2.Revenue || {};
                 const ebSeries  = fmFin2.ebitda  || fmFin2.EBITDA  || {};
                 const fmHdrCols = colYrs.map(y => `<th style="text-align:right;">${y}</th>`).join('');
+                // Detect whether FM values are raw dollars or already in $M.
+                // Properly-extracted XLSX data is stored in raw dollars (multiplied by scale factor).
+                // Vision-extracted or manually-edited data is stored in $M as-shown in the table.
+                // Heuristic: if any value exceeds 1e5, it's raw dollars → divide by 1e6.
+                // Otherwise treat as already in $M → no division.
+                const _allFmVals = Object.values(revSeries).concat(Object.values(ebSeries)).filter(v => v != null);
+                const _fmMaxAbs = _allFmVals.length ? Math.max(..._allFmVals.map(v => Math.abs(v))) : 0;
+                const _fmScaleDiv = _fmMaxAbs >= 1e5 ? 1e6 : 1;
                 const _fmCell = (series, y) => {
                     const v = series[String(y)] ?? series[y];
                     if (v == null) return `<td style="text-align:right;">—</td>`;
-                    const vM = v / 1e6;
+                    const vM = v / _fmScaleDiv;
                     const neg = vM < 0;
                     return `<td style="text-align:right;${neg ? 'color:#dc2626;' : ''}">${neg ? '(' : ''}$${Math.abs(vM).toFixed(1)}M${neg ? ')' : ''}</td>`;
                 };
@@ -7363,7 +7371,7 @@ function _memoInjectCharts(container, report) {
                     const cells = colYrs.map(y => {
                         const eb = ebSeries[String(y)] ?? ebSeries[y];
                         if (eb == null || multMid == null || eb <= 0) return `<td style="text-align:right;">—</td>`;
-                        const evM = (eb / 1e6) * multMid;
+                        const evM = (eb / _fmScaleDiv) * multMid;
                         return `<td style="text-align:right;font-weight:700;">$${evM.toFixed(0)}M</td>`;
                     }).join('');
                     return `<tr style="background:rgba(91,119,68,0.08);border-top:2px solid #ccc;"><td style="font-weight:600;">Implied EV (${multMid?.toFixed(1)}x)</td>${cells}</tr>`;
