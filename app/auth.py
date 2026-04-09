@@ -125,6 +125,11 @@ def register(req: RegisterRequest):
     if not username or not email or len(password) < 8:
         raise HTTPException(400, "username, email and password (>=8 chars) required")
 
+    ALLOWED_DOMAINS = ["voloearth.com"]
+    email_domain = email.split("@")[-1] if "@" in email else ""
+    if email_domain not in ALLOWED_DOMAINS:
+        raise HTTPException(403, "Registration is restricted to @voloearth.com email addresses")
+
     db = get_db()
     try:
         is_first = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
