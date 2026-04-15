@@ -113,6 +113,19 @@ def _run_ddr_background(job_id: str, pdf_bytes: bytes, filename: str):
     ticker_thread.start()
 
     try:
+        # Wait for cooldown if another analysis ran recently
+        with _DDR_LOCK:
+            username = _DDR_JOBS[job_id].get("user", "")
+        last_start = _DDR_COOLDOWNS.get(username, 0)
+        wait_seconds = _COOLDOWN_SECONDS - (time.time() - last_start)
+        if wait_seconds > 0:
+            _update(status="queued", progress_pct=0,
+                    progress_msg=f"Queued — waiting {int(wait_seconds)}s for API cooldown...")
+            time.sleep(wait_seconds)
+
+        # Record cooldown start for this user
+        _DDR_COOLDOWNS[username] = time.time()
+
         _update(status="extracting", progress_pct=5,
                 progress_msg="Extracting text from pitch deck...")
 
@@ -224,17 +237,6 @@ async def ddr_start(
     except ValueError as e:
         raise HTTPException(500, str(e))
 
-    # Enforce per-user cooldown to avoid rate limit errors
-    now = time.time()
-    last_start = _DDR_COOLDOWNS.get(user.username, 0)
-    remaining = _COOLDOWN_SECONDS - (now - last_start)
-    if remaining > 0:
-        raise HTTPException(
-            429,
-            f"Please wait {int(remaining)} seconds before starting another analysis. "
-            f"This prevents API rate limit errors."
-        )
-
     pdf_bytes = await file.read()
     if len(pdf_bytes) < 500:
         raise HTTPException(400, "File too small to be a valid pitch deck.")
@@ -256,9 +258,6 @@ async def ddr_start(
             "filename": file.filename,
             "user": user.username,
         }
-
-    # Set cooldown for this user
-    _DDR_COOLDOWNS[user.username] = time.time()
 
     # Launch background thread
     t = threading.Thread(
