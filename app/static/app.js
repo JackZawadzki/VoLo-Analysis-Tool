@@ -653,69 +653,11 @@ async function doRegister() {
         const r = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, email:e, password:p})});
         const d = await r.json();
         if (!r.ok) return _authError(d.detail || d.error || 'Registration failed');
-        if (d.needs_verification) {
-            _pendingVerifyEmail = e;
-            _showVerifyForm(d.message);
-            return;
-        }
         _rvmToken = d.token;
         _rvmUser = d.user;
         localStorage.setItem('rvm_token', d.token);
         _onAuthSuccess();
     } catch(err) { _authError('Network error'); }
-}
-
-function _showVerifyForm(message) {
-    const loginForm = document.getElementById('auth-login-form');
-    const regForm = document.getElementById('auth-register-form');
-    if (loginForm) loginForm.style.display = 'none';
-    if (regForm) regForm.style.display = 'none';
-    document.getElementById('auth-tab-login').style.display = 'none';
-    document.getElementById('auth-tab-register').style.display = 'none';
-
-    let verifyForm = document.getElementById('auth-verify-form');
-    if (!verifyForm) {
-        verifyForm = document.createElement('div');
-        verifyForm.id = 'auth-verify-form';
-        verifyForm.innerHTML = `
-            <p id="verify-msg" style="color:#2d5f3f;font-size:0.9rem;margin-bottom:12px;"></p>
-            <input id="verify-code" type="text" placeholder="6-digit code" maxlength="6"
-                   style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;margin-bottom:10px;font-size:1.2rem;text-align:center;letter-spacing:0.3em;">
-            <button onclick="doVerify()" style="width:100%;padding:10px;background:#2d5f3f;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Verify Email</button>
-            <p style="margin-top:10px;font-size:0.8rem;color:#666;cursor:pointer;" onclick="_backToAuth()">← Back to login</p>
-        `;
-        const errEl = document.getElementById('auth-error');
-        errEl.parentElement.insertBefore(verifyForm, errEl.nextSibling);
-    }
-    verifyForm.style.display = 'block';
-    document.getElementById('verify-msg').textContent = message;
-    document.getElementById('auth-error').style.display = 'none';
-}
-
-function _backToAuth() {
-    const verifyForm = document.getElementById('auth-verify-form');
-    if (verifyForm) verifyForm.style.display = 'none';
-    document.getElementById('auth-tab-login').style.display = '';
-    document.getElementById('auth-tab-register').style.display = '';
-    showAuthTab('login');
-}
-
-async function doVerify() {
-    const code = document.getElementById('verify-code').value.trim();
-    if (!code || code.length !== 6) return _authError('Enter the 6-digit code from your email');
-    try {
-        const r = await fetch('/api/auth/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: _pendingVerifyEmail, code: code})});
-        const d = await r.json();
-        if (!r.ok) return _authError(d.detail || d.error || 'Verification failed');
-        _rvmToken = d.token;
-        _rvmUser = d.user;
-        localStorage.setItem('rvm_token', d.token);
-        const verifyForm = document.getElementById('auth-verify-form');
-        if (verifyForm) verifyForm.style.display = 'none';
-        document.getElementById('auth-tab-login').style.display = '';
-        document.getElementById('auth-tab-register').style.display = '';
-        _onAuthSuccess();
-    } catch(e) { _authError('Network error'); }
 }
 
 function doLogout() {
