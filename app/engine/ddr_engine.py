@@ -51,11 +51,13 @@ def _agentic_call(client: Anthropic, prompt: str,
     """
     Run a single agentic Claude + web_search call.
     Loops until stop_reason == "end_turn" or no tool calls remain.
+    Uses exponential backoff for rate limits and overloaded errors.
     """
     messages = [{"role": "user", "content": prompt}]
     final_text = ""
 
     while True:
+        backoff_delays = [30, 60, 120, 240, 300]
         for attempt in range(5):
             try:
                 response = client.messages.create(
@@ -66,14 +68,26 @@ def _agentic_call(client: Anthropic, prompt: str,
                     messages=messages,
                 )
                 break
-            except RateLimitError:
+            except RateLimitError as e:
+                wait = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                print(f"[DDR] Rate limit hit (attempt {attempt+1}/5), waiting {wait}s: {e}")
                 if attempt < 4:
-                    time.sleep(60)
+                    time.sleep(wait)
                 else:
-                    raise
+                    raise RuntimeError(
+                        "API rate limit exceeded after 5 retries. Please wait a few minutes and try again. "
+                        "This happens when too many analyses run in quick succession."
+                    )
             except APIStatusError as e:
                 if e.status_code == 529 and attempt < 4:
-                    time.sleep(30)
+                    wait = backoff_delays[min(attempt, len(backoff_delays) - 1)]
+                    print(f"[DDR] API overloaded (attempt {attempt+1}/5), waiting {wait}s")
+                    time.sleep(wait)
+                elif "token" in str(e).lower() or "credit" in str(e).lower():
+                    raise RuntimeError(
+                        "API token/credit error. Please check that the ANTHROPIC_API_KEY has "
+                        "sufficient credits and is not expired."
+                    )
                 else:
                     raise
 

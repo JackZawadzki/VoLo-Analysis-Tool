@@ -628,11 +628,11 @@ function _authError(msg) {
 }
 
 async function doLogin() {
-    const u = document.getElementById('login-username').value.trim();
+    const e = document.getElementById('login-email').value.trim();
     const p = document.getElementById('login-password').value;
-    if (!u || !p) return _authError('Please enter username and password');
+    if (!e || !p) return _authError('Please enter your email and password');
     try {
-        const r = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, password:p})});
+        const r = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:e, password:p})});
         const d = await r.json();
         if (!r.ok) return _authError(d.detail || d.error || 'Login failed');
         _rvmToken = d.token;
@@ -641,6 +641,8 @@ async function doLogin() {
         _onAuthSuccess();
     } catch(e) { _authError('Network error'); }
 }
+
+let _pendingVerifyEmail = '';
 
 async function doRegister() {
     const u = document.getElementById('reg-username').value.trim();
@@ -651,11 +653,69 @@ async function doRegister() {
         const r = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, email:e, password:p})});
         const d = await r.json();
         if (!r.ok) return _authError(d.detail || d.error || 'Registration failed');
+        if (d.needs_verification) {
+            _pendingVerifyEmail = e;
+            _showVerifyForm(d.message);
+            return;
+        }
         _rvmToken = d.token;
         _rvmUser = d.user;
         localStorage.setItem('rvm_token', d.token);
         _onAuthSuccess();
     } catch(err) { _authError('Network error'); }
+}
+
+function _showVerifyForm(message) {
+    const loginForm = document.getElementById('auth-login-form');
+    const regForm = document.getElementById('auth-register-form');
+    if (loginForm) loginForm.style.display = 'none';
+    if (regForm) regForm.style.display = 'none';
+    document.getElementById('auth-tab-login').style.display = 'none';
+    document.getElementById('auth-tab-register').style.display = 'none';
+
+    let verifyForm = document.getElementById('auth-verify-form');
+    if (!verifyForm) {
+        verifyForm = document.createElement('div');
+        verifyForm.id = 'auth-verify-form';
+        verifyForm.innerHTML = `
+            <p id="verify-msg" style="color:#2d5f3f;font-size:0.9rem;margin-bottom:12px;"></p>
+            <input id="verify-code" type="text" placeholder="6-digit code" maxlength="6"
+                   style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;margin-bottom:10px;font-size:1.2rem;text-align:center;letter-spacing:0.3em;">
+            <button onclick="doVerify()" style="width:100%;padding:10px;background:#2d5f3f;color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;">Verify Email</button>
+            <p style="margin-top:10px;font-size:0.8rem;color:#666;cursor:pointer;" onclick="_backToAuth()">← Back to login</p>
+        `;
+        const errEl = document.getElementById('auth-error');
+        errEl.parentElement.insertBefore(verifyForm, errEl.nextSibling);
+    }
+    verifyForm.style.display = 'block';
+    document.getElementById('verify-msg').textContent = message;
+    document.getElementById('auth-error').style.display = 'none';
+}
+
+function _backToAuth() {
+    const verifyForm = document.getElementById('auth-verify-form');
+    if (verifyForm) verifyForm.style.display = 'none';
+    document.getElementById('auth-tab-login').style.display = '';
+    document.getElementById('auth-tab-register').style.display = '';
+    showAuthTab('login');
+}
+
+async function doVerify() {
+    const code = document.getElementById('verify-code').value.trim();
+    if (!code || code.length !== 6) return _authError('Enter the 6-digit code from your email');
+    try {
+        const r = await fetch('/api/auth/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email: _pendingVerifyEmail, code: code})});
+        const d = await r.json();
+        if (!r.ok) return _authError(d.detail || d.error || 'Verification failed');
+        _rvmToken = d.token;
+        _rvmUser = d.user;
+        localStorage.setItem('rvm_token', d.token);
+        const verifyForm = document.getElementById('auth-verify-form');
+        if (verifyForm) verifyForm.style.display = 'none';
+        document.getElementById('auth-tab-login').style.display = '';
+        document.getElementById('auth-tab-register').style.display = '';
+        _onAuthSuccess();
+    } catch(e) { _authError('Network error'); }
 }
 
 function doLogout() {
@@ -9528,18 +9588,23 @@ function ddrAutoTrigger(deckFile) {
     if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
 
     fetch('/api/ddr/start', { method: 'POST', headers, body: fd })
-        .then(r => r.json())
-        .then(d => {
+        .then(async r => {
+            const d = await r.json();
+            if (r.status === 429) {
+                showToast(d.detail || 'Please wait before starting another analysis.');
+                return;
+            }
             if (d.job_id) {
                 _ddrCurrentJobId = d.job_id;
                 ddrShowActive(deckFile.name);
                 ddrStartPolling(d.job_id);
                 showToast('Due diligence report started in background');
             } else {
+                showToast(d.detail || 'DDR start failed');
                 console.warn('[DDR] Start failed:', d.detail || d);
             }
         })
-        .catch(err => console.warn('[DDR] Auto-trigger error:', err));
+        .catch(err => { showToast('DDR error: ' + err.message); console.warn('[DDR] Auto-trigger error:', err); });
 }
 
 function ddrShowActive(filename) {
@@ -9620,6 +9685,9 @@ function ddrShowComplete(data) {
     if (meta) meta.textContent = `${data.company_name || 'Unknown'} — Generated ${new Date(data.finished_at).toLocaleString()}`;
 
     _ddrPdfFilename = data.pdf_filename || null;
+
+    // Refresh shared report list so the new report appears
+    ddrLoadHistory();
 }
 
 function ddrShowError(errorMsg) {
@@ -9653,21 +9721,59 @@ async function ddrDownload() {
 }
 
 async function ddrLoadHistory() {
+    // Load in-progress jobs (in-memory)
     try {
         const headers = _rvmHeaders();
         const r = await fetch('/api/ddr/jobs', { headers });
+        if (r.ok) {
+            const d = await r.json();
+            const jobs = (d.jobs || []).filter(j => j.status !== 'complete');
+            const activeEl = document.getElementById('ddr-active-jobs');
+            if (activeEl && jobs.length > 0) {
+                activeEl.innerHTML = '<h4 style="margin:0 0 6px 0;font-size:0.85rem;color:#2d5f3f;">In Progress</h4>' +
+                    jobs.map(j => {
+                        const sc = j.status==='error'?'ddr-job-error':'ddr-job-running';
+                        const sl = j.status==='error'?'Failed':`${j.progress_pct}%`;
+                        return `<div class="ddr-history-item ${sc}" onclick="ddrResumeJob('${j.job_id}')"><span class="ddr-hist-name">${j.company_name||j.filename||'Processing...'}</span><span class="ddr-hist-status">${sl}</span></div>`;
+                    }).join('');
+            }
+        }
+    } catch (err) { console.warn('[DDR] Jobs error:', err); }
+
+    // Load saved reports from database (shared across all users)
+    try {
+        const headers = _rvmHeaders();
+        const r = await fetch('/api/ddr/reports', { headers });
         if (!r.ok) return;
         const d = await r.json();
-        const jobs = d.jobs || [];
+        const reports = d.reports || [];
         const listEl = document.getElementById('ddr-history-list');
         if (!listEl) return;
-        if (jobs.length === 0) { listEl.innerHTML = '<p class="text-muted">No previous reports.</p>'; return; }
-        listEl.innerHTML = jobs.map(j => {
-            const sc = j.status==='complete'?'ddr-job-complete':j.status==='error'?'ddr-job-error':'ddr-job-running';
-            const sl = j.status==='complete'?'Complete':j.status==='error'?'Failed':`${j.progress_pct}%`;
-            return `<div class="ddr-history-item ${sc}" onclick="ddrResumeJob('${j.job_id}')"><span class="ddr-hist-name">${j.company_name||j.filename||'Processing...'}</span><span class="ddr-hist-status">${sl}</span><span class="ddr-hist-date">${j.started_at?new Date(j.started_at).toLocaleDateString():''}</span></div>`;
+        if (reports.length === 0) { listEl.innerHTML = '<p class="text-muted">No saved reports yet.</p>'; return; }
+        listEl.innerHTML = reports.map(rpt => {
+            const sizeMB = (rpt.file_size_bytes / (1024*1024)).toFixed(1);
+            const date = rpt.generated_at ? new Date(rpt.generated_at).toLocaleDateString() : '';
+            return `<div class="ddr-history-item ddr-job-complete" style="cursor:pointer;" onclick="ddrDownloadReport(${rpt.id}, '${rpt.filename.replace(/'/g, "\\'")}')">
+                <span class="ddr-hist-name">${rpt.company_name}</span>
+                <span class="ddr-hist-status" style="font-size:0.75rem;color:#666;">${rpt.generated_by} · ${sizeMB}MB</span>
+                <span class="ddr-hist-date">${date}</span>
+            </div>`;
         }).join('');
-    } catch (err) { console.warn('[DDR] History error:', err); }
+    } catch (err) { console.warn('[DDR] Reports error:', err); }
+}
+
+async function ddrDownloadReport(reportId, filename) {
+    try {
+        const r = await fetch(`/api/ddr/reports/${reportId}/download`, {headers: _rvmHeaders()});
+        if (!r.ok) { showToast('Download failed'); return; }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'DDR_Report.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) { showToast('Download failed: ' + e.message); }
 }
 
 function ddrResumeJob(jobId) {

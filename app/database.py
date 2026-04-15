@@ -14,12 +14,14 @@ DB_PATH = str(DB_DIR / "rvm.db")
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    username      TEXT    UNIQUE NOT NULL,
-    email         TEXT    UNIQUE NOT NULL,
-    password_hash TEXT    NOT NULL,
-    role          TEXT    NOT NULL DEFAULT 'user',
-    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    username           TEXT    UNIQUE NOT NULL,
+    email              TEXT    UNIQUE NOT NULL,
+    password_hash      TEXT    NOT NULL,
+    role               TEXT    NOT NULL DEFAULT 'user',
+    verified           INTEGER NOT NULL DEFAULT 0,
+    verification_code  TEXT,
+    created_at         TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS companies (
@@ -220,6 +222,17 @@ CREATE TABLE IF NOT EXISTS deal_documents (
     UNIQUE(library_id, drive_file_id)
 );
 
+CREATE TABLE IF NOT EXISTS ddr_reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name    TEXT    NOT NULL,
+    filename        TEXT    NOT NULL,
+    pdf_data        BLOB    NOT NULL,
+    analysis_json   TEXT    NOT NULL DEFAULT '{}',
+    generated_by    TEXT    NOT NULL,
+    generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    file_size_bytes INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS dd_scenarios (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -414,6 +427,20 @@ def migrate_db():
     ]
     # Add sections_json column to generated_memos for per-section editing
     migrations.append("ALTER TABLE generated_memos ADD COLUMN sections_json TEXT NOT NULL DEFAULT '{}'")
+    # Auth: verified flag and verification code for email verification
+    migrations.append("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 1")
+    migrations.append("ALTER TABLE users ADD COLUMN verification_code TEXT")
+    # Shared DDR report storage
+    migrations.append("""CREATE TABLE IF NOT EXISTS ddr_reports (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_name    TEXT    NOT NULL,
+        filename        TEXT    NOT NULL,
+        pdf_data        BLOB    NOT NULL,
+        analysis_json   TEXT    NOT NULL DEFAULT '{}',
+        generated_by    TEXT    NOT NULL,
+        generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        file_size_bytes INTEGER NOT NULL DEFAULT 0
+    )""")
     # dd_scenarios table
     migrations.append("""CREATE TABLE IF NOT EXISTS dd_scenarios (
         id              INTEGER PRIMARY KEY AUTOINCREMENT,

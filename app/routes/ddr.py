@@ -19,9 +19,10 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from ..auth import CurrentUser, get_current_user
+from ..database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,10 @@ router = APIRouter(prefix="/api/ddr", tags=["ddr"])
 # Each job: {status, progress_pct, progress_msg, company_name, analysis, pdf_path, error, started_at, finished_at}
 _DDR_JOBS: dict[str, dict] = {}
 _DDR_LOCK = threading.Lock()
+
+# Per-user cooldown tracking (username → last_start_time)
+_DDR_COOLDOWNS: dict[str, float] = {}
+_COOLDOWN_SECONDS = 90  # minimum seconds between analyses per user
 
 # Directory for generated DDR PDFs
 _DDR_OUTPUT_DIR = Path(tempfile.gettempdir()) / "volo_ddr_reports"
@@ -148,6 +153,27 @@ def _run_ddr_background(job_id: str, pdf_bytes: bytes, filename: str):
 
         generate_report_pdf(analysis, pdf_path)
 
+        # Save report to database for shared access
+        try:
+            with open(pdf_path, "rb") as f:
+                pdf_data = f.read()
+            db = get_db()
+            try:
+                with _DDR_LOCK:
+                    generated_by = _DDR_JOBS[job_id].get("user", "unknown")
+                db.execute(
+                    "INSERT INTO ddr_reports (company_name, filename, pdf_data, analysis_json, "
+                    "generated_by, file_size_bytes) VALUES (?,?,?,?,?,?)",
+                    (company_name, pdf_filename, pdf_data, json.dumps(analysis),
+                     generated_by, len(pdf_data)),
+                )
+                db.commit()
+                print(f"[DDR] Report saved to database: {company_name}")
+            finally:
+                db.close()
+        except Exception as save_err:
+            print(f"[DDR] Warning: failed to save report to DB: {save_err}")
+
         _update(status="complete", progress_pct=100,
                 progress_msg="Due diligence report ready.",
                 company_name=company_name,
@@ -198,6 +224,17 @@ async def ddr_start(
     except ValueError as e:
         raise HTTPException(500, str(e))
 
+    # Enforce per-user cooldown to avoid rate limit errors
+    now = time.time()
+    last_start = _DDR_COOLDOWNS.get(user.username, 0)
+    remaining = _COOLDOWN_SECONDS - (now - last_start)
+    if remaining > 0:
+        raise HTTPException(
+            429,
+            f"Please wait {int(remaining)} seconds before starting another analysis. "
+            f"This prevents API rate limit errors."
+        )
+
     pdf_bytes = await file.read()
     if len(pdf_bytes) < 500:
         raise HTTPException(400, "File too small to be a valid pitch deck.")
@@ -219,6 +256,9 @@ async def ddr_start(
             "filename": file.filename,
             "user": user.username,
         }
+
+    # Set cooldown for this user
+    _DDR_COOLDOWNS[user.username] = time.time()
 
     # Launch background thread
     t = threading.Thread(
@@ -297,3 +337,40 @@ async def ddr_list_jobs(user: CurrentUser = Depends(get_current_user)):
                     "finished_at": job["finished_at"],
                 })
     return {"jobs": sorted(jobs, key=lambda j: j["started_at"] or "", reverse=True)}
+
+
+# ── Shared report history (persisted to DB) ──────────────────────────────────
+
+@router.get("/reports")
+async def ddr_list_reports(user: CurrentUser = Depends(get_current_user)):
+    """List all DDR reports saved in the database (shared across all users)."""
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT id, company_name, filename, generated_by, generated_at, file_size_bytes "
+            "FROM ddr_reports ORDER BY generated_at DESC LIMIT 100"
+        ).fetchall()
+        return {"reports": [dict(r) for r in rows]}
+    finally:
+        db.close()
+
+
+@router.get("/reports/{report_id}/download")
+async def ddr_download_report(report_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Download a saved DDR report PDF from the database."""
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT filename, pdf_data FROM ddr_reports WHERE id=?", (report_id,)
+        ).fetchone()
+    finally:
+        db.close()
+
+    if not row:
+        raise HTTPException(404, "Report not found")
+
+    return Response(
+        content=row["pdf_data"],
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{row["filename"]}"'},
+    )
