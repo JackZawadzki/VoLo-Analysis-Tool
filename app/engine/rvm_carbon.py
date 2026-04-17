@@ -383,11 +383,12 @@ class VolumeInputs:
     s_curve_K: Optional[float] = None    # speed of penetration
     s_curve_x: Optional[float] = None    # year at 50% of max penetration
 
-    # Number of years included in the LL sum ("Total 10y C impact adjusted for start year")
-    # The spreadsheet manually sets each company's range: LB:LK = 10y, LB:LJ = 9y, etc.
-    # Pattern (approximate): n_ll_years = min(10, model_end_year - commercial_launch_yr + 1)
-    # where the nominal model end year is 2031. Some companies deviate from this formula.
-    # Source: audit of LL formula ranges in Fund 1 (rows 6–211).
+    # Analysis horizon: number of calendar years over which to sum lifecycle impact.
+    # User-configurable — set to 10, 20, or 30 to match desired reporting period.
+    # PRIME Coalition recommends a 30-year ERP horizon (PRIME 2017, §4).
+    # VoLo default is 10 years (Fund 1 model end 2031 from ~2022 launch).
+    # This parameter drives the multi-cohort accumulation window in build_carbon_intermediates().
+    # Historical note: the spreadsheet set this per-company as min(10, 2031-launch_yr+1).
     n_ll_years: int = 10
 
 
@@ -501,7 +502,11 @@ class CompanyModel:
 class CarbonIntermediates:
     """
     All computed intermediate values for one company (one spreadsheet row).
-    Lists have 10 elements: one per forecast year starting from commercial launch.
+    Lists have `n_ll_years` elements (analysis horizon, default 10, can be 20 or 30).
+    Operating impact uses true multi-cohort accounting: each deployment cohort
+    contributes displaced carbon over its full service life, with CI declining
+    at the grid-decarbonisation rate in each operating year (PRIME 2017, §2 & §5).
+    Embodied impact is attributed at the deployment year (single-cohort).
     """
     # --- Operating carbon (cols JD, JE:JN, JO:JX, JY) ---
     displaced_volume_per_unit:  float        # JD = JC * JA
@@ -632,51 +637,79 @@ def build_carbon_intermediates(
     v  = company.volume
     oc = company.operating_carbon
     ec = company.embodied_carbon
-    n  = 10
+
+    # Analysis horizon and per-unit service life (PRIME §4: recommend 30-year horizon)
+    horizon      = v.n_ll_years                       # user-defined calendar-year window
+    n_deploy     = len(v.year_volumes)                # deployment years with volume data
+    service_life = v.unit_service_life_yrs            # years each deployed unit operates
 
     # ------------------------------------------------------------------
-    # OPERATING CARBON
+    # OPERATING CARBON — multi-cohort accounting (PRIME 2017, §2 & §5)
     # ------------------------------------------------------------------
-    # JD: displaced volume per unit = (1 - 1/factor) × baseline_lifetime_prod (JA)
+    # JD: displaced volume per unit over its FULL service life (already encodes service_life
+    #     via baseline_lifetime_prod = production_rate × service_life).
     # range_improvement is an "improvement factor": how many times lower the new
     # technology's carbon intensity is vs. the displaced conventional resource.
-    #   factor = 1.4  →  new CI is 1/1.4 of conventional  →  fraction displaced = 1 − 1/1.4 = 0.286
+    #   factor = 1.4  →  fraction displaced = 1 − 1/1.4 = 0.286
     #   factor = 1000 →  near-zero-CI technology (solar, wind)  →  fraction ≈ 0.999
     #   factor = 0    →  no displacement (guard: returns 0)
     _oc_factor = oc.range_improvement
     jd = (1.0 - 1.0 / _oc_factor) * oc.baseline_lifetime_prod if _oc_factor > 0 else 0.0
 
-    # JE:JN: carbon intensity time series for operating displacement
-    op_ci = _build_ci_series(oc, v.commercial_launch_yr, n)
+    # Annual displacement per unit per operating year = JD / service_life
+    # (the total lifetime displacement spread uniformly across each year of operation)
+    jd_annual = jd / max(service_life, 1.0)
 
-    # JO:JX: annual operating carbon impact
-    #   JO = $JD * II * JE,  JP = $JD * IJ * JF,  …
+    # Build CI series over the full analysis horizon (each calendar year has its own
+    # grid-decarbonisation rate; later cohorts benefit from a cleaner grid — PRIME §2)
+    op_ci = _build_ci_series(oc, v.commercial_launch_yr, horizon)
+
+    # Extend volume array with zeros beyond the deployment forecast period
     year_vols = v.year_volumes
-    annual_op = [jd * year_vols[y] * op_ci[y] for y in range(n)]
-    total_op  = sum(annual_op)                                # JY
+    year_vols_ext = list(year_vols) + [0.0] * max(0, horizon - n_deploy)
+
+    # Multi-cohort accumulation:
+    #   For each calendar year t in [0, horizon):
+    #     impact[t] = Σ_{d: d≤t, t-d < service_life} jd_annual × vol[d] × CI[t]
+    #   i.e. every cohort deployed in year d that is still operating in year t
+    #   (operating years 0 … service_life-1 after deployment) contributes
+    #   its annual per-unit displacement × that year's CI × cohort size.
+    annual_op = []
+    for t in range(horizon):
+        ci_t     = op_ci[t] if t < len(op_ci) else 0.0
+        impact_t = 0.0
+        # Cohorts still alive in calendar year t
+        d_min = max(0, t - int(service_life) + 1)
+        d_max = min(t, n_deploy - 1)
+        for d in range(d_min, d_max + 1):
+            # Fractional-year guard: only if cohort has not exceeded service life
+            if (t - d) < service_life:
+                impact_t += jd_annual * year_vols_ext[d] * ci_t
+        annual_op.append(impact_t)
+    total_op = sum(annual_op)
 
     # ------------------------------------------------------------------
-    # EMBODIED CARBON
+    # EMBODIED CARBON — single-cohort (attributed at deployment; PRIME §3)
     # ------------------------------------------------------------------
     # KE: embodied displaced volume per unit — same improvement-factor convention
     _ec_factor = ec.range_improvement
     ke_used = (1.0 - 1.0 / _ec_factor) * ec.baseline_production if _ec_factor > 0 else 0.0
 
-    # KF:KO: embodied carbon intensity series
-    emb_ci = _build_ci_series(ec, v.commercial_launch_yr, n)
+    # KF:KO: embodied carbon intensity series (10 deployment years)
+    emb_ci = _build_ci_series(ec, v.commercial_launch_yr, n_deploy)
 
-    # KP:KY: annual embodied impact = $KE * CI[y] * volume[y]   (spreadsheet: KP=$KE*KF*II)
-    annual_emb = [ke_used * emb_ci[y] * year_vols[y] for y in range(n)]
-    total_emb  = sum(annual_emb)                              # KZ
+    # KP:KY: annual embodied impact = KE × CI[y] × volume[y]   (deployment-year attribution)
+    annual_emb_base = [ke_used * emb_ci[y] * year_vols[y] for y in range(n_deploy)]
+    # Zero-pad to match the analysis horizon
+    annual_emb = annual_emb_base + [0.0] * max(0, horizon - n_deploy)
+    total_emb  = sum(annual_emb)
 
     # ------------------------------------------------------------------
-    # LIFECYCLE (LB:LK, LL)
-    # LL range is determined by n_ll_years (typically min(10, 2031 - launch_yr + 1))
-    # The spreadsheet sets this range manually per company; see VolumeInputs.n_ll_years.
+    # LIFECYCLE (full analysis horizon)
+    # total_lc = Σ_{t=0}^{horizon-1} (operating[t] + embodied[t])
     # ------------------------------------------------------------------
-    annual_lc = [annual_op[y] + annual_emb[y] for y in range(n)]
-    n_sum     = min(v.n_ll_years, n)
-    total_lc  = sum(annual_lc[:n_sum])                        # LL
+    annual_lc = [annual_op[t] + annual_emb[t] for t in range(horizon)]
+    total_lc  = sum(annual_lc)
 
     # ------------------------------------------------------------------
     # 2021 ACTUALS SCALING (MI, MJ, ML)

@@ -748,6 +748,7 @@ class MemoGenerateRequest(BaseModel):
     links: List[str] = []                        # URLs / reference links
     model_override: Optional[str] = None         # Force a specific model
     investment_type: str = "first"               # "first" or "followon"
+    locked_sections: dict = {}                   # {section_key: markdown_text} — skips LLM, uses text as-is
 
 
 def _build_report_context(report_row) -> str:
@@ -1170,27 +1171,36 @@ MEMO_SECTIONS = [
             "displacement. What resource does this technology replace (e.g. natural gas, diesel, "
             "grid electricity)? What is the baseline carbon intensity of that resource? "
             "How does each unit of the company's product displace emissions — describe the chain "
-            "from unit deployed → lifetime production → displaced resource intensity → tCO2/unit.\n\n"
+            "from unit deployed → lifetime production → displaced resource intensity → tCO₂/unit. "
+            "Note that VoLo's mitigation definitions align with GIIN IRIS+ metrics and are designed "
+            "to capture the full life-cycle activities contributing impact materiality and financial "
+            "materiality per the EU CSRD double materiality framework.\n\n"
             "2. DISPLACEMENT CHAIN CALCULATION: Walk through the math step by step with actual numbers "
             "from the RVM: (a) Displaced volume per unit (JD) = range_improvement × baseline_lifetime_prod. "
             "(b) Carbon intensity at Year 1 (JE) — state the value and note if grid intensity declines. "
             "(c) Annual operating impact = JD × units_deployed × CI_year for each of the 10 forecast years. "
             "(d) Embodied carbon (manufacturing/upstream) — whether modeled and its magnitude vs operating. "
-            "(e) Annual lifecycle = operating + embodied. Cite actual tCO2 values from the report.\n\n"
-            "3. 10-YEAR CARBON SUMMARY WITH RVM METRICS: Present all four output metrics with exact values: "
-            "(a) Total Lifecycle tCO2 (company-level). "
-            "(b) VoLo Pro-Rata tCO2 = lifecycle × ownership%%. "
-            "(c) Risk-Adjusted tCO2 = pro-rata ÷ risk_divisor — explain the TRL-based divisor "
-            "(TRL 1-4 = 6× haircut reflecting high pre-commercial risk; TRL 5-6 = 3×; TRL 7-9 = 1× de-risked). "
-            "(d) Risk-Adjusted t/$ = risk-adjusted tCO2 ÷ VoLo check size. Note current risk divisor and what "
-            "TRL milestone would reduce it.\n\n"
-            "4. PORTFOLIO CONTEXT: Compare t/$ to typical VoLo range (~0.01-0.10 t/$). "
+            "(e) Annual lifecycle = operating + embodied. Cite actual tCO₂ values from the report. "
+            "This methodology follows the Project Frame Pre-Investment Considerations (PRIME ERP).\n\n"
+            "3. 10-YEAR CARBON SUMMARY WITH RVM METRICS: Present all four output metrics with exact values "
+            "using VoLo's published terminology from the annual Impact Report: "
+            "(a) Total Potential (10yr) — company-level total potential carbon impact over the 10-year horizon. "
+            "(b) Fund Pro-Rata Share — attributed per the GHG Protocol equity-method: total × VoLo ownership%%. "
+            "(c) P-50 Risk-Adjusted — pro-rata tCO₂ weighted by likelihood-of-success curves fitted to the "
+            "company's technical and commercial risk (TRL modifiers applied to Carta benchmark graduation rates "
+            "across 5,000 Monte Carlo paths). This is the expected avoided emissions, not a worst-case haircut. "
+            "(d) TCPI (Tonnes CO₂ to Paid-In Capital) — P-50 risk-adjusted tCO₂ ÷ VoLo check size. "
+            "This is VoLo's primary cross-deal carbon efficiency KPI. Note the survival rate applied and "
+            "what TRL milestone would improve it.\n\n"
+            "4. PORTFOLIO CONTEXT: Compare TCPI to typical VoLo range (~0.01–0.10 t CO₂/$) as published "
+            "in the VoLo Impact Report (fund-level TCPI >2 tonnes per dollar). "
             "Discuss sensitivity: carbon impact at 50%% volume forecast vs base case. "
-            "Identify the volume milestone that would re-rate the risk divisor.\n\n"
-            "5. CLIMATE THESIS ALIGNMENT: Connect to VoLo's climate thesis. "
+            "Identify the commercial milestone that would meaningfully improve the survival rate.\n\n"
+            "5. CLIMATE THESIS ALIGNMENT: Connect to VoLo's theory of change — that superior risk-adjusted "
+            "returns trigger profit-seeking capital, accelerating climate solutions at scale. "
             "Is the carbon impact front-loaded (embodied at manufacturing) or back-loaded (cumulative deployment)? "
             "How does this compare to other technologies in VoLo's portfolio? "
-            "Reference the annual impact chart and attribution waterfall below."
+            "Reference the annual impact chart and TCPI attribution waterfall below."
         ),
         "report_fields": ["carbon"],
     },
@@ -1227,6 +1237,50 @@ MEMO_SECTIONS = [
             "GROWTH INVESTOR INSIGHTS: What would make this attractive to growth-stage investors?"
         ),
         "report_fields": ["inputs", "simulation", "valuation_comps", "check_optimization", "portfolio_impact"],
+    },
+    {
+        "key": "cohort_analysis",
+        "title": "Cohort Analysis: Survival, Dilution & Risk Calibration",
+        "is_synthesis": False,
+        "guidance": (
+            "This section documents the probabilistic risk model that underlies VoLo's survival-adjusted "
+            "carbon and financial metrics. It is derived entirely from Carta benchmark data and TRL "
+            "readiness modifiers — NOT part of the PRIME ERP carbon methodology. Write in a clear, "
+            "explanatory style aimed at an LP or co-investor who wants to understand how VoLo quantifies "
+            "venture risk. Structure as follows:\n\n"
+            "1. RISK MODEL OVERVIEW: In 1-2 paragraphs explain that VoLo runs a Monte Carlo simulation "
+            "(5,000 paths) that combines stage-by-stage venture survival probabilities from Carta "
+            "benchmark data with TRL-based modifiers. The result is a survival rate (probability this "
+            "company reaches a meaningful exit) and an outcome distribution across total loss, partial "
+            "return, 1-3× MOIC, 3-10× MOIC, and 10×+ MOIC outcomes.\n\n"
+            "2. CARTA BASELINE GRADUATION RATES: Present the stage-by-stage graduation rates from Carta "
+            "benchmark data for the relevant sector. For each stage (Pre-Seed through Series D), report: "
+            "graduation rate (probability of advancing to next stage), median round size, median pre-money "
+            "valuation, and median months to graduation. Explain that these represent market-wide venture "
+            "outcomes and serve as the baseline before TRL adjustment.\n\n"
+            "3. TRL MODIFIER TABLE: Present the full TRL 1-9 modifier lookup table with four parameters "
+            "for each TRL level: survival_penalty (additional annual probability of failure), "
+            "capital_multiplier (extra dilution from additional funding rounds needed), "
+            "extra_bridge_prob (probability of requiring a bridge round at each stage), and "
+            "exit_multiple_discount (haircut to exit multiple at each TRL level). Highlight this "
+            "company's current TRL level. Explain the decay formula: decay(s) = max(0, 1 - s × 0.3) "
+            "where s is the survival_penalty — this is applied multiplicatively at each stage transition.\n\n"
+            "4. EFFECTIVE SURVIVAL FUNNEL: Show how the TRL modifier transforms raw Carta graduation "
+            "rates into this company's effective stage-by-stage survival probability. For each stage, "
+            "show: Carta baseline rate, TRL modifier applied (decay factor), effective rate after "
+            "adjustment, and cumulative survival probability from entry. State the final overall "
+            "survival_rate and meaningful_exit_rate as headline numbers. Note that this survival rate "
+            "is used ONLY in the VoLo Risk-Adjusted tCO₂ metric — it is NOT part of the PRIME ERP "
+            "methodology.\n\n"
+            "5. OUTCOME DISTRIBUTION: Describe the simulated outcome distribution across the five "
+            "buckets. Explain what drives the shape — at low TRL, total_loss dominates; at higher TRL "
+            "the distribution shifts toward moderate returns. Reference the outcome distribution chart "
+            "injected below.\n\n"
+            "6. KEY SENSITIVITIES: How would the survival rate change if TRL advances by 2 levels? "
+            "What is the most capital-intensive stage transition and why? How does the sector profile "
+            "affect outcomes compared to the broader Carta universe?"
+        ),
+        "report_fields": ["simulation"],
     },
     {
         "key": "fund_return_model",
@@ -1990,34 +2044,47 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
                                   "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
 
         # PASS 2: Write each data section
+        # Locked sections are passed in verbatim — LLM is never called for them.
+        _locked = req.locked_sections or {}
         section_texts = {}
         for section in active_data:
-            brief = _aggregate_section_briefs(all_extractions, section["key"], citation_index)
+            sk = section["key"]
+            if sk in _locked:
+                # Preserve the user's saved edits exactly — skip LLM
+                section_texts[sk] = _locked[sk]
+                _pass_log.append({"pass": 2, "section": sk, "tokens": 0, "locked": True})
+                continue
+            brief = _aggregate_section_briefs(all_extractions, sk, citation_index)
             report_slice = _get_report_fields_for_section(report_context, section)
-            tpl_guidance = template_sections.get(section["key"], "")
+            tpl_guidance = template_sections.get(sk, "")
 
             result = _pass2_write_section(
                 client, model, section, brief, report_slice,
                 tpl_guidance, company_name, links,
                 citation_legend=citation_index["legend"]
             )
-            section_texts[section["key"]] = _strip_leading_heading(result["text"], section["title"])
+            section_texts[sk] = _strip_leading_heading(result["text"], section["title"])
             _total_in += result["tokens_in"]
             _total_out += result["tokens_out"]
-            _pass_log.append({"pass": 2, "section": section["key"],
+            _pass_log.append({"pass": 2, "section": sk,
                               "tokens": result["tokens_in"] + result["tokens_out"]})
 
         # PASS 3: Synthesize cross-cutting sections
         for section in active_synth:
+            sk = section["key"]
+            if sk in _locked:
+                section_texts[sk] = _locked[sk]
+                _pass_log.append({"pass": 3, "section": sk, "tokens": 0, "locked": True})
+                continue
             result = _pass3_synthesize(
                 client, model, section, section_texts,
                 report_context, company_name,
                 req.additional_instructions
             )
-            section_texts[section["key"]] = _strip_leading_heading(result["text"], section["title"])
+            section_texts[sk] = _strip_leading_heading(result["text"], section["title"])
             _total_in += result["tokens_in"]
             _total_out += result["tokens_out"]
-            _pass_log.append({"pass": 3, "section": section["key"],
+            _pass_log.append({"pass": 3, "section": sk,
                               "tokens": result["tokens_in"] + result["tokens_out"]})
 
         return section_texts, _total_in, _total_out, _pass_log

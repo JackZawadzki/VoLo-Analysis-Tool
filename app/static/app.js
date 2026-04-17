@@ -92,10 +92,10 @@ const _GLOSSARY = {
     marginal_lift: "The incremental improvement (or reduction) in fund metrics attributable to adding this specific deal.",
 
     // ── Carbon Impact Metrics ────────────────────────────
-    total_lifecycle_tco2: "Total avoided CO₂ emissions over the full deployment horizon, summing annual operating and embodied emissions across all projected units.",
-    volo_prorata: "VoLo's attributable share of total avoided emissions, calculated as total lifecycle tCO₂ × VoLo's entry ownership percentage.",
-    risk_adjusted_carbon: "Pro-rata emissions adjusted for survival probability using a risk divisor. Reflects the expected avoided emissions accounting for the chance the company fails.",
-    carbon_tpd: "Risk-adjusted tonnes of CO₂ avoided per dollar invested. Key metric for comparing carbon efficiency across deals — higher = more carbon impact per investment dollar.",
+    total_lifecycle_tco2: "Total potential carbon impact over the 10-year analysis horizon, summing annual operating and embodied avoided emissions across all projected deployment cohorts. Calculated per PRIME ERP methodology (Project Frame Pre-Investment Considerations). Mitigation definitions align with GIIN IRIS+ metrics.",
+    volo_prorata: "Fund pro-rata share of forecasted carbon impact — total lifecycle tCO₂ × VoLo's entry ownership percentage. Attributed per the GHG Protocol.",
+    risk_adjusted_carbon: "P-50 risk-adjusted cumulative carbon impact. Pro-rata tCO₂ adjusted for survival probability using likelihood-of-success curves fitted to each company's technical and commercial risk (TRL modifiers applied to Carta benchmark graduation rates). Reflects expected avoided emissions accounting for the probability the company reaches a meaningful exit.",
+    carbon_tpd: "TCPI — Tonnes CO₂ to Paid In Capital. Risk-adjusted tonnes of CO₂ avoided per dollar invested. VoLo's primary cross-deal carbon efficiency metric — higher = more climate impact per investment dollar. Calculated as P-50 risk-adjusted tCO₂ ÷ VoLo check size.",
     annual_carbon_chart: "Year-by-year breakdown of avoided CO₂ emissions from the technology deployment, based on unit volume projections and per-unit carbon displacement calculations.",
 
     // ── Deal Metrics Charts ──────────────────────────────
@@ -1346,7 +1346,11 @@ function _wizRenderFmInto(el) {
         for (const y of years) h += `<th style="text-align:right; padding:6px 8px; border-bottom:2px solid var(--border); font-size:0.7rem;">${y}</th>`;
         h += '</tr></thead><tbody>';
         for (const m of metrics) {
-            const hasData = years.some(y => (fin[m]?.[String(y)] ?? fin[m]?.[y]) != null);
+            // Skip metrics where every value is null or zero (e.g. capex when not extracted)
+            const hasData = years.some(y => {
+                const v = fin[m]?.[String(y)] ?? fin[m]?.[y];
+                return v != null && v !== 0;
+            });
             if (!hasData) continue;
             h += `<tr data-metric="${m}"><td style="padding:4px 8px; border-bottom:1px solid var(--border); font-weight:500; text-transform:capitalize;">${m.replace(/_/g, ' ')}</td>`;
             for (const y of years) {
@@ -2166,16 +2170,16 @@ function wizRenderReport(r) {
     html += `<div class="rpt-section">${secNum()}
         <h3 class="rpt-section-title">Carbon Impact Assessment ${infoTip('carbon_impact')}</h3>
         <div class="rpt-hero-row compact">
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.company_tonnes, 0)}</div><div class="rpt-hero-label">Total Lifecycle tCO2 ${infoTip('total_lifecycle_tco2')}</div></div>
-            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_prorata, 0)}</div><div class="rpt-hero-label">VoLo Pro-Rata ${infoTip('volo_prorata')}</div></div>
-            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_risk_adj, 0)}</div><div class="rpt-hero-label">Risk-Adjusted ${infoTip('risk_adjusted_carbon')}</div></div>
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.risk_adj_tpd, 4)}</div><div class="rpt-hero-label">t/$ (Risk-Adj) ${infoTip('carbon_tpd')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.company_tonnes, 0)}</div><div class="rpt-hero-label">Total Potential (10yr) ${infoTip('total_lifecycle_tco2')}</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_prorata, 0)}</div><div class="rpt-hero-label">Fund Pro-Rata Share ${infoTip('volo_prorata')}</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(co.volo_risk_adj, 0)}</div><div class="rpt-hero-label">P-50 Risk-Adjusted ${infoTip('risk_adjusted_carbon')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(co.risk_adj_tpd, 4)}</div><div class="rpt-hero-label">TCPI (t CO₂/$) ${infoTip('carbon_tpd')}</div></div>
         </div>
         ${trace('Carbon calculation chain', `
             <p><strong>Total lifecycle tCO2</strong> = Σ annual (operating + embodied) over projection period.</p>
             <p><strong>VoLo Pro-Rata</strong> = lifecycle tCO2 x ${fmt(ov.entry_ownership_pct,1)}% ownership.</p>
-            <p><strong>Risk-Adjusted</strong> = pro-rata / risk_divisor (${carbonRD}, ${carbonRDSrc}).</p>
-            <p><strong>t/$</strong> = risk-adjusted tonnes / $${fmt(ov.check_size_millions,1)}M check.</p>
+            <p><strong>P-50 Risk-Adjusted</strong> = fund pro-rata share / risk_divisor (${carbonRD}, ${carbonRDSrc}).</p>
+            <p><strong>TCPI</strong> = P-50 risk-adjusted tonnes / $${fmt(ov.check_size_millions,1)}M check.</p>
             ${ci.total_operating != null ? `<p><strong>Intermediates</strong>: operating = ${fmt(ci.total_operating,0)} tCO2, embodied = ${fmt(ci.total_embodied,0)} tCO2.</p>` : ''}
             ${carbon.error ? `<p style="color:#dc2626;"><strong>Warning</strong>: ${carbon.error}</p>` : ''}
         `)}`;
@@ -2394,7 +2398,11 @@ function wizRenderReport(r) {
             fmYears.forEach(y => html += `<th class="rpt-num">${y}</th>`);
             html += '</tr></thead><tbody>';
             for (const [metric, series] of Object.entries(fmFin)) {
-                const hasVals = fmYears.some(y => (series[String(y)] ?? series[y]) != null);
+                // Skip metrics where every value is null or zero (e.g. capex when not extracted)
+                const hasVals = fmYears.some(y => {
+                    const v = series[String(y)] ?? series[y];
+                    return v != null && v !== 0;
+                });
                 if (!hasVals) continue;
                 html += `<tr data-metric="${metric}"><td style="text-transform:capitalize;font-weight:500;">${metric.replace(/_/g,' ')}</td>`;
                 fmYears.forEach(y => {
@@ -3677,6 +3685,13 @@ function _refPopulateResearch() {
             citation: 'Foundation for technology adoption S-curves (p, q parameters)',
             used: 'adoption.py — Bass diffusion model',
             url: null,
+        },
+        {
+            pub: 'Burger, Systrom &amp; Kearney — Climate Impact Assessment for Early-Stage Ventures (PRIME Coalition / NYSERDA)',
+            year: '2017',
+            citation: 'PRIME ERP 5-step framework: displaced emissions (§2), additionality (§3), venture emissions (§3), S-curve deployment (§4), ERP summation (§5). Multi-year service life cohort accounting. 30-year analysis horizon recommendation.',
+            used: 'rvm_carbon.py — full carbon methodology',
+            url: 'https://www.primecoalition.org/library/climate-impact-assessment-for-early-stage-ventures',
         },
     ];
 
@@ -5548,6 +5563,8 @@ const _memo = {
     citations: {},
     libraryId: null,
     libraries: [],
+    sections: {},          // section_key → stored markdown text (kept in sync with DB)
+    lockedSections: {},    // section_key → markdown text to preserve on regeneration
 };
 
 // ── Section toggle ──────────────────────────────────────────────────────────
@@ -6038,6 +6055,10 @@ async function memoGenerate() {
         links: _memo.links,
         model_override: model,
         investment_type: invType,
+        // Pass locked sections verbatim — LLM will not regenerate them
+        locked_sections: Object.keys(_memo.lockedSections).length > 0
+            ? { ..._memo.lockedSections }
+            : {},
     };
 
     try {
@@ -6096,6 +6117,9 @@ async function memoGenerate() {
             _memoInjectDealCard(rendered, data.report_data);
         }
 
+        // Inject cover page, legal disclaimer, and TOC as the very first elements
+        _memoInjectFrontMatter(rendered, data);
+
         // Show pipeline stats
         const pl = data.pipeline || {};
         const tokenCount = (data.input_tokens + data.output_tokens).toLocaleString();
@@ -6115,6 +6139,191 @@ async function memoGenerate() {
         _memo.generating = false;
         if (btn) { btn.disabled = false; btn.textContent = 'Generate Investment Memo'; }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  FRONT MATTER: Cover Page + Legal Disclaimer + Table of Contents
+//  Injected at the top of every rendered memo. Idempotent — safe to call twice.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function _memoInjectFrontMatter(rendered, data) {
+    if (!rendered) return;
+
+    // Remove any existing front matter so this is idempotent
+    rendered.querySelectorAll('.memo-front-matter').forEach(el => el.remove());
+
+    const ov        = data?.report_data?.deal_overview || {};
+    const companyName = data?.company_name || ov.company_name || ov.archetype || 'Portfolio Company';
+    const entryStage  = ov.entry_stage   || '';
+    const checkM      = ov.check_size_millions ? `$${Number(ov.check_size_millions).toFixed(1)}M` : '';
+    const archetype   = ov.archetype     || '';
+    const today       = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const genDate     = data?.created_at ? new Date(data.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : today;
+
+    // ── 1. COVER PAGE ────────────────────────────────────────────────────────
+    const coverDiv = document.createElement('div');
+    coverDiv.className = 'memo-front-matter memo-cover-page';
+    coverDiv.innerHTML = `
+        <div class="memo-cover-inner">
+            <div class="memo-cover-logo">
+                <div class="memo-cover-logo-text">VoLo Earth Ventures</div>
+            </div>
+            <div class="memo-cover-divider"></div>
+            <div class="memo-cover-type">INVESTMENT MEMORANDUM</div>
+            <div class="memo-cover-company">${_escHtml(companyName)}</div>
+            ${entryStage ? `<div class="memo-cover-detail">${_escHtml(entryStage)}${archetype ? ' · ' + _escHtml(archetype) : ''}${checkM ? ' · ' + checkM : ''}</div>` : ''}
+            <div class="memo-cover-date">${genDate}</div>
+            <div class="memo-cover-confidential">
+                STRICTLY CONFIDENTIAL — FOR INTERNAL USE ONLY<br>
+                Not for Distribution Without Prior Written Consent
+            </div>
+            <div class="memo-cover-footer">
+                VoLo Earth Ventures<br>
+                This document is subject to the Legal Disclaimer set out on the following page.
+            </div>
+        </div>
+    `;
+
+    // ── 2. LEGAL DISCLAIMER ──────────────────────────────────────────────────
+    const disclaimerDiv = document.createElement('div');
+    disclaimerDiv.className = 'memo-front-matter memo-disclaimer-page';
+    disclaimerDiv.innerHTML = `
+        <div class="memo-disclaimer-inner">
+            <h2 class="memo-disclaimer-title">Legal Disclaimer &amp; Risk Disclosure</h2>
+
+            <p class="memo-disclaimer-block"><strong>CONFIDENTIALITY.</strong>
+            This Investment Memorandum (the "Memo") is furnished by VoLo Earth Ventures ("VoLo") on a strictly
+            confidential basis solely to the intended recipient for informational and internal evaluation purposes.
+            It may not be reproduced, distributed, or disclosed to any third party without the prior written
+            consent of VoLo. Receipt of this Memo constitutes acceptance of these terms.</p>
+
+            <p class="memo-disclaimer-block"><strong>NOT AN OFFER OF SECURITIES.</strong>
+            Nothing in this Memo constitutes or shall be construed as an offer to sell, or a solicitation of an
+            offer to buy, any security or investment product in any jurisdiction. Any such offer or solicitation
+            will be made only pursuant to separate definitive agreements and applicable securities laws.</p>
+
+            <p class="memo-disclaimer-block"><strong class="memo-disclaimer-nonreliance">NON-RELIANCE STATEMENT.
+            THIS MEMO IS PROVIDED FOR INFORMATIONAL PURPOSES ONLY AND MUST NOT BE RELIED UPON AS THE BASIS
+            FOR ANY INVESTMENT DECISION. NO REPRESENTATION OR WARRANTY, EXPRESS OR IMPLIED, IS MADE AS TO
+            THE ACCURACY, COMPLETENESS, OR FITNESS FOR PURPOSE OF ANY INFORMATION CONTAINED HEREIN.
+            RECIPIENTS MUST CONDUCT THEIR OWN INDEPENDENT DUE DILIGENCE AND SEEK INDEPENDENT FINANCIAL,
+            LEGAL, AND TAX ADVICE BEFORE MAKING ANY INVESTMENT DECISION. VOLO EXPRESSLY DISCLAIMS ANY AND
+            ALL LIABILITY ARISING FROM RELIANCE ON THIS MEMO OR ITS CONTENTS.</strong></p>
+
+            <p class="memo-disclaimer-block"><strong>FORWARD-LOOKING STATEMENTS.</strong>
+            Certain statements in this Memo, including financial projections, market size estimates, adoption
+            forecasts, and carbon impact calculations, constitute forward-looking statements. These statements
+            involve known and unknown risks, uncertainties, and other factors that may cause actual results,
+            performance, or achievements to differ materially from those expressed or implied. Past performance
+            is not indicative of future results. All projections are inherently speculative and subject to
+            change without notice.</p>
+
+            <p class="memo-disclaimer-block"><strong>STATISTICAL AND QUANTITATIVE MODEL LIMITATIONS.</strong>
+            Financial return projections, fund-level impact analyses, and portfolio simulations contained in
+            this Memo are generated by VoLo's proprietary Return Value Model (RVM), which employs Monte Carlo
+            simulation, Bass diffusion modeling, and statistical regression techniques. These models are
+            calibrated on historical market data and carry inherent assumptions that may not hold in future
+            conditions. Model outputs represent probability-weighted estimates across simulated scenarios —
+            they are not guarantees or predictions of actual outcomes. Simulation results are sensitive to
+            input assumptions including exit multiples, graduation rates, and revenue trajectories; small
+            changes in inputs can produce materially different outputs. No model can fully capture the
+            complexity of venture capital markets.</p>
+
+            <p class="memo-disclaimer-block"><strong>ARTIFICIAL INTELLIGENCE AND INFERENCE.</strong>
+            Portions of this Memo, including section narratives, company analyses, and synthesis sections,
+            were generated or assisted by large language model (LLM) AI systems. AI-generated content is
+            based on information provided at the time of generation and is subject to errors, omissions,
+            and the inherent limitations of language model inference. AI outputs have not been independently
+            verified in their entirety and should not be treated as expert opinion or professional advice.
+            Recipients should verify all material facts independently.</p>
+
+            <p class="memo-disclaimer-block"><strong>THIRD-PARTY DATA SOURCES.</strong>
+            This Memo incorporates data from third-party sources including, without limitation: Carta Inc.
+            (venture graduation rates and fund benchmarking), Damodaran Online at NYU Stern (sector valuation
+            multiples), the PRIME Coalition / NYSERDA ERP framework (carbon impact methodology), EPA and IEA
+            emissions databases (carbon intensity factors), and various public market databases. VoLo does not
+            independently verify third-party data and makes no representation as to its accuracy or
+            completeness. Third-party data is subject to revision, methodology changes, and may contain
+            errors. Use of third-party data does not constitute endorsement of or by those sources.</p>
+
+            <p class="memo-disclaimer-block"><strong>CARBON IMPACT ESTIMATES.</strong>
+            Carbon impact calculations are based on the PRIME Coalition Expected Impact Returns (ERP)
+            methodology and VoLo's multi-cohort extension thereof. These estimates rely on assumptions
+            regarding technology adoption, grid carbon intensity trajectories, product displacement factors,
+            and company survival probabilities. Actual carbon outcomes will depend on commercial execution,
+            regulatory environment, and grid evolution — factors that cannot be predicted with certainty.
+            Risk-adjusted carbon metrics incorporate survival probability estimates derived from Monte Carlo
+            simulation and are not part of the PRIME ERP deterministic framework.</p>
+
+            <p class="memo-disclaimer-block"><strong>RISK FACTORS.</strong>
+            Investment in early-stage venture companies involves a high degree of risk, including but not
+            limited to: risk of total loss of capital; technology development risk; market adoption risk;
+            regulatory and policy risk; team execution risk; competition risk; financing risk (inability to
+            raise future rounds); and liquidity risk (illiquidity of private equity interests over extended
+            time horizons). Investors should be prepared to sustain a total loss of their investment.
+            This Memo does not purport to identify all risks associated with an investment in the subject
+            company.</p>
+
+            <p class="memo-disclaimer-block"><strong>NO FIDUCIARY DUTY.</strong>
+            VoLo does not owe any fiduciary duty to recipients of this Memo who are not investors in VoLo's
+            funds. This Memo does not create any advisory, fiduciary, or agency relationship between VoLo
+            and the recipient.</p>
+
+            <p class="memo-disclaimer-date">© ${new Date().getFullYear()} VoLo Earth Ventures. All rights reserved. &nbsp;|&nbsp; Generated: ${genDate}</p>
+        </div>
+    `;
+
+    // ── 3. TABLE OF CONTENTS ─────────────────────────────────────────────────
+    // Build TOC by scanning H2 elements already in the rendered container,
+    // assigning anchor IDs and building hyperlinked entries.
+    const tocDiv = document.createElement('div');
+    tocDiv.className = 'memo-front-matter memo-toc-page';
+
+    // Assign id anchors to every H2 in the memo body (skip our own front matter)
+    const allH2s = Array.from(rendered.querySelectorAll('h2')).filter(h => !h.closest('.memo-front-matter'));
+    allH2s.forEach((h2, i) => {
+        const slug = 'ms-' + (h2.textContent || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + i;
+        h2.id = slug;
+    });
+
+    // Special: the H1 title at top
+    const h1 = rendered.querySelector('h1:not(.memo-front-matter *)');
+    if (h1 && !h1.id) h1.id = 'memo-top';
+
+    let tocRows = '';
+    let secNum = 0;
+    allH2s.forEach(h2 => {
+        const text = h2.textContent.trim();
+        // Skip Appendix from numbered list
+        const isAppendix = text.toLowerCase().startsWith('appendix');
+        if (!isAppendix) secNum++;
+        const numLabel = isAppendix ? '' : `${secNum}.`;
+        const anchor = h2.id;
+        tocRows += `
+            <tr class="memo-toc-row${isAppendix ? ' memo-toc-appendix' : ''}">
+                <td class="memo-toc-num">${numLabel}</td>
+                <td class="memo-toc-title"><a href="#${anchor}" class="memo-toc-link">${_escHtml(text)}</a></td>
+                <td class="memo-toc-dots"></td>
+            </tr>`;
+    });
+
+    tocDiv.innerHTML = `
+        <div class="memo-toc-inner">
+            <div class="memo-toc-header">
+                <div class="memo-toc-header-company">${_escHtml(companyName)}</div>
+                <div class="memo-toc-header-label">Table of Contents</div>
+            </div>
+            <table class="memo-toc-table">
+                <tbody>${tocRows || '<tr><td colspan="3">Sections will appear here after memo is generated.</td></tr>'}</tbody>
+            </table>
+            <p class="memo-toc-note">Click any section title to jump to that section.</p>
+        </div>
+    `;
+
+    // ── Prepend all three pages before the memo body ─────────────────────────
+    rendered.insertBefore(tocDiv, rendered.firstChild);
+    rendered.insertBefore(disclaimerDiv, rendered.firstChild);
+    rendered.insertBefore(coverDiv, rendered.firstChild);
 }
 
 // ── Citation popover system ─────────────────────────────────────────────────
@@ -6291,86 +6500,193 @@ async function memoPrintPDF() {
         'sup[data-cite],.memo-citation-chip'
     ).forEach(el => el.remove());
 
+    // 3b. Inject hard page-break divs so Chrome actually honours section boundaries.
+    // CSS break-before on class selectors is unreliable in Chrome's print engine;
+    // physical zero-height divs with inline page-break-before are the reliable path.
+    //
+    // Front matter pages (cover, disclaimer, TOC) each get break-after.
+    clone.querySelectorAll('.memo-cover-page,.memo-disclaimer-page,.memo-toc-page')
+        .forEach(fm => {
+            fm.style.pageBreakAfter = 'always';
+            fm.style.breakAfter     = 'page';
+        });
+    // Every content section gets a break-before EXCEPT the very first one
+    // (the TOC's break-after already opens a fresh page for it).
+    const sectionWrappers = Array.from(clone.querySelectorAll('.memo-section-wrapper'));
+    sectionWrappers.forEach((wrapper, idx) => {
+        if (idx === 0) return;  // first section rides the TOC's break-after
+        const pb = document.createElement('div');
+        pb.setAttribute('aria-hidden', 'true');
+        pb.style.cssText = 'page-break-before:always;break-before:page;' +
+                           'height:0;margin:0;padding:0;border:none;display:block;';
+        wrapper.parentNode.insertBefore(pb, wrapper);
+    });
+
     const companyName = document.getElementById('memo-output-meta')
         ?.textContent?.split('·')[0]?.trim() || 'Investment Memo';
 
-    // 4. Open a clean print window — no app chrome at all
-    const win = window.open('', '_blank', 'width=900,height=700');
-    win.document.write(`<!DOCTYPE html><html><head>
+    // 4. Build the full print HTML, then open via Blob URL so the browser fully
+    //    renders (CSS layout, image decode, page-break calculation) before the
+    //    print dialog opens.  This avoids the document.write + win.print() race
+    //    that was causing Chrome to honour only 3 pages.
+    const printHtml = `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
 <title>${companyName} — VoLo Earth Ventures</title>
 <style>
+/* ── Reset & base ── */
 *,*::before,*::after{box-sizing:border-box}
-body{font-family:Georgia,serif;font-size:10.5pt;color:#1a1a1a;background:#fff;max-width:780px;margin:0 auto;padding:28px 32px}
-h1{font-size:20pt;margin-bottom:4pt}
-h2{font-size:13pt;margin-top:22pt;margin-bottom:6pt;border-bottom:1px solid #ccc;padding-bottom:4pt;page-break-after:avoid}
-h3{font-size:11pt;margin-top:14pt;page-break-after:avoid}
-p,li{font-size:10pt;line-height:1.6;margin-top:4pt}
+-webkit-print-color-adjust:exact;
+print-color-adjust:exact;
+
+/* ── Page setup: US Letter portrait ── */
+@page{size:letter portrait;margin:.75in .75in .85in .75in}
+/* Cover page: zero margin for full bleed */
+@page:first{margin:0}
+
+/* ── Body: let the @page dimensions drive layout; no fixed width ── */
+body{font-family:Georgia,serif;font-size:10.5pt;color:#1a1a1a;background:#fff;
+     margin:0;padding:0;width:100%;overflow:visible}
+
+/* ── Typography ── */
+h1{font-size:20pt;margin:0 0 4pt}
+h2{font-size:13pt;font-weight:700;margin:0 0 6pt;border-bottom:1.5px solid #5B7744;
+   padding-bottom:3pt;color:#1a2332;break-after:avoid;page-break-after:avoid}
+h3{font-size:11pt;font-weight:600;margin:10pt 0 4pt;break-after:avoid;page-break-after:avoid}
+h4{font-size:10.5pt;font-weight:600;margin:8pt 0 3pt;break-after:avoid;page-break-after:avoid}
+h2+p,h3+p,h2+ul,h3+ul{break-before:avoid;page-break-before:avoid}
+p,li{font-size:10.5pt;line-height:1.55;margin-top:4pt;orphans:3;widows:3}
 ul,ol{margin:4pt 0 4pt 18pt}
-table{width:100%;border-collapse:collapse;font-size:9pt;margin:10pt 0;page-break-inside:avoid}
-th,td{border:1px solid #ddd;padding:4pt 6pt;text-align:left}
-th{background:#f5f5f5;font-weight:600}
-img{max-width:100%;height:auto;display:block;margin:6pt auto}
 blockquote{border-left:3px solid #5B7744;margin:8pt 0 8pt 10pt;padding-left:10pt;color:#555;font-style:italic}
 code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;border-radius:2pt}
-/* Chart containers */
-.memo-chart-inline{page-break-inside:avoid;margin:12pt 0}
-.memo-chart-context{background:#fafaf9;border:1px solid #eee;padding:10pt;border-radius:4pt;margin:10pt 0;page-break-inside:avoid}
-.memo-chart-label{font-size:9pt;font-weight:700;text-transform:uppercase;color:#5B7744;letter-spacing:.05em;margin-bottom:4pt}
-.memo-chart-caption,.memo-chart-note{font-size:8.5pt;color:#666;margin:4pt 0}
-.memo-chart-row{display:flex;gap:12pt}
-.memo-chart-wrap{flex:1;overflow:hidden}
-.memo-chart-wrap img{width:100%;max-height:220pt;object-fit:contain}
-/* Hero cards */
-.memo-rvm-hero{display:flex;gap:8pt;flex-wrap:wrap;margin:10pt 0}
-.memo-rvm-hero-card{border:1px solid #ccc;padding:6pt 10pt;border-radius:4pt;flex:1;min-width:80pt;text-align:center}
-.memo-rvm-hero-card.accent{background:#f0f4ef;border-color:#5B7744}
+
+/* ── FRONT MATTER ── */
+/* Cover: fills first page edge-to-edge (no margin on @page:first) */
+.memo-cover-page{
+  background:#1e2d24;color:#fff;
+  width:100%;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;padding:56pt 48pt;
+  break-after:page;page-break-after:always;
+  -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.memo-cover-inner{max-width:420pt;width:100%}
+.memo-cover-logo{display:flex;align-items:center;justify-content:center;gap:10pt;margin-bottom:28pt}
+.memo-cover-logo-mark{width:36pt;height:36pt;background:#5B7744;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14pt;font-weight:700;color:#fff;flex-shrink:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.memo-cover-logo-text{font-size:12pt;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8BA872}
+.memo-cover-divider{width:60pt;height:1pt;background:#5B7744;margin:0 auto 28pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.memo-cover-type{font-size:8.5pt;letter-spacing:.2em;text-transform:uppercase;color:#8BA872;margin-bottom:12pt;font-weight:600}
+.memo-cover-company{font-size:26pt;font-weight:700;color:#fff;line-height:1.15;margin-bottom:10pt}
+.memo-cover-detail{font-size:10pt;color:#aaa;margin-bottom:22pt}
+.memo-cover-date{font-size:9.5pt;color:#8BA872;margin-bottom:32pt}
+.memo-cover-confidential{font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#dc2626;border:1px solid #dc2626;padding:5pt 14pt;border-radius:3pt;margin-bottom:24pt;font-weight:600}
+.memo-cover-footer{font-size:8pt;color:#666;line-height:1.5}
+
+/* Disclaimer page */
+.memo-disclaimer-page{
+  background:#fff;width:100%;
+  padding:48pt 64pt 48pt 64pt;
+  break-before:page;page-break-before:always;
+  break-after:page;page-break-after:always}
+.memo-disclaimer-inner{max-width:100%}
+.memo-disclaimer-title{font-size:15pt;font-weight:700;color:#1a1a1a;margin-bottom:16pt;padding-bottom:6pt;border-bottom:2px solid #5B7744}
+.memo-disclaimer-block{font-size:9pt;line-height:1.65;margin-bottom:9pt;text-align:justify}
+.memo-disclaimer-nonreliance{display:block;font-size:9pt;font-weight:700;line-height:1.65}
+.memo-disclaimer-date{font-size:8pt;color:#888;margin-top:18pt;border-top:1px solid #ddd;padding-top:6pt}
+
+/* TOC page */
+.memo-toc-page{
+  background:#fff;width:100%;
+  padding:48pt 64pt 48pt 64pt;
+  break-before:page;page-break-before:always;
+  break-after:page;page-break-after:always}
+.memo-toc-inner{max-width:100%;width:100%}
+.memo-toc-header{margin-bottom:24pt;border-bottom:2px solid #5B7744;padding-bottom:8pt}
+.memo-toc-header-company{font-size:10pt;color:#888;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4pt}
+.memo-toc-header-label{font-size:20pt;font-weight:700;color:#1a1a1a}
+.memo-toc-table{width:100%;border-collapse:collapse}
+.memo-toc-row td{padding:5pt 0;border:none;vertical-align:baseline}
+.memo-toc-num{font-size:9pt;font-weight:700;color:#5B7744;width:20pt;white-space:nowrap}
+.memo-toc-title{font-size:10pt;color:#1a1a1a;font-weight:500;padding-right:6pt}
+.memo-toc-link{color:#1a1a1a!important;text-decoration:none;border-bottom:none}
+.memo-toc-dots{font-size:9pt;color:#ccc;white-space:nowrap;min-width:40pt}
+.memo-toc-appendix td{color:#888;font-size:9pt}
+.memo-toc-note{font-size:8pt;color:#888;margin-top:16pt;font-style:italic}
+
+/* ── SECTION WRAPPERS ── */
+/* Each major section starts on a new page */
+.memo-section-wrapper{
+  break-before:page;page-break-before:always;
+  break-inside:auto;page-break-inside:auto;
+  padding-top:0;margin-top:0}
+/* Body wrapper for the page area (after cover, has margins) */
+.memo-content-body{background:#fff;padding:0 .75in;width:8.5in}
+/* First section after TOC — TOC's break-after already opens the page */
+.memo-section-wrapper:first-of-type{break-before:avoid;page-break-before:avoid}
+
+/* ── SECTION CONTENT ── */
+.memo-section-content{display:block!important;visibility:visible!important}
+
+/* ── SMALL ELEMENTS — keep together ── */
+.memo-rvm-hero{display:flex;gap:8pt;flex-wrap:wrap;margin:10pt 0;break-inside:avoid;page-break-inside:avoid}
+.memo-rvm-hero-card{border:1px solid #ccc;padding:6pt 10pt;border-radius:4pt;flex:1;min-width:80pt;text-align:center;break-inside:avoid;page-break-inside:avoid}
+.memo-rvm-hero-card.accent{background:#f0f4ef;border-color:#5B7744;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .memo-rvm-hero-num{font-size:15pt;font-weight:700;color:#3B5249}
 .memo-rvm-hero-lbl{font-size:8pt;font-weight:600;text-transform:uppercase;color:#888;margin-top:2pt}
-/* Deal card — full fidelity */
-.memo-deal-card{border:1px solid #e5e7eb;border-radius:8pt;padding:14pt;margin:12pt 0;page-break-inside:avoid;background:#fff}
-.memo-dc-tags{display:flex;flex-wrap:wrap;gap:6pt;margin-bottom:12pt}
+/* Deal card */
+.memo-deal-card{border:1px solid #e5e7eb;border-radius:6pt;padding:12pt;margin:10pt 0;break-inside:avoid;page-break-inside:avoid;background:#fff}
+.memo-dc-tags{display:flex;flex-wrap:wrap;gap:6pt;margin-bottom:10pt}
 .memo-dc-tag{background:#fff;border:1px solid #e5e7eb;border-radius:20pt;padding:3pt 10pt;font-size:9pt;color:#555;font-weight:500}
-.memo-dc-terms{display:flex;flex-wrap:wrap;gap:8pt;margin-bottom:12pt}
-.memo-dc-term{background:#fff;border:1px solid #e5e7eb;border-radius:7pt;padding:8pt 12pt;min-width:90pt;flex:1}
+.memo-dc-terms{display:flex;flex-wrap:wrap;gap:8pt;margin-bottom:10pt}
+.memo-dc-term{background:#fff;border:1px solid #e5e7eb;border-radius:5pt;padding:7pt 10pt;min-width:80pt;flex:1}
 .memo-dc-label{display:block;font-size:7.5pt;font-weight:600;letter-spacing:.06em;color:#888;text-transform:uppercase;margin-bottom:3pt}
-.memo-dc-val{font-size:14pt;font-weight:700;color:#1a1a1a}
-.memo-dc-hero{display:flex;gap:8pt;flex-wrap:wrap}
-.memo-dc-hero-card{flex:1;min-width:90pt;background:#fff;border:1px solid #e5e7eb;border-radius:7pt;padding:10pt 12pt;text-align:center}
-.memo-dc-hero-card.accent{background:#f0f4ef;border-color:#5B7744}
-.memo-dc-hero-num{font-size:18pt;font-weight:700;color:#1a1a1a;line-height:1.1}
+.memo-dc-val{font-size:13pt;font-weight:700;color:#1a1a1a}
+.memo-dc-hero{display:flex;gap:8pt;flex-wrap:wrap;break-inside:avoid;page-break-inside:avoid}
+.memo-dc-hero-card{flex:1;min-width:80pt;background:#fff;border:1px solid #e5e7eb;border-radius:5pt;padding:8pt 10pt;text-align:center;break-inside:avoid;page-break-inside:avoid}
+.memo-dc-hero-card.accent{background:#f0f4ef;border-color:#5B7744;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.memo-dc-hero-num{font-size:16pt;font-weight:700;color:#1a1a1a;line-height:1.1}
 .memo-dc-hero-card.accent .memo-dc-hero-num{color:#3B5249}
 .memo-dc-hero-lbl{font-size:7.5pt;font-weight:600;letter-spacing:.06em;color:#888;text-transform:uppercase;margin-top:3pt}
+/* Charts */
+.memo-chart-inline{break-inside:avoid;page-break-inside:avoid;margin:10pt 0}
+.memo-chart-context{background:#fafaf9;border:1px solid #eee;padding:8pt;border-radius:4pt;margin:8pt 0;break-inside:avoid;page-break-inside:avoid}
+.memo-chart-label{font-size:9pt;font-weight:700;text-transform:uppercase;color:#5B7744;letter-spacing:.05em;margin-bottom:3pt}
+.memo-chart-caption,.memo-chart-note{font-size:8.5pt;color:#666;margin:3pt 0}
+.memo-chart-row{display:flex;gap:12pt;break-inside:avoid;page-break-inside:avoid}
+.memo-chart-wrap{flex:1;overflow:hidden}
+.memo-chart-wrap img{width:100%;max-height:190pt;object-fit:contain}
+canvas{max-height:190pt!important;width:100%!important;object-fit:contain}
 /* Images */
-.memo-image-figure{page-break-inside:avoid;max-width:65%;margin:12pt auto;text-align:center}
+.memo-image-figure{break-inside:avoid;page-break-inside:avoid;max-width:60%;margin:10pt auto;text-align:center}
 .memo-image-embed{max-width:100%;height:auto}
 .memo-image-caption{font-size:8pt;color:#888;margin-top:3pt}
-/* Section wrappers */
-.memo-section-wrapper{page-break-inside:avoid}
-.memo-section-content{display:block!important;visibility:visible!important}
-/* Variance table */
+/* Tables — allow long tables to break between rows, header repeats */
+table{width:100%;border-collapse:collapse;font-size:9pt;margin:8pt 0;break-inside:auto;page-break-inside:auto}
+thead{display:table-header-group}
+tr{break-inside:avoid;page-break-inside:avoid}
+th,td{border:1px solid #ddd;padding:3.5pt 5pt;text-align:left}
+th{background:#f5f5f5;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* Variance / rpt table */
 .rpt-table td,.rpt-table th{border:1px solid #ddd;padding:3pt 5pt;font-size:9pt}
 /* Footer */
-footer{margin-top:28pt;padding-top:5pt;border-top:1px solid #ccc;font-size:8pt;color:#888;text-align:center}
-@page{size:A4;margin:18mm 16mm 20mm 16mm}
-@media print{body{padding:0}.memo-section-wrapper,.memo-chart-inline,.memo-deal-card,.memo-chart-context{page-break-inside:avoid}}
+footer{margin-top:28pt;padding-top:5pt;border-top:1px solid #ddd;font-size:8pt;color:#aaa;text-align:center;letter-spacing:.04em}
 </style></head><body>
 ${clone.innerHTML}
 <footer>VoLo Earth Ventures — Confidential &amp; Proprietary</footer>
-</body></html>`);
-    win.document.close();
+<script>
+// Fire print once the document is fully loaded & laid out.
+// Using load (not DOMContentLoaded) so images are decoded first.
+window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 600);
+});
+<\/script>
+</body></html>`;
 
-    // 5. Wait for all images (data room photos, chart PNGs) to finish loading
-    const allImgs = Array.from(win.document.querySelectorAll('img'));
-    await Promise.all(allImgs.map(img =>
-        img.complete ? Promise.resolve() :
-        new Promise(res => { img.onload = res; img.onerror = res; })
-    ));
-    await new Promise(r => setTimeout(r, 400));
-
-    // 6. Trigger print dialog
-    win.focus();
-    win.print();
+    // 5. Open via Blob URL — the browser treats it as a full navigation,
+    //    runs layout, resolves @page rules, then fires the embedded print.
+    const blob = new Blob([printHtml], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    // Revoke after 2 min to free memory (the window will have already loaded)
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 function memoCopyMarkdown() {
@@ -6458,6 +6774,9 @@ async function memoLoadHistoryItem(id) {
             _memoInjectCharts(rendered, data.report_data);
             _memoInjectDealCard(rendered, data.report_data);
         }
+
+        // Cover page, legal disclaimer, and TOC
+        _memoInjectFrontMatter(rendered, data);
     } catch (e) {
         console.error('memoLoadHistoryItem error:', e);
         if (rendered) rendered.innerHTML = `<p style="padding:24px;color:#dc2626">Unexpected error: ${e.message}</p>`;
@@ -6638,9 +6957,10 @@ const _MEMO_SECTION_KEYS = {
     'carbon impact': 'carbon_impact',
     'technology': 'technology_ip_moat',
     'financing overview': 'financing_overview',
+    'cohort analysis': 'cohort_analysis',
     'fund return model': 'fund_return_model',
     'portfolio tracking scorecard': 'portfolio_tracking_scorecard',
-    'investment recommendation': 'investment_recommendation',
+    'investment recommendation': 'recommendation',
 };
 
 function _memoMatchSectionKey(h2Text) {
@@ -6680,6 +7000,7 @@ function _memoWrapSections(container, sections) {
                 <span class="memo-section-key-badge">${sectionKey.replace(/_/g, ' ')}</span>
             </div>
             <div class="memo-section-toolbar-right">
+                <button class="memo-sect-btn memo-sect-btn-lock" id="memo-lock-btn-${sectionKey}" onclick="_memoToggleLock('${sectionKey}')" title="Lock this section so it is preserved on regeneration">🔓 Lock</button>
                 <button class="memo-sect-btn memo-sect-btn-edit" onclick="_memoStartDirectEdit('${sectionKey}')" title="Edit text directly">Edit</button>
                 <button class="memo-sect-btn memo-sect-btn-revise" onclick="_memoStartRevise('${sectionKey}')" title="Give LLM revision instructions">Revise</button>
                 <button class="memo-sect-btn memo-sect-btn-history" onclick="_memoShowHistory('${sectionKey}')" title="View revision history">History</button>
@@ -6836,6 +7157,97 @@ function _memoCancelDirectEdit(sectionKey) {
     if (panel) panel.style.display = 'none';
 }
 
+// ── Section Lock / Unlock ────────────────────────────────────────────────────
+// Locked sections are preserved verbatim on memo regeneration.
+// The lock state is held in _memo.lockedSections (in-memory) and reflected
+// in the toolbar button UI. When the user regenerates, locked sections are
+// passed as req.locked_sections and the LLM is never called for them.
+
+function _memoToggleLock(sectionKey) {
+    const btn = document.getElementById(`memo-lock-btn-${sectionKey}`);
+    const isLocked = sectionKey in _memo.lockedSections;
+
+    if (isLocked) {
+        // Unlock: remove from locked set
+        delete _memo.lockedSections[sectionKey];
+        if (btn) {
+            btn.textContent = '🔓 Lock';
+            btn.title = 'Lock this section so it is preserved on regeneration';
+            btn.style.background = '';
+            btn.style.color = '';
+            btn.style.fontWeight = '';
+        }
+        // Remove visual indicator from wrapper
+        const wrapper = btn?.closest('.memo-section-wrapper');
+        if (wrapper) wrapper.style.outline = '';
+        showToast(`Section unlocked — will be regenerated next time`);
+    } else {
+        // Lock: capture the current stored text
+        const text = _memo.sections[sectionKey] || '';
+        if (!text) {
+            showToast('Save your edits first before locking');
+            return;
+        }
+        _memo.lockedSections[sectionKey] = text;
+        if (btn) {
+            btn.textContent = '🔒 Locked';
+            btn.title = 'Click to unlock — this section will be preserved on regeneration';
+            btn.style.background = '#5B7744';
+            btn.style.color = '#fff';
+            btn.style.fontWeight = '600';
+        }
+        // Visual indicator on the section wrapper
+        const wrapper = btn?.closest('.memo-section-wrapper');
+        if (wrapper) wrapper.style.outline = '2px solid #5B7744';
+        showToast(`Section locked — your edits will be preserved on regeneration`);
+    }
+    // Update the lock counter badge
+    _memoUpdateLockBadge();
+}
+
+function _memoUpdateLockBadge() {
+    const n = Object.keys(_memo.lockedSections).length;
+    const badge = document.getElementById('memo-lock-badge');
+    if (!badge) return;
+    badge.textContent = n > 0 ? `${n} locked` : '';
+    badge.style.display = n > 0 ? 'inline-block' : 'none';
+}
+
+function _memoLockAll() {
+    // Lock every section that has saved text
+    for (const [key, text] of Object.entries(_memo.sections)) {
+        if (!text) continue;
+        _memo.lockedSections[key] = text;
+        const btn = document.getElementById(`memo-lock-btn-${key}`);
+        if (btn) {
+            btn.textContent = '🔒 Locked';
+            btn.title = 'Click to unlock';
+            btn.style.background = '#5B7744';
+            btn.style.color = '#fff';
+            btn.style.fontWeight = '600';
+        }
+        const wrapper = btn?.closest('.memo-section-wrapper');
+        if (wrapper) wrapper.style.outline = '2px solid #5B7744';
+    }
+    _memoUpdateLockBadge();
+    showToast(`All sections locked — your edits will be preserved on regeneration`);
+}
+
+function _memoUnlockAll() {
+    _memo.lockedSections = {};
+    document.querySelectorAll('[id^="memo-lock-btn-"]').forEach(btn => {
+        btn.textContent = '🔓 Lock';
+        btn.title = 'Lock this section so it is preserved on regeneration';
+        btn.style.background = '';
+        btn.style.color = '';
+        btn.style.fontWeight = '';
+        const wrapper = btn?.closest('.memo-section-wrapper');
+        if (wrapper) wrapper.style.outline = '';
+    });
+    _memoUpdateLockBadge();
+    showToast('All sections unlocked');
+}
+
 async function _memoSaveDirectEdit(sectionKey) {
     const textarea = document.getElementById(`memo-edit-textarea-${sectionKey}`);
     const status = document.getElementById(`memo-edit-status-${sectionKey}`);
@@ -6986,6 +7398,9 @@ function _memoInjectCharts(container, report) {
     _memoChartInstances.forEach(c => { try { c.destroy(); } catch(e) {} });
     _memoChartInstances.length = 0;
 
+    // Remove all previously injected blocks so re-runs don't stack duplicates
+    container.querySelectorAll('.memo-chart-inline').forEach(el => el.remove());
+
     const r = report;
     const sim = r.simulation || {};
     const carbon = r.carbon_impact || {};
@@ -7099,6 +7514,7 @@ function _memoInjectCharts(container, report) {
     function appendToSection(h2, html) {
         if (!h2) return null;
         const div = document.createElement('div');
+        div.className = 'memo-chart-inline';
         div.innerHTML = html;
         const contentContainer = getSectionContainer(h2);
         if (contentContainer) {
@@ -7342,10 +7758,18 @@ function _memoInjectCharts(container, report) {
                 const revSeries = fmFin2.revenue || fmFin2.Revenue || {};
                 const ebSeries  = fmFin2.ebitda  || fmFin2.EBITDA  || {};
                 const fmHdrCols = colYrs.map(y => `<th style="text-align:right;">${y}</th>`).join('');
+                // Detect whether FM values are raw dollars or already in $M.
+                // Properly-extracted XLSX data is stored in raw dollars (multiplied by scale factor).
+                // Vision-extracted or manually-edited data is stored in $M as-shown in the table.
+                // Heuristic: if any value exceeds 1e5, it's raw dollars → divide by 1e6.
+                // Otherwise treat as already in $M → no division.
+                const _allFmVals = Object.values(revSeries).concat(Object.values(ebSeries)).filter(v => v != null);
+                const _fmMaxAbs = _allFmVals.length ? Math.max(..._allFmVals.map(v => Math.abs(v))) : 0;
+                const _fmScaleDiv = _fmMaxAbs >= 1e5 ? 1e6 : 1;
                 const _fmCell = (series, y) => {
                     const v = series[String(y)] ?? series[y];
                     if (v == null) return `<td style="text-align:right;">—</td>`;
-                    const vM = v / 1e6;
+                    const vM = v / _fmScaleDiv;
                     const neg = vM < 0;
                     return `<td style="text-align:right;${neg ? 'color:#dc2626;' : ''}">${neg ? '(' : ''}$${Math.abs(vM).toFixed(1)}M${neg ? ')' : ''}</td>`;
                 };
@@ -7365,7 +7789,7 @@ function _memoInjectCharts(container, report) {
                     const cells = colYrs.map(y => {
                         const eb = ebSeries[String(y)] ?? ebSeries[y];
                         if (eb == null || multMid == null || eb <= 0) return `<td style="text-align:right;">—</td>`;
-                        const evM = (eb / 1e6) * multMid;
+                        const evM = (eb / _fmScaleDiv) * multMid;
                         return `<td style="text-align:right;font-weight:700;">$${evM.toFixed(0)}M</td>`;
                     }).join('');
                     return `<tr style="background:rgba(91,119,68,0.08);border-top:2px solid #ccc;"><td style="font-weight:600;">Implied EV (${multMid?.toFixed(1)}x)</td>${cells}</tr>`;
@@ -7391,9 +7815,367 @@ function _memoInjectCharts(container, report) {
                 }
             }
         }
+
+        // ── Simulation Risk Parameters Documentation Block ────────────────────
+        // Shows TRL modifiers, Carta inputs, realized survival_rate, and outcome
+        // breakdown so analysts can replicate the model without reading source code.
+        const simMeta = r.simulation || {};
+        const trlMods = simMeta.trl_modifiers || {};
+        const cartaIn = simMeta.carta_inputs || {};
+        const outBk = simMeta.outcome_breakdown || {};
+        const _sp = trlMods.survival_penalty;
+        const _cm = trlMods.capital_multiplier;
+        const _bp = trlMods.extra_bridge_prob;
+        const _em = trlMods.exit_multiple_discount;
+        const _sr = simMeta.survival_rate;
+        const _mer = simMeta.meaningful_exit_rate;
+        const _ns = simMeta.n_simulations || 5000;
+        const _pctFmt1 = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+        // Build outcome rows from breakdown object
+        // Breakdown values may be plain fractions OR objects {count, pct, label}
+        let outRows = '';
+        const outLabels = {
+            full_exit: 'Full Exit (acq/IPO)',
+            stage_exit: 'Stage Exit (mid-round)',
+            partial_recovery: 'Partial Recovery',
+            late_small_exit: 'Late Small Exit',
+            bridge_survives: 'Bridge Survives',
+            total_loss: 'Total Loss / Zero',
+        };
+        Object.entries(outLabels).forEach(([k, lbl]) => {
+            const v = outBk[k];
+            if (v == null) return;
+            // Handle both flat fraction (0.19) and nested object {count, pct, label}
+            let pctNum, countNum;
+            if (typeof v === 'object' && v.pct != null) {
+                pctNum = v.pct;       // already in percent (e.g. 19.0)
+                countNum = v.count;
+            } else {
+                pctNum = v * 100;
+                countNum = Math.round(v * _ns);
+            }
+            const pctStr = pctNum.toFixed(1) + '%';
+            const countStr = countNum != null ? `${countNum.toLocaleString()} / ${_ns.toLocaleString()}` : '—';
+            const isLoss = k === 'total_loss';
+            const isWin = k === 'full_exit' || k === 'stage_exit';
+            const rowStyle = isLoss ? 'color:#dc2626;' : isWin ? 'color:#2d6a4f;font-weight:600;' : '';
+            outRows += `<tr><td>${lbl}</td><td style="text-align:right;${rowStyle}">${pctStr}</td><td style="text-align:right;">${countStr}</td></tr>`;
+        });
+        appendToSection(finSectionH2, `<div class="memo-chart-context" style="background:rgba(91,119,68,0.04);border-left:3px solid #5B7744;">
+            <p class="memo-chart-label">Monte Carlo Simulation — Risk Summary</p>
+            <div class="memo-rvm-hero" style="margin-bottom:8px;">
+                <div class="memo-rvm-hero-card accent">
+                    <div class="memo-rvm-hero-num">${_pctFmt1(_sr)}</div>
+                    <div class="memo-rvm-hero-lbl">Survival Rate<br><span style="font-size:0.7rem;font-weight:400;">(paths with MOIC&gt;0)</span></div>
+                </div>
+                <div class="memo-rvm-hero-card">
+                    <div class="memo-rvm-hero-num">${_pctFmt1(_mer)}</div>
+                    <div class="memo-rvm-hero-lbl">Meaningful Exit<br><span style="font-size:0.7rem;font-weight:400;">(full or stage exit)</span></div>
+                </div>
+                <div class="memo-rvm-hero-card" style="border-color:#5B7744;">
+                    <div class="memo-rvm-hero-num">TRL ${trlMods.trl || ov.trl}</div>
+                    <div class="memo-rvm-hero-lbl">Tech Readiness<br><span style="font-size:0.7rem;font-weight:400;">survival penalty: ${_sp != null ? (_sp*100).toFixed(0)+'%' : '—'}</span></div>
+                </div>
+            </div>
+            <p style="font-size:0.83rem;margin:4px 0 0;color:#555;">
+                Simulation uses Carta ${cartaIn.sector_profile || ov.sector_profile} graduation rates × TRL ${trlMods.trl || ov.trl} modifiers across ${_ns.toLocaleString()} paths.
+                See <strong>Cohort Analysis</strong> section for full TRL modifier table, stage-by-stage funnel, decay formulas, and outcome distribution.
+            </p>
+        </div>`);
     }
 
-    // ── 5. FUND RETURN MODEL: Section 3 (Portfolio Impact) + Section 8 (Check Size) ──
+    // ── 5. COHORT ANALYSIS: Survival, Dilution & Risk Calibration ─────────────
+    // Standalone section: all Carta-derived factors, TRL modifier table,
+    // survival funnel, outcome distribution. NOT part of PRIME methodology.
+    const cohortH2 = findSection('cohort analysis');
+    if (cohortH2) {
+        const simMeta2    = r.simulation || {};
+        const trlMods2    = simMeta2.trl_modifiers || {};
+        const trlTable    = simMeta2.trl_modifier_table || {};
+        const csData      = simMeta2.carta_stage_data || {};
+        const outBk2      = simMeta2.outcome_breakdown || {};
+        const cartaIn2    = simMeta2.carta_inputs || {};
+        const _sr2        = simMeta2.survival_rate;
+        const _mer2       = simMeta2.meaningful_exit_rate;
+        const _ns2        = simMeta2.n_simulations || 5000;
+        const _thisTrl    = trlMods2.trl || ov.trl;
+        const _sp2        = trlMods2.survival_penalty;
+        const _pctFmt2    = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
+
+        // ─ Hero cards ─────────────────────────────────────────────────────────
+        const totalLossRaw = outBk2.total_loss;
+        const totalLossPct = totalLossRaw == null ? null
+            : typeof totalLossRaw === 'object' ? totalLossRaw.pct / 100
+            : totalLossRaw;
+        appendToSection(cohortH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">Cohort Risk Summary — Monte Carlo Output (${_ns2.toLocaleString()} paths)</p>
+            <p style="font-size:0.85rem;margin:0 0 10px;line-height:1.6;">
+                VoLo's probabilistic risk model combines <strong>Carta benchmark graduation rates</strong>
+                (sector: <em>${cartaIn2.sector_profile || ov.sector_profile}</em>, entry at
+                <em>${cartaIn2.entry_stage || ov.entry_stage}</em>) with
+                <strong>TRL ${_thisTrl} modifiers</strong> across ${_ns2.toLocaleString()} Monte Carlo paths.
+                This produces the survival rate and outcome distribution below.
+                <span style="color:#dc2626;font-weight:600;">These metrics are VoLo's own risk layer —
+                they are NOT part of the PRIME ERP carbon methodology.</span>
+                They are applied solely to the P-50 Risk-Adjusted tCO₂ and TCPI metrics in the
+                Carbon Impact section.
+            </p>
+            <div class="memo-rvm-hero" style="margin-bottom:14px;">
+                <div class="memo-rvm-hero-card accent">
+                    <div class="memo-rvm-hero-num">${_pctFmt2(_sr2)}</div>
+                    <div class="memo-rvm-hero-lbl">Survival Rate<br><span style="font-size:0.7rem;font-weight:400;">paths with any positive return</span></div>
+                </div>
+                <div class="memo-rvm-hero-card">
+                    <div class="memo-rvm-hero-num">${_pctFmt2(_mer2)}</div>
+                    <div class="memo-rvm-hero-lbl">Meaningful Exit Rate<br><span style="font-size:0.7rem;font-weight:400;">full or stage exit</span></div>
+                </div>
+                <div class="memo-rvm-hero-card" style="border-color:#dc2626;">
+                    <div class="memo-rvm-hero-num" style="color:#dc2626;">${_pctFmt2(totalLossPct)}</div>
+                    <div class="memo-rvm-hero-lbl">Total Loss Rate<br><span style="font-size:0.7rem;font-weight:400;">zero-return paths</span></div>
+                </div>
+            </div>
+        </div>`);
+
+        // ─ TRL Modifier Table (all 9 levels) ─────────────────────────────────
+        const trlLevels = [1,2,3,4,5,6,7,8,9];
+        let trlTableRows = '';
+        for (const lvl of trlLevels) {
+            const m = trlTable[lvl] || trlTable[String(lvl)] || {};
+            const isThis = String(lvl) === String(_thisTrl);
+            const rowBg = isThis ? 'background:rgba(91,119,68,0.12);font-weight:700;' : '';
+            const marker = isThis ? ' ◀ this deal' : '';
+            trlTableRows += `<tr style="${rowBg}">
+                <td style="text-align:center;">TRL ${lvl}${marker}</td>
+                <td style="text-align:center;color:#dc2626;">${m.survival_penalty != null ? (m.survival_penalty*100).toFixed(0)+'%' : '—'}</td>
+                <td style="text-align:center;">${m.capital_multiplier != null ? m.capital_multiplier.toFixed(2)+'×' : '—'}</td>
+                <td style="text-align:center;color:#b45309;">${m.extra_bridge_prob != null ? (m.extra_bridge_prob*100).toFixed(0)+'%' : '—'}</td>
+                <td style="text-align:center;">${m.exit_multiple_discount != null ? m.exit_multiple_discount.toFixed(2)+'×' : '—'}</td>
+            </tr>`;
+        }
+        appendToSection(cohortH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">TRL Modifier Lookup Table — All 9 Technology Readiness Levels</p>
+            <p style="font-size:0.85rem;margin:0 0 8px;line-height:1.6;">
+                Applied at every stage transition during the Monte Carlo simulation. The decay function
+                reduces the modifier's effect for later-stage companies:
+                <code style="background:#f0f4ec;padding:2px 5px;border-radius:3px;">decay(s) = max(0, 1 − survival_penalty × 0.3)</code>
+                where <em>s</em> = stages elapsed from entry. A TRL 1 company (fully pre-commercial) faces
+                the maximum penalty at every stage; a TRL 9 company faces no modifier. TRL advances toward
+                commercialization improve all four parameters.
+            </p>
+            <table class="memo-rvm-table" style="font-size:0.82rem;">
+                <thead>
+                    <tr>
+                        <th style="text-align:center;">TRL Level</th>
+                        <th style="text-align:center;">Survival Penalty<br><span style="font-weight:400;font-size:0.75rem;">annual failure risk added</span></th>
+                        <th style="text-align:center;">Capital Multiplier<br><span style="font-weight:400;font-size:0.75rem;">round size inflation</span></th>
+                        <th style="text-align:center;">Extra Bridge Prob<br><span style="font-weight:400;font-size:0.75rem;">P(bridge | graduate)</span></th>
+                        <th style="text-align:center;">Exit Multiple Discount<br><span style="font-weight:400;font-size:0.75rem;">applied to exit EV multiple</span></th>
+                    </tr>
+                </thead>
+                <tbody>${trlTableRows}</tbody>
+            </table>
+            <p style="font-size:0.79rem;color:#555;margin:6px 0 0;">
+                <strong>Decay formula:</strong> grad_rate = carta_base × (1 − survival_penalty × decay(s));
+                bridge_prob = extra_bridge_prob × decay(s); capital multiplier blends from max at s=0 to 1.0× as s grows.
+                The exit_multiple_discount is applied globally (not per-stage).
+            </p>
+        </div>`, ['TRL', 'modifier', 'survival', 'penalty', 'capital', 'bridge', 'exit', 'decay', 'technology readiness']);
+
+        // ─ Carta Stage Data table + Survival Funnel chart ─────────────────────
+        const stageOrder = ['Pre-Seed','Seed','Series A','Series B','Series C','Series D','Series E+'];
+        const entryStage = cartaIn2.entry_stage || ov.entry_stage || 'Seed';
+        const entryIdx = stageOrder.indexOf(entryStage);
+        const activeStages = stageOrder.slice(entryIdx >= 0 ? entryIdx : 0);
+
+        let cartaStageRows = '';
+        let funnelLabels = [];
+        let funnelBase = [];
+        let funnelEffective = [];
+        let cumulBase = 1.0, cumulEff = 1.0;
+        funnelLabels.push('Entry\\n(' + entryStage + ')');
+        funnelBase.push(100);
+        funnelEffective.push(100);
+
+        for (let i = 0; i < activeStages.length - 1; i++) {
+            const stg = activeStages[i];
+            const nextStg = activeStages[i+1];
+            const sd = csData[stg];
+            if (!sd) continue;
+            const bg = sd.graduation_rate;
+            const eg = sd.effective_graduation_rate;
+            const df = sd.trl_decay_factor;
+            const rs = sd.round_size_p50;
+            const pm = sd.pre_money_p50;
+            const mo = sd.months_to_grad_median;
+            const ss = sd.sample_size;
+            const bgStr = bg != null ? (bg*100).toFixed(1)+'%' : '—';
+            const egStr = eg != null ? (eg*100).toFixed(1)+'%' : '—';
+            const dfStr = df != null ? df.toFixed(3) : '—';
+            const rsStr = rs != null ? '$'+rs.toFixed(1)+'M' : '—';
+            const pmStr = pm != null ? '$'+pm.toFixed(1)+'M' : '—';
+            const moStr = mo != null ? mo.toFixed(0)+' mo' : '—';
+            const ssStr = ss != null ? ss.toFixed(0) : '—';
+            cumulBase *= (bg || 1);
+            cumulEff  *= (eg || 1);
+            funnelLabels.push(nextStg);
+            funnelBase.push(Math.round(cumulBase * 1000) / 10);
+            funnelEffective.push(Math.round(cumulEff * 1000) / 10);
+            cartaStageRows += `<tr>
+                <td>${stg} → ${nextStg}</td>
+                <td style="text-align:center;">${bgStr}</td>
+                <td style="text-align:center;color:#dc2626;">${dfStr}</td>
+                <td style="text-align:center;color:#5B7744;font-weight:600;">${egStr}</td>
+                <td style="text-align:center;">${rsStr}</td>
+                <td style="text-align:center;">${pmStr}</td>
+                <td style="text-align:center;">${moStr}</td>
+                <td style="text-align:center;color:#888;">${ssStr}</td>
+            </tr>`;
+        }
+
+        const funnelChartId = 'cohort-funnel-' + Date.now();
+        const outcomeChartId = 'cohort-outcome-' + Date.now();
+
+        appendToSection(cohortH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">Carta Benchmark Graduation Rates with TRL ${_thisTrl} Modifier Applied</p>
+            <p style="font-size:0.85rem;margin:0 0 8px;line-height:1.6;">
+                Sector: <strong>${cartaIn2.sector_profile || '—'}</strong>.
+                Carta base rates represent median market-wide venture outcomes (Feb 2026 data).
+                The TRL ${_thisTrl} decay factor (<code style="background:#f0f4ec;padding:2px 4px;border-radius:3px;">decay = max(0, 1 − ${_sp2 != null ? _sp2.toFixed(2) : '?'} × 0.3) = ${_sp2 != null ? Math.max(0,1-_sp2*0.3).toFixed(3) : '?'}</code>)
+                is applied at entry stage and diminishes for later stages.
+                Effective = Carta × decay. Cumulative survival compounds across stages.
+            </p>
+            ${cartaStageRows ? `<table class="memo-rvm-table" style="font-size:0.82rem;">
+                <thead>
+                    <tr>
+                        <th>Stage Transition</th>
+                        <th style="text-align:center;">Carta Base<br>Grad Rate</th>
+                        <th style="text-align:center;">TRL Decay<br>Factor</th>
+                        <th style="text-align:center;">Effective<br>Grad Rate</th>
+                        <th style="text-align:center;">Round Size<br>(P50)</th>
+                        <th style="text-align:center;">Pre-Money<br>(P50)</th>
+                        <th style="text-align:center;">Months to<br>Grad (med)</th>
+                        <th style="text-align:center;">Carta n</th>
+                    </tr>
+                </thead>
+                <tbody>${cartaStageRows}</tbody>
+            </table>` : '<p style="color:#888;font-size:0.85rem;">Carta stage data not available for this sector/entry stage combination.</p>'}
+            <p style="font-size:0.79rem;color:#555;margin:6px 0 0;">
+                <strong>Final survival rate:</strong> ${_pctFmt2(_sr2)} (Monte Carlo compound, includes path variance) &nbsp;|&nbsp;
+                <strong>Meaningful exit rate:</strong> ${_pctFmt2(_mer2)}.
+                Carta data: Carta Insights Fund Forecasting Profiles, Feb 2026.
+            </p>
+        </div>`);
+
+        // ─ Charts: Survival Funnel + Outcome Distribution side-by-side ────────
+        if (funnelLabels.length > 1 || Object.keys(outBk2).length > 0) {
+            // Build outcome distribution data
+            const outLabels2 = {
+                'full_exit': 'Full Exit',
+                'stage_exit': 'Stage Exit',
+                'bridge_survives': 'Bridge Survives',
+                'late_small_exit': 'Late Small Exit',
+                'partial_recovery': 'Partial Recovery',
+                'total_loss': 'Total Loss',
+            };
+            const outColors2 = {
+                'full_exit': '#2d6a4f',
+                'stage_exit': '#52b788',
+                'bridge_survives': '#f59e0b',
+                'late_small_exit': '#f97316',
+                'partial_recovery': '#fb923c',
+                'total_loss': '#dc2626',
+            };
+            const outVals2 = [], outLbls2 = [], outClrs2 = [];
+            Object.entries(outLabels2).forEach(([k,lbl]) => {
+                const v = outBk2[k];
+                if (v == null) return;
+                const pct = typeof v === 'object' ? v.pct : v * 100;
+                outVals2.push(pct);
+                outLbls2.push(lbl);
+                outClrs2.push(outColors2[k] || '#888');
+            });
+
+            appendToSection(cohortH2, `<div class="memo-chart-context">
+                <p class="memo-chart-label">Survival Funnel &amp; Outcome Distribution</p>
+                <div class="memo-chart-row" style="gap:24px;align-items:flex-start;">
+                    <div style="flex:1;min-width:0;">
+                        <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">Stage Survival Funnel — % of Cohort Reaching Each Stage</p>
+                        <div style="position:relative;height:260px;">
+                            <canvas id="${funnelChartId}"></canvas>
+                        </div>
+                        <p style="font-size:0.78rem;color:#555;margin:4px 0 0;">
+                            Green = Carta baseline; Red = after TRL ${_thisTrl} modifier. Both start at 100% at entry.
+                        </p>
+                    </div>
+                    <div style="flex:1;min-width:0;">
+                        <p style="font-size:0.82rem;font-weight:600;margin:0 0 6px;color:var(--accent,#3B5249);">Outcome Distribution — ${_ns2.toLocaleString()} Simulation Paths</p>
+                        <div style="position:relative;height:260px;">
+                            <canvas id="${outcomeChartId}"></canvas>
+                        </div>
+                        <p style="font-size:0.78rem;color:#555;margin:4px 0 0;">
+                            Top = best outcomes; bottom = worst. Survival rate = all non-zero-return paths.
+                        </p>
+                    </div>
+                </div>
+            </div>`);
+
+            // Queue charts for rendering
+            _pendingCharts = _pendingCharts || [];
+            _pendingCharts.push({
+                id: funnelChartId,
+                type: 'line',
+                data: {
+                    labels: funnelLabels,
+                    datasets: [
+                        {
+                            label: 'Carta Baseline',
+                            data: funnelBase,
+                            borderColor: '#52b788',
+                            backgroundColor: 'rgba(82,183,136,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                        },
+                        {
+                            label: 'TRL ' + _thisTrl + ' Adjusted',
+                            data: funnelEffective,
+                            borderColor: '#dc2626',
+                            backgroundColor: 'rgba(220,38,38,0.08)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 4,
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } }, tooltip: { callbacks: { label: ctx => ctx.dataset.label + ': ' + ctx.parsed.y.toFixed(1) + '%' } } },
+                    scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%', font: { size: 10 } }, title: { display: true, text: '% of cohort surviving', font: { size: 10 } } }, x: { ticks: { font: { size: 10 } } } }
+                }
+            });
+            _pendingCharts.push({
+                id: outcomeChartId,
+                type: 'bar',
+                data: {
+                    labels: outLbls2,
+                    datasets: [{
+                        label: '% of paths',
+                        data: outVals2,
+                        backgroundColor: outClrs2,
+                        borderRadius: 3,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ctx.parsed.x.toFixed(1) + '%' } } },
+                    scales: { x: { min: 0, ticks: { callback: v => v + '%', font: { size: 10 } } }, y: { ticks: { font: { size: 11 } } } }
+                }
+            });
+        }
+    }
+
+    // ── 6. FUND RETURN MODEL: Section 3 (Portfolio Impact) + Section 8 (Check Size) ──
     const frmH2 = findSection('fund return model');
     if (frmH2) {
         const pImpact2 = r.portfolio_impact || {};
@@ -7531,9 +8313,20 @@ function _memoInjectCharts(container, report) {
             const priorRowsHtml2 = priorArr2.length > 1 ? priorArr2.map(p =>
                 `<tr><td style="padding-left:12px;color:var(--color-muted);font-size:11px;">Round ${p.round_num||''}: ${p.type==='convertible'?'Conv/SAFE':'Priced'} ${p.stage||''}</td><td style="text-align:right;color:var(--color-muted);font-size:11px;">$${fmt(p.check_m,2)}M</td><td></td><td></td></tr>`
             ).join('') : '';
+            // Only show sweep charts when there are multiple data points (sweep actually ran)
+            const foSweepMultipoint2 = foPs2.blended_curve.length > 1;
+            const foGridMultipoint2  = (foPs2.standalone_grid_search?.grid?.length > 1) &&
+                foPs2.standalone_grid_search.grid.some(g => g.fund_p50_pct_chg != null);
             appendToSection(frmH2, `<div class="memo-chart-context">
                 <p class="memo-chart-label">Follow-on Check Size Optimization</p>
-                <p class="memo-chart-caption">${priorLabel2} treated as sunk cost. Optimizer finds optimal follow-on check for blended MOIC maximization.</p>
+                <p class="memo-chart-caption">
+                    Prior investment (${priorLabel2}) is treated as sunk cost — its return is fixed regardless of follow-on decision.
+                    The optimizer finds the follow-on check size that maximises <strong>blended MOIC</strong>:
+                    the combined return on <em>all</em> capital VoLo has deployed to this company (prior rounds + follow-on),
+                    measured as total exit proceeds divided by total invested ($${fmt(comb2.total_invested_m,2)}M combined).
+                    This differs from the standalone follow-on MOIC, which measures only the new check in isolation.
+                    ${foSweepMultipoint2 ? 'Blended MOIC shown at P10 (downside), P50 (median), and P90 (upside) across 5,000 simulation paths.' : `Sweep collapsed to a single point ($${fmt(foPs2.recommended_followon_check_m,2)}M) — concentration limit equals minimum check size.`}
+                </p>
                 <table class="memo-rvm-table">
                     <thead><tr><th></th><th style="text-align:right;">Prior Round(s)</th><th style="text-align:right;">Follow-on</th><th style="text-align:right;">Combined</th></tr></thead>
                     <tbody>
@@ -7542,11 +8335,33 @@ function _memoInjectCharts(container, report) {
                         <tr><td>Ownership</td><td style="text-align:right;">${priorOwnCell2}</td><td style="text-align:right;">${fmt(foInv2.ownership_pct,1)}%</td><td style="text-align:right;font-weight:700;">${fmt(combinedOwn2,1)}%</td></tr>
                     </tbody>
                 </table>
-                ${blStats2.blended_moic_p50 != null ? `<p style="margin-top:8px;">Blended MOIC: <strong>${fmt(blStats2.blended_moic_p50,2)}x</strong> (P50), <strong>${fmt(blStats2.blended_moic_p10,2)}x</strong> (P10), <strong>${fmt(blStats2.blended_moic_p90,2)}x</strong> (P90)</p>` : ''}
-                <div class="memo-chart-row">
+                ${blStats2.blended_moic_p50 != null ? `
+                <table class="memo-rvm-table" style="margin-top:8px;">
+                    <thead><tr>
+                        <th>Blended MOIC Percentile</th>
+                        <th style="text-align:right;">P10 (Downside)</th>
+                        <th style="text-align:right;">P50 (Median)</th>
+                        <th style="text-align:right;">P90 (Upside)</th>
+                    </tr></thead>
+                    <tbody>
+                        <tr>
+                            <td style="font-size:11px;color:var(--text-secondary);">Return on $${fmt(comb2.total_invested_m,2)}M total deployed (prior + follow-on)</td>
+                            <td style="text-align:right;color:#dc2626;">${fmt(blStats2.blended_moic_p10,2)}x</td>
+                            <td style="text-align:right;font-weight:700;">${fmt(blStats2.blended_moic_p50,2)}x</td>
+                            <td style="text-align:right;color:#2d6a4f;">${fmt(blStats2.blended_moic_p90,2)}x</td>
+                        </tr>
+                        ${blStats2.followon_standalone_moic_p50 != null ? `<tr>
+                            <td style="font-size:11px;color:var(--text-secondary);">Standalone follow-on MOIC (P50) — new $${fmt(foPs2.recommended_followon_check_m,2)}M only</td>
+                            <td style="text-align:right;">—</td>
+                            <td style="text-align:right;">${fmt(blStats2.followon_standalone_moic_p50,2)}x</td>
+                            <td style="text-align:right;">—</td>
+                        </tr>` : ''}
+                    </tbody>
+                </table>` : ''}
+                ${foSweepMultipoint2 ? `<div class="memo-chart-row">
                     <div class="memo-chart-wrap"><canvas id="memo-frm-fo-blended-chart" height="260"></canvas></div>
-                    ${foPs2.standalone_grid_search?.grid?.length ? `<div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>` : ''}
-                </div>
+                    ${foGridMultipoint2 ? `<div class="memo-chart-wrap"><canvas id="memo-frm-fo-grid-chart" height="260"></canvas></div>` : ''}
+                </div>` : ''}
             </div>`);
         }
     }
@@ -7559,44 +8374,137 @@ function _memoInjectCharts(container, report) {
         const cInp = carbon.carbon_inputs || {};
         const riskDiv = carbon.risk_divisor_used || 1;
         const riskSrc = carbon.risk_divisor_source || '';
+        const carbonSurvRate = carbon.survival_rate_used;
+        const carbonSurvSrc = carbon.survival_rate_source || '';
         const entryOwn = ov.entry_ownership_pct || 0;
         const checkM = ov.check_size_millions || 0;
 
         // ─ Block A: Carbon Hero Cards + Methodology Overview ─────────────────
+        const _horizon = cInp.n_ll_years || 10;
         insertInline(carbonH2, `<div class="memo-chart-context memo-carbon-hero-block">
-            <p class="memo-chart-label">RVM Carbon Impact Summary — Section 4</p>
-            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                VoLo's carbon impact model measures <strong>avoided CO₂</strong> — the emissions that do not occur because this company's technology replaces a more carbon-intensive conventional alternative.
-                The core question is: for every unit of the company's product deployed, how much of the conventional resource does it displace, and what is the carbon intensity of that displaced resource?
+            <p class="memo-chart-label">RVM Carbon Impact Summary — Section 4 &nbsp;·&nbsp; <em>PRIME ERP Methodology</em></p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 8px;">
+                VoLo's carbon impact model follows the <strong>PRIME Coalition Emissions Reduction Potential (ERP) methodology</strong>
+                (Burger, Systrom &amp; Kearney, PRIME Coalition / NYSERDA, December 2017).
+                PRIME defines ERP as the cumulative avoided CO₂ attributable to a venture's deployed technology, measured over a multi-year analysis horizon.
+                The five-step PRIME framework maps directly onto VoLo's calculation chain:
             </p>
-            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>Step 1 — Volume:</strong> The annual volume forecast (in deployable units, e.g. MW of solar capacity or tonnes of refining throughput) represents how much of the company's asset gets built each year.
-                <strong>Step 2 — Baseline lifetime production:</strong> Each unit, over its service life, produces a total quantity of the relevant resource (e.g. 1 MW of solar × 25 yr × 0.25 capacity factor = 2,190 MWh). This quantity is the baseline against which carbon displacement is measured.
-                <strong>Step 3 — CI improvement factor:</strong> The new technology has a lower carbon intensity than the conventional alternative by this factor. For example, factor 1.4 means the new tech emits 1/1.4 ≈ 71% of what conventional does, so <em>(1 − 1/1.4) ≈ 28.6%</em> of conventional emissions are avoided per unit of resource produced.
-                <strong>Step 4 — Displaced volume per unit:</strong> Multiplying the baseline lifetime production by the displacement fraction gives the net resource displaced per deployed unit.
-                <strong>Step 5 — Annual impact:</strong> Each year, the cumulative fleet of deployed units displaces resource × the carbon intensity of that resource in that year (declining over time as the grid decarbonizes).
-                Embodied carbon (manufacturing-phase emissions from producing the units themselves) is subtracted to arrive at a net lifecycle figure.
-                Finally, lifecycle tCO₂ is attributed to VoLo by ownership percentage, then risk-adjusted downward based on the company's technology readiness level.
-            </p>
+            <table style="font-size:0.8rem;width:100%;border-collapse:collapse;margin:0 0 10px;">
+                <thead><tr style="background:rgba(91,119,68,0.12);">
+                    <th style="padding:5px 8px;text-align:left;border-bottom:1px solid #ccc;">PRIME Step</th>
+                    <th style="padding:5px 8px;text-align:left;border-bottom:1px solid #ccc;">What PRIME Requires</th>
+                    <th style="padding:5px 8px;text-align:left;border-bottom:1px solid #ccc;">VoLo Implementation</th>
+                    <th style="padding:5px 8px;text-align:left;border-bottom:1px solid #ccc;">Alignment</th>
+                </tr></thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:5px 8px;"><strong>§2 — Displaced Product Emissions</strong></td>
+                        <td style="padding:5px 8px;">LCA of conventional product per unit of production; CI time series (declining grid)</td>
+                        <td style="padding:5px 8px;">JA = baseline_lifetime_prod; JC = CI improvement factor; JD = (1−1/JC)×JA; CI series from NREL ATB / EPA eGRID / IEA, declining over time</td>
+                        <td style="padding:5px 8px;color:#16a34a;">✓ Full alignment</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:5px 8px;"><strong>§3 — Additionality</strong></td>
+                        <td style="padding:5px 8px;">Isolate emissions reductions attributable to the venture vs. market baseline (4 additionality types)</td>
+                        <td style="padding:5px 8px;">The CI improvement factor (JC) captures relative advantage over the conventional incumbent. Explicit market-baseline additionality decomposition (PRIME's 4 types) is not separately modeled — this is a conservative simplification.</td>
+                        <td style="padding:5px 8px;color:#d97706;">⚠ Partial — JC captures relative improvement; PRIME's 4-type additionality matrix not implemented</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:5px 8px;"><strong>§3 — Venture's Own Emissions</strong></td>
+                        <td style="padding:5px 8px;">Subtract manufacturing / operational CO₂ from venture's own product (upstream LCA)</td>
+                        <td style="padding:5px 8px;">Embodied carbon model: KE × CI_embodied_yr × vol_yr, using an upstream embodied CI improvement factor. Attributed at deployment year.</td>
+                        <td style="padding:5px 8px;color:#16a34a;">✓ Full alignment</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:5px 8px;"><strong>§4 — Deployment Forecast</strong></td>
+                        <td style="padding:5px 8px;">S-curve penetration × TAM × third-party market forecast: units_y = M/(1+e^(−k(y−x))) × TAM_y</td>
+                        <td style="padding:5px 8px;">Founder-supplied year_volumes[y] — mathematically equivalent when founders derive volumes from TAM × SAM × SOM × S-curve. Validated against Bass diffusion S-curve; TAM/SAM stored explicitly. (See equivalence note below.)</td>
+                        <td style="padding:5px 8px;color:#16a34a;">✓ Equivalent approach — see founder projection equivalence note</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:5px 8px;"><strong>§5 — ERP Summation</strong></td>
+                        <td style="padding:5px 8px;">ERP = Σ_y (displaced_CI_y − venture_CI_y) × deployment_y; multi-year service life per cohort; 30-year horizon recommended. <em>PRIME does not apply a survival/probability discount — ERP is a deterministic potential estimate.</em></td>
+                        <td style="padding:5px 8px;">Multi-cohort accumulation: for each calendar year t, sum JD_annual × vol[d] × CI[t] across all in-service cohorts d. Horizon = ${_horizon} years (configurable; PRIME recommends 30). Result = Total Lifecycle tCO₂ and VoLo Pro-Rata tCO₂.</td>
+                        <td style="padding:5px 8px;color:#16a34a;">✓ Full alignment — true multi-cohort, user-configurable horizon</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #eee;background:rgba(220,38,38,0.04);">
+                        <td style="padding:5px 8px;"><strong>VoLo Risk Layer</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">(not part of PRIME)</span></td>
+                        <td style="padding:5px 8px;color:#666;">PRIME has no equivalent — ERP is a deterministic forecast</td>
+                        <td style="padding:5px 8px;">P-50 Risk-Adjusted tCO₂ = Fund Pro-Rata Share × survival_rate (from Monte Carlo simulation using likelihood-of-success curves). TCPI (Tonnes CO₂ to Paid-In Capital) = P-50 Risk-Adjusted tCO₂ ÷ check size. The survival rate is drawn from the same financial model (Carta graduation rates × TRL modifiers × 5,000 paths) — ensuring carbon and financial risk are governed by the same probability.</td>
+                        <td style="padding:5px 8px;color:#dc2626;">✗ VoLo extension only — applies only to P-50 Risk-Adjusted tCO₂ and TCPI</td>
+                    </tr>
+                </tbody>
+            </table>
             <div class="memo-rvm-hero">
                 <div class="memo-rvm-hero-card accent">
                     <div class="memo-rvm-hero-num">${fmt(co.company_tonnes, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">Total Lifecycle tCO₂</div>
+                    <div class="memo-rvm-hero-lbl">Total Potential (10yr)</div>
+                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">PRIME ERP (§5) · GIIN IRIS+</div>
                 </div>
                 <div class="memo-rvm-hero-card">
                     <div class="memo-rvm-hero-num">${fmt(co.volo_prorata, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">VoLo Pro-Rata tCO₂</div>
+                    <div class="memo-rvm-hero-lbl">Fund Pro-Rata Share</div>
+                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">GHG Protocol · ownership %</div>
                 </div>
                 <div class="memo-rvm-hero-card">
                     <div class="memo-rvm-hero-num">${fmt(co.volo_risk_adj, 0)}</div>
-                    <div class="memo-rvm-hero-lbl">Risk-Adjusted tCO₂</div>
+                    <div class="memo-rvm-hero-lbl">P-50 Risk-Adjusted</div>
+                    <div style="font-size:0.68rem;color:var(--text-tertiary,#888);margin-top:3px;">Likelihood-of-success · ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : ''} survival</div>
                 </div>
                 <div class="memo-rvm-hero-card accent">
                     <div class="memo-rvm-hero-num">${co.risk_adj_tpd != null ? Number(co.risk_adj_tpd).toFixed(4) : 'N/A'}</div>
-                    <div class="memo-rvm-hero-lbl">t/$ (Risk-Adj)</div>
+                    <div class="memo-rvm-hero-lbl">TCPI (t CO₂/$)</div>
+                    <div style="font-size:0.68rem;color:rgba(255,255,255,0.75);margin-top:3px;">Tonnes CO₂ to Paid-In Capital</div>
                 </div>
             </div>
         </div>`, ['theory of change', 'carbon', 'emissions', 'displace', 'avoided', 'tco2', 'lifecycle', 'impact']);
+
+        // ─ Block A.5: PRIME Deployment Equivalence + Multi-Cohort Method ────────
+        const _tam10 = cInp.tam_10y != null ? Number(cInp.tam_10y).toLocaleString(undefined,{maximumFractionDigits:0}) : null;
+        const _sam10 = cInp.sam_10y != null ? Number(cInp.sam_10y).toLocaleString(undefined,{maximumFractionDigits:0}) : null;
+        const _samPct = cInp.sam_pct_of_tam != null ? (Number(cInp.sam_pct_of_tam)*100).toFixed(1) : null;
+        const _scM = cInp.s_curve_M != null ? (Number(cInp.s_curve_M)*100).toFixed(1) : null;
+        const _scK = cInp.s_curve_K != null ? Number(cInp.s_curve_K).toFixed(3) : null;
+        const _scX = cInp.s_curve_X != null ? Number(cInp.s_curve_X).toFixed(1) : null;
+        const _svcL = cInp.unit_service_life_yrs || 'N/A';
+        insertInline(carbonH2, `<div class="memo-chart-context">
+            <p class="memo-chart-label">PRIME §4 — Deployment Forecast: Founder Volume Equivalence</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 8px;">
+                PRIME requires estimating annual deployments using an S-curve applied to a TAM × third-party market forecast:
+                <code style="background:#f3f4f6;padding:1px 5px;border-radius:3px;">units_y = TAM_y × [M / (1 + e^(−k(y−x)))]</code>.
+                VoLo uses <strong>founder-supplied year_volumes[y]</strong> directly — which is <em>mathematically equivalent</em> when founders build their volume model from TAM → SAM → SOM → S-curve:
+            </p>
+            <div style="background:#f0f4ec;border-left:3px solid #5B7744;padding:8px 12px;margin:0 0 10px;border-radius:0 4px 4px 0;font-size:0.83rem;font-family:monospace;line-height:1.7;">
+                PRIME:  units_y = TAM_y × M / (1 + e^(−k(y−x)))<br>
+                VoLo:   units_y = year_volumes[y]  (founder-supplied)<br>
+                <br>
+                Equivalence when:  year_volumes[y] = SAM × SOM_pct × S_curve_share(y)<br>
+                &nbsp;&nbsp;where S_curve_share(y) = Bass_cumulative(p, q, y) or Logistic(M, k, x, y)<br>
+                &nbsp;&nbsp;and   SAM = TAM × sam_pct_of_tam
+            </div>
+            <p style="font-size:0.84rem;line-height:1.6;margin:0 0 8px;">
+                Both formulations produce the same deployment vector when founders ground their projections in market sizing. VoLo stores TAM and SAM explicitly and validates founder volumes against the simulation's Bass diffusion S-curve (parameters p, q calibrated from NREL ATB data) — founder projections within the P25–P75 range are treated as internally consistent.
+                ${_tam10 ? `For this deal: TAM (10yr) = ${_tam10} units; SAM = ${_sam10 || '—'} units${_samPct ? ` (${_samPct}% of TAM)` : ''}.` : ''}
+                ${_scM ? `S-curve max penetration M = ${_scM}%, speed k = ${_scK}, inflection yr x = ${_scX}.` : ''}
+            </p>
+            <p class="memo-chart-label" style="margin-top:10px;">PRIME §2 &amp; §5 — Multi-Cohort Service Life Accounting</p>
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 8px;">
+                PRIME explicitly requires that "for displaced products that have multi-year lifetimes, it is important to credit the venture for the emissions avoided over the lifetime of that product" (PRIME 2017, p.17–18).
+                VoLo implements <strong>true multi-cohort accounting</strong>: each deployment cohort (units deployed in year <em>d</em>) operates from year <em>d</em> through year <em>d + service_life − 1</em>, and each operating year uses the CI of <em>that calendar year</em> — capturing the benefit of grid decarbonization for units that are still in service when the grid is cleaner.
+            </p>
+            <div style="background:#f0f4ec;border-left:3px solid #5B7744;padding:8px 12px;margin:0 0 10px;border-radius:0 4px 4px 0;font-size:0.83rem;font-family:monospace;line-height:1.7;">
+                JD_annual = JD / service_life  (per-unit annual displacement)<br>
+                impact(t) = Σ_{d: d≤t, t−d &lt; service_life}  JD_annual × vol[d] × CI[t]<br>
+                <br>
+                Where:  d = deployment year (cohort index, 0 = first commercial year)<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; t = calendar year (0-indexed from commercial launch)<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; CI[t] = carbon intensity of displaced resource in year t<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; service_life = ${_svcL} yrs  &nbsp; horizon = ${_horizon} yrs
+            </div>
+            <p style="font-size:0.84rem;line-height:1.6;margin:0;">
+                This differs from a naïve single-cohort calculation (JD × vol[y] × CI[y]) which assigns all lifetime impact to the deployment year and uses only the deployment-year CI. Multi-cohort correctly applies later-year (lower) CI values to units still in service, producing a more conservative and methodologically correct result. Analysis horizon is configurable (default ${_horizon} years; PRIME recommends 30 years).
+            </p>
+        </div>`, ['PRIME', 'TAM', 'SAM', 'SOM', 'S-curve', 'multi-cohort', 'service life', 'deployment', 'equivalence', 'founder', 'methodology']);
 
         // ─ Block B: Displacement Chain Step-by-Step Calculation ──────────────
         const unitDef = cInp.unit_definition || 'unit';
@@ -7698,7 +8606,13 @@ function _memoInjectCharts(container, report) {
                         <td><strong>JD — Displaced Volume / Unit</strong></td>
                         <td>(1 − 1/JC) × JA</td>
                         <td>${jd} ${specProdUnits}</td>
-                        <td>Net quantity of the displaced resource that is NOT emitted because this unit exists, over the unit's full service life. This is the key per-unit displacement quantity — it encodes both how much resource the unit handles (JA) and how much cleaner it is vs. conventional (JC). Multiply JD by the number of units deployed in a year to get that year's total displaced resource.</td>
+                        <td><strong>Lifetime total</strong> — the net quantity of displaced resource avoided because this unit exists, accumulated across its entire ${svcLife}-year service life. JD encodes both how much resource the unit handles (JA) and how much cleaner it is vs. conventional (JC). <em>This is a lifetime figure, not an annual rate</em> — it must be divided by service life before multiplying into annual impact rows.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>JD_annual — Annual Displacement Rate</strong></td>
+                        <td>JD ÷ service_life</td>
+                        <td>${_jdNum != null ? (_jdNum / (cInp.unit_service_life_yrs || 1)).toLocaleString(undefined, {maximumFractionDigits: 2}) : 'N/A'} ${specProdUnits}/yr</td>
+                        <td>The per-unit <em>annual</em> displacement rate. Service life is in the <strong>denominator</strong> because JD is a lifetime total — dividing converts it to the annual rate that gets multiplied by CI and fleet size in each calendar year. Over a cohort's full service life the division cancels: Σ<sub>t</sub> JD_annual × CI[t] = JD × avg(CI). This is the value actually used in the year-by-year table below.</td>
                     </tr>
                     <tr>
                         <td><strong>Displaced Resource</strong></td>
@@ -7717,8 +8631,8 @@ function _memoInjectCharts(container, report) {
                     </tr>
                     <tr style="background:rgba(91,119,68,0.05);">
                         <td><strong>JO — Annual Operating Impact</strong></td>
-                        <td>Σ cohorts: JD × Vol_deployed_yr × CI_yr</td>
-                        <td colspan="2">Calculated year-by-year — see table below. For each calendar year, sum across all in-service unit cohorts: (JD per unit) × (units deployed in that cohort's launch year) × (CI in that calendar year). The CI used is specific to each year, so earlier-CI-year values apply to units deployed early in the forecast.</td>
+                        <td>Σ<sub>d active</sub>: (JD ÷ service_life) × vol[d] × CI[t]</td>
+                        <td colspan="2">Calculated year-by-year — see table below. For each calendar year <em>t</em>, sum across all cohorts <em>d</em> still in service: <code>JD_annual × vol[d] × CI[t]</code>. Because each cohort contributes to <strong>${svcLife} rows</strong> (one per service year), the lifetime total recovers correctly: summing a single cohort across its full life gives <code>JD_annual × service_life × vol × avg_CI = JD × vol × avg_CI</code>. The division and the row-count cancel exactly — dividing by service life is not a penalty, it is the correct annualisation of a lifetime total.</td>
                     </tr>
                     <tr>
                         <td><strong>Embodied Carbon</strong></td>
@@ -7730,10 +8644,10 @@ function _memoInjectCharts(container, report) {
                         }</td>
                     </tr>
                     <tr style="background:rgba(91,119,68,0.10);font-weight:700;">
-                        <td><strong>LL — Total Lifecycle tCO₂</strong></td>
-                        <td>Σ (Annual Operating + Annual Embodied)</td>
+                        <td><strong>LL — Total Lifecycle tCO₂</strong> <span style="font-weight:400;font-size:0.78rem;">(PRIME §5 ERP)</span></td>
+                        <td>Σ_{t=0}^{horizon−1} (Operating_t + Embodied_t)</td>
                         <td>${totalLc} tCO₂</td>
-                        <td>Sum of all annual operating avoided CO₂ (${totalOp} tCO₂) plus embodied CO₂ (${totalEmb} tCO₂) across the 10-year volume forecast. This is the company-level gross avoided CO₂ — before ownership attribution or risk adjustment. To replicate: build a spreadsheet with the year-by-year table below, compute each row's lifecycle tCO₂, and sum.</td>
+                        <td>Sum of all calendar-year lifecycle impacts across the ${_horizon}-year analysis horizon (operating: ${totalOp} tCO₂ + embodied: ${totalEmb} tCO₂). Multi-cohort: each year's figure aggregates all in-service cohorts. This is the company-level gross avoided CO₂ before ownership attribution or risk adjustment. Horizon is configurable (${_horizon} yrs here; PRIME recommends 30). To replicate: build the year-by-year table below using the multi-cohort formula, then sum all rows.</td>
                     </tr>
                 </tbody>
             </table>
@@ -7744,13 +8658,12 @@ function _memoInjectCharts(container, report) {
             insertInline(carbonH2, `<div class="memo-chart-context">
                 <p class="memo-chart-label">Year-by-Year Carbon Impact (Commercial Launch ${launchYr})</p>
                 <p style="font-size:0.84rem;line-height:1.6;margin:0 0 8px;">
-                    Each row represents one calendar year of the 10-year volume forecast.
-                    <strong>Units</strong> = new ${unitDef}s deployed that year (from the volume forecast — this is the annual asset deployment figure, not a cumulative total).
-                    <strong>CI (tCO₂/${specProdUnits||'unit'})</strong> = the carbon intensity of the displaced resource <em>in that specific year</em>, sourced from a declining time series that reflects grid or supply chain decarbonization over time.
-                    <strong>Operating tCO₂</strong> = JD × Units_yr × CI_yr, where JD is the per-unit lifetime displaced volume calculated above.
-                    Note that this is a simplified single-cohort approximation — in the full model, each year's newly deployed cohort operates for its full service life, so Year 5 CI applies to units deployed in Year 1 through Year 5; the year-by-year table below approximates this using the CI for the deployment year.
-                    <strong>Embodied tCO₂</strong> = manufacturing-phase emissions from producing the units deployed that year (negative impact on net carbon benefit).
-                    <strong>Lifecycle tCO₂</strong> = Operating − Embodied (net avoided CO₂ for that year's deployments).
+                    Each row represents one calendar year of the ${_horizon}-year analysis horizon (PRIME §5 — ERP summation).
+                    <strong>Units Deployed</strong> = new ${unitDef}s put into service that year (annual deployment cohort, not a cumulative total). Each cohort remains in service for ${_svcL} years.
+                    <strong>CI (tCO₂/${specProdUnits||'unit'})</strong> = the carbon intensity of the displaced resource in that calendar year — this is the grid/supply-chain CI at time t, shared across all in-service cohorts operating in that year.
+                    <strong>Operating tCO₂ (multi-cohort)</strong> = Σ_{d active in year t} (JD/service_life) × vol[d] × CI[t] — the sum across all cohorts still operating in this calendar year. Earlier-year deployments continue to contribute in later years, and benefit from lower CI as the grid decarbonizes (PRIME §2).
+                    <strong>Embodied tCO₂</strong> = manufacturing-phase emissions attributed at the deployment year: KE × CI_embodied_yr × vol_yr (PRIME §3).
+                    <strong>Lifecycle tCO₂</strong> = Operating − Embodied (net avoided CO₂ for that calendar year, summing all active cohorts).
                 </p>
                 <div class="memo-chart-row">
                     <div class="memo-carbon-table-wrap">
@@ -7783,73 +8696,76 @@ function _memoInjectCharts(container, report) {
 
         insertInline(carbonH2, `<div class="memo-chart-context">
             <p class="memo-chart-label">VoLo Attribution Waterfall — From Company tCO₂ to t/$</p>
-            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                The company-level lifecycle tCO₂ (from the displacement chain above) represents the gross avoided CO₂ <em>attributed to the entire company</em>.
-                To determine VoLo's share and assess carbon capital efficiency, we apply two adjustments:
+            <p style="font-size:0.85rem;line-height:1.6;margin:0 0 8px;">
+                The company-level lifecycle tCO₂ is the PRIME ERP result — the deterministic potential avoided CO₂ if deployment proceeds as forecast.
+                PRIME does not apply a probability or survival discount; it reports potential impact.
+                VoLo adds two investor-level adjustments on top of PRIME: an <strong>ownership attribution</strong> (steps ①→②) and a <strong>risk adjustment</strong> (steps ②→④) that PRIME does not include.
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>Ownership attribution:</strong> VoLo only "owns" a fraction of the company's carbon impact equal to its equity ownership stake.
+                <strong>① → ② Ownership attribution (PRIME-aligned):</strong> VoLo only "owns" a fraction of the company's carbon impact equal to its equity stake.
                 At entry, VoLo holds ${fmt(entryOwn,1)}% of the company, so VoLo's pro-rata tCO₂ = total lifecycle tCO₂ × ${fmt(entryOwn,1)}%.
-                This is analogous to how carbon accounting standards (GHG Protocol, equity method) attribute scope 1/2/3 emissions proportionally to ownership.
+                This is consistent with GHG Protocol equity-method attribution — and is the last step within the PRIME framework.
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>TRL risk haircut:</strong> Early-stage companies may never reach commercial scale — their technology might fail, the market may not develop, or the projected volumes may not materialize.
-                The risk divisor discounts the carbon impact to reflect this probability-weighted uncertainty.
-                TRL 1–4 (laboratory / concept stage) uses a 6× divisor (only ~17% expected to realize full impact).
-                TRL 5–6 (prototype / pilot validated) uses 3× (~33%).
-                TRL 7–9 (commercial or near-commercial) uses 1× (full credit).
-                As the company de-risks and advances its TRL, this divisor should be reduced.
+                <strong>② → ④ VoLo Risk Layer (not part of PRIME):</strong> The survival rate from the Monte Carlo simulation
+                (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'}) is applied as a probability-weighted discount to yield Risk-Adjusted tCO₂.
+                <em>Only ④ P-50 Risk-Adjusted tCO₂ and ⑥ TCPI reflect this layer — ① and ② are PRIME-only.</em>
+                See <strong>Cohort Analysis</strong> section for full derivation of survival rate (Carta graduation rates × TRL modifiers).
             </p>
             <p style="font-size:0.85rem;line-height:1.6;margin:0 0 10px;">
-                <strong>t/$ metric:</strong> Dividing risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
-                This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales.
-                Typical VoLo portfolio range: 0.005–0.10 t/$. Higher is better, but extremely high values should be interrogated for model assumptions.
+                <strong>TCPI (Tonnes CO₂ to Paid-In Capital):</strong> Dividing P-50 risk-adjusted tCO₂ by VoLo's check size ($${fmt(checkM,2)}M) gives the carbon capital efficiency — how many tonnes of CO₂ are avoided per dollar invested.
+                This is VoLo's primary carbon KPI for comparing investment opportunities across sectors and scales, consistent with the metric published in VoLo's annual Impact Report.
+                Typical VoLo portfolio range: 0.005–0.10 t CO₂/$. Higher is better, but extremely high values should be interrogated for model assumptions.
             </p>
-            <div class="memo-chart-row" style="align-items:flex-start; gap: 20px;">
-                <table class="memo-rvm-table" style="flex:1.4;">
-                    <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Why This Step</th></tr></thead>
-                    <tbody>
-                        <tr>
-                            <td><strong>① Company Lifecycle tCO₂</strong></td>
-                            <td>Σ annual lifecycle (above)</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
-                            <td>Gross avoided CO₂ at 100% company scale across 10-year volume forecast. Starting point before any investor-level adjustments.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>② VoLo Pro-Rata tCO₂</strong></td>
-                            <td>① × ${fmt(entryOwn,1)}% entry ownership</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
-                            <td>VoLo's proportional share of company-level impact at the entry ownership stake. Uses entry (not diluted) ownership because we are measuring impact at the time of investment commitment.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>③ TRL Risk Divisor</strong></td>
-                            <td>÷ ${riskDiv} (${riskDivLabel})</td>
-                            <td style="text-align:right;">${riskSrc ? riskSrc : 'TRL-based'}</td>
-                            <td>Probability-weighted haircut for technology and execution risk. A TRL 3 company has much higher probability of never reaching the projected volume than a TRL 8 company. Divisor: TRL 1–4 = 6×, TRL 5–6 = 3×, TRL 7–9 = 1×. Update this as the company advances.</td>
-                        </tr>
-                        <tr style="background:rgba(91,119,68,0.08);">
-                            <td><strong>④ Risk-Adjusted tCO₂</strong></td>
-                            <td>② ÷ ${riskDiv}</td>
-                            <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
-                            <td>Expected (probability-weighted) avoided CO₂ attributable to VoLo's investment. This is the figure to use when comparing carbon impact across portfolio companies at different technology maturities.</td>
-                        </tr>
-                        <tr>
-                            <td><strong>⑤ t/$ Unadjusted</strong></td>
-                            <td>② ÷ $${fmt(checkM,2)}M check</td>
-                            <td style="text-align:right;">${tpdRaw}</td>
-                            <td>Raw carbon capital efficiency before TRL risk adjustment. Shows the theoretical maximum efficiency if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential.</td>
-                        </tr>
-                        <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
-                            <td><strong>⑥ t/$ Risk-Adjusted</strong></td>
-                            <td>④ ÷ $${fmt(checkM,2)}M check</td>
-                            <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
-                            <td>VoLo's primary carbon KPI. Risk-adjusted tonnes of CO₂ avoided per dollar invested. To replicate: take ④ (risk-adj tCO₂) and divide by the check size in dollars. Higher = more carbon impact per dollar. Compare across deals using this metric, not raw company tCO₂.</td>
-                        </tr>
-                    </tbody>
-                </table>
-                ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="flex:1; min-width:220px;"><canvas id="memo-carbon-waterfall-chart" height="320"></canvas></div>` : ''}
-            </div>
-            <p class="memo-chart-note">To replicate this waterfall in a spreadsheet: (1) compute total lifecycle tCO₂ from the year-by-year table above, (2) multiply by entry ownership %, (3) divide by the TRL risk divisor, (4) divide by check size in dollars. The result is t/$. All inputs are shown explicitly in this memo.</p>
+            ${co.company_tonnes != null ? `<div class="memo-chart-wrap" style="height:260px;margin-bottom:14px;"><canvas id="memo-carbon-waterfall-chart"></canvas></div>` : ''}
+            <table class="memo-rvm-table" style="width:100%;table-layout:fixed;">
+                <colgroup>
+                    <col style="width:16%;">
+                    <col style="width:17%;">
+                    <col style="width:10%;text-align:right;">
+                    <col style="width:57%;">
+                </colgroup>
+                <thead><tr><th>Step</th><th>Formula</th><th style="text-align:right;">Value</th><th>Why This Step</th></tr></thead>
+                <tbody>
+                    <tr>
+                        <td><strong>① Company Lifecycle tCO₂</strong> <span style="font-weight:400;font-size:0.75rem;color:#16a34a;">PRIME ERP</span></td>
+                        <td>Σ annual lifecycle (above)</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(compTonnes, 0)}</td>
+                        <td>PRIME ERP result — gross avoided CO₂ at 100% company scale across the ${_horizon}-year analysis horizon. Deterministic potential; no survival discount applied here. Starting point before any investor-level adjustments.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>② VoLo Pro-Rata tCO₂</strong> <span style="font-weight:400;font-size:0.75rem;color:#16a34a;">PRIME ERP</span></td>
+                        <td>① × ${fmt(entryOwn,1)}% entry ownership</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(voloProrata, 0)}</td>
+                        <td>VoLo's proportional share of company-level PRIME ERP impact at the entry ownership stake. Uses entry (not diluted) ownership because we measure impact at the time of investment commitment. This is the last step within the PRIME framework — no survival discount applied.</td>
+                    </tr>
+                    <tr style="background:rgba(220,38,38,0.03);">
+                        <td><strong>③ Simulation Survival Rate</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">VoLo only</span></td>
+                        <td>× ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'} survival rate</td>
+                        <td style="text-align:right;">${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : (riskSrc || 'TRL-based')}</td>
+                        <td>Probability-weighted survival rate from the Monte Carlo simulation (${carbonSurvSrc || 'simulation'}). This is the same survival_rate used in the financial model — Carta graduation rates × TRL modifiers across 5,000 paths. Replaces the old coarse TRL bucket divisor so carbon and financial risk are consistent.</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.08);">
+                        <td><strong>④ Risk-Adjusted tCO₂</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">VoLo only</span></td>
+                        <td>② × ${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'N/A'}</td>
+                        <td style="text-align:right;font-weight:700;">${fmt(voloRiskAdj, 0)}</td>
+                        <td>VoLo Risk Layer: expected (probability-weighted) avoided CO₂. Not a PRIME output — this is VoLo's own extension to put early-stage and late-stage deals on an equal footing. To replicate: multiply pro-rata tCO₂ (② above) by the simulation survival_rate (③ above).</td>
+                    </tr>
+                    <tr>
+                        <td><strong>⑤ TCPI (Unadjusted)</strong></td>
+                        <td>② ÷ $${fmt(checkM,2)}M check</td>
+                        <td style="text-align:right;">${tpdRaw}</td>
+                        <td>Raw carbon capital efficiency before survival risk adjustment. Represents the theoretical maximum if the company fully succeeds. Useful as an upper bound and for comparing sector-level potential independent of technology maturity.</td>
+                    </tr>
+                    <tr style="background:rgba(91,119,68,0.08);font-weight:600;">
+                        <td><strong>⑥ TCPI (Risk-Adj)</strong> <span style="font-weight:400;font-size:0.75rem;color:#dc2626;">VoLo only</span></td>
+                        <td>④ ÷ $${fmt(checkM,2)}M check</td>
+                        <td style="text-align:right;font-weight:700;">${tpdRisk}</td>
+                        <td>TCPI — Tonnes CO₂ to Paid-In Capital. VoLo's primary carbon KPI, published in VoLo's annual Impact Report. Applies likelihood-of-success survival discount before dividing by check size. To replicate: use ④ (P-50 risk-adj tCO₂) ÷ check size in dollars. Use this — not raw company tCO₂ — for cross-deal comparison. Typical VoLo range: 0.005–0.10 t CO₂/$.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p class="memo-chart-note">To replicate this waterfall: (1) compute total potential tCO₂ (10yr) from the year-by-year table above, (2) multiply by entry ownership % per GHG Protocol equity-method attribution, (3) multiply by the simulation survival_rate (${carbonSurvRate != null ? (carbonSurvRate*100).toFixed(1)+'%' : 'see simulation section'} — likelihood-of-success curve from the Monte Carlo financial model), (4) divide by check size in dollars to get TCPI. All inputs are shown explicitly in this memo.</p>
         </div>`, ['attribution', 'pro-rata', 'ownership', 'risk', 'divisor', 'waterfall', 'tco2', 'portfolio', 'efficiency', 'tpd']);
 
         // Grid Carbon Intensity Trajectory chart removed from memo
@@ -7876,6 +8792,7 @@ function _memoInjectImages(container, imageDocs) {
         'carbon_impact': 'carbon impact',
         'technology_ip_moat': 'technology',
         'financing_overview': 'financing overview',
+        'cohort_analysis': 'cohort analysis',
         'fund_return_model': 'fund return model',
     };
 
@@ -8162,46 +9079,61 @@ function _memoRenderCharts(r) {
         });
     }
 
-    // Chart 2: Attribution waterfall bar chart
+    // Chart 2: Attribution waterfall — dual Y-axis (tCO₂ left, t/$ right)
     if (co2.company_tonnes != null) {
-        const entryOwn2 = (ov.entry_ownership_pct || 0) / 100;
-        const wfLabels = ['Lifecycle tCO₂', 'VoLo Pro-Rata', 'Risk-Adjusted', 't/$ ×10k'];
-        const wfData = [
-            co2.company_tonnes || 0,
-            co2.volo_prorata || 0,
-            co2.volo_risk_adj || 0,
-            (co2.risk_adj_tpd || 0) * 10000,
-        ];
-        const wfColors = [C.blueSteel + 'cc', C.green + 'cc', C.accent + 'cc', '#e36209cc'];
+        const wfLabels = ['① Total Potential\n(10yr)', '② Fund\nPro-Rata Share', '④ P-50\nRisk-Adjusted', '⑥ TCPI\n(t CO₂/$)'];
         mkChart('memo-carbon-waterfall-chart', {
             type: 'bar',
             data: {
                 labels: wfLabels,
-                datasets: [{
-                    data: wfData,
-                    backgroundColor: wfColors,
-                    borderColor: wfColors.map(c => c.slice(0,7)),
-                    borderWidth: 1,
-                    borderRadius: 3,
-                }]
+                datasets: [
+                    {
+                        label: 'Avoided CO₂ (left axis)',
+                        data: [co2.company_tonnes || 0, co2.volo_prorata || 0, co2.volo_risk_adj || 0, null],
+                        backgroundColor: [C.blueSteel + 'cc', C.green + 'cc', C.accent + 'cc', 'transparent'],
+                        borderColor:     [C.blueSteel,         C.green,         C.accent,         'transparent'],
+                        borderWidth: 1, borderRadius: 3,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'TCPI t CO₂/$ (right axis)',
+                        data: [null, null, null, co2.risk_adj_tpd || 0],
+                        backgroundColor: ['transparent', 'transparent', 'transparent', '#e36209cc'],
+                        borderColor:     ['transparent', 'transparent', 'transparent', '#e36209'],
+                        borderWidth: 1, borderRadius: 3,
+                        yAxisID: 'y2',
+                    }
+                ]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
                 plugins: {
-                    legend: { display: false },
+                    legend: { display: true, position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } },
                     title: { display: true, text: 'Carbon Attribution Step-Down', font: { family: chartFont, size: 13 } },
                     tooltip: {
                         callbacks: {
                             label: (item) => {
-                                const raw = item.parsed.y;
-                                if (item.dataIndex === 3) return `t/$ = ${(raw/10000).toFixed(5)}`;
-                                return `${raw.toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
+                                if (item.datasetIndex === 1) return `t/$ = ${(item.parsed.y || 0).toFixed(5)}`;
+                                return `${(item.parsed.y || 0).toLocaleString(undefined, {maximumFractionDigits: 0})} tCO₂`;
                             }
                         }
                     }
                 },
                 scales: {
-                    y: { title: { display: true, text: 'tCO₂ (t/$ ×10k for last bar)' } }
+                    x: { ticks: { font: { size: 10 }, maxRotation: 0, minRotation: 0 } },
+                    y: {
+                        type: 'linear', position: 'left',
+                        title: { display: true, text: 'Avoided CO₂ (tonnes)', font: { size: 10 } },
+                        beginAtZero: true,
+                        ticks: { callback: v => v >= 1e6 ? (v/1e6).toFixed(1)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v }
+                    },
+                    y2: {
+                        type: 'linear', position: 'right',
+                        title: { display: true, text: 't/$ (risk-adjusted)', font: { size: 10 } },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false },
+                        ticks: { callback: v => v.toFixed(4) }
+                    }
                 }
             }
         });
@@ -8284,46 +9216,62 @@ function _memoRenderCharts(r) {
     }
 
     const foPs3 = r.followon_position_sizing || {};
-    if (foPs3.has_data && foPs3.blended_curve?.length) {
+    if (foPs3.has_data && foPs3.blended_curve?.length > 1) {
         const bc3 = foPs3.blended_curve;
-        const recFo3 = foPs3.recommended_followon_check_m;
         const bcLabels3 = bc3.map(b => '$' + b.followon_check_m.toFixed(2) + 'M');
         mkChart('memo-frm-fo-blended-chart', {
             type: 'line',
             data: {
                 labels: bcLabels3,
                 datasets: [
-                    { label: 'Blended P90', data: bc3.map(b => b.blended_moic_p90), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
-                    { label: 'Blended P50', data: bc3.map(b => b.blended_moic_p50), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 1 },
-                    { label: 'Blended P10', data: bc3.map(b => b.blended_moic_p10), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'P90 (Upside)',  data: bc3.map(b => b.blended_moic_p90), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                    { label: 'P50 (Median)',  data: bc3.map(b => b.blended_moic_p50), borderColor: C.green, borderWidth: 2.5, fill: false, pointRadius: 1 },
+                    { label: 'P10 (Downside)',data: bc3.map(b => b.blended_moic_p10), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
                 ]
             },
             options: {
                 responsive: true, maintainAspectRatio: false,
-                plugins: { title: { display: true, text: 'Blended MOIC (First + Follow-on)', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
-                scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Blended MOIC' }, ticks: { callback: v => v.toFixed(1)+'x' } } },
+                plugins: {
+                    title: { display: true, text: 'Blended MOIC vs Follow-on Check Size', font: { family: chartFont, size: 13 } },
+                    subtitle: { display: true, text: 'Blended = exit proceeds ÷ (prior rounds + follow-on)', font: { family: chartFont, size: 10 }, color: '#888', padding: { bottom: 6 } },
+                    legend: { position: 'bottom', labels: { font: { size: 10 } } }
+                },
+                scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Blended MOIC (all-in)' }, ticks: { callback: v => v.toFixed(1)+'x' } } },
             }
         });
         const foGrid3 = foPs3.standalone_grid_search?.grid || [];
-        if (foGrid3.length) {
+        const foGridHasFundData3 = foGrid3.some(g => g.fund_p50_pct_chg != null);
+        if (foGrid3.length > 1 && foGridHasFundData3) {
             const foLabels3 = foGrid3.map(g => '$' + g.check_m.toFixed(2) + 'M');
             mkChart('memo-frm-fo-grid-chart', {
                 type: 'line',
                 data: {
                     labels: foLabels3,
                     datasets: [
-                        { label: 'Fund P50 Δ%', data: foGrid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green, borderWidth: 2, fill: false, pointRadius: 1 },
-                        { label: 'Fund P10 Δ%', data: foGrid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
-                        { label: 'Fund P90 Δ%', data: foGrid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88', borderWidth: 1.5, fill: false, pointRadius: 0 },
+                        { label: 'P50 (Median)',  data: foGrid3.map(g => (g.fund_p50_pct_chg||0)*100), borderColor: C.green,           borderWidth: 2,   fill: false, pointRadius: 1 },
+                        { label: 'P10 (Downside)',data: foGrid3.map(g => (g.fund_p10_pct_chg||0)*100), borderColor: C.danger+'88',     borderWidth: 1.5, fill: false, pointRadius: 0 },
+                        { label: 'P90 (Upside)',  data: foGrid3.map(g => (g.fund_p90_pct_chg||0)*100), borderColor: C.blueSteel+'88',  borderWidth: 1.5, fill: false, pointRadius: 0 },
                     ]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
-                    plugins: { title: { display: true, text: 'Follow-on Fund TVPI Impact', font: { family: chartFont, size: 13 } }, legend: { position: 'bottom', labels: { font: { size: 10 } } } },
+                    plugins: {
+                        title: { display: true, text: 'Follow-on Impact on Fund TVPI', font: { family: chartFont, size: 13 } },
+                        subtitle: { display: true, text: '% change in fund-level TVPI at each follow-on check size', font: { family: chartFont, size: 10 }, color: '#888', padding: { bottom: 6 } },
+                        legend: { position: 'bottom', labels: { font: { size: 10 } } }
+                    },
                     scales: { x: { title: { display: true, text: 'Follow-on Check Size' } }, y: { title: { display: true, text: 'Δ% Fund TVPI' }, ticks: { callback: v => v.toFixed(2)+'%' } } },
                 }
             });
         }
+    }
+
+    // ── Render any pending charts queued by inline section blocks ──────────
+    if (typeof _pendingCharts !== 'undefined' && _pendingCharts && _pendingCharts.length > 0) {
+        for (const pc of _pendingCharts) {
+            mkChart(pc.id, { type: pc.type, data: pc.data, options: pc.options });
+        }
+        _pendingCharts = [];
     }
 }
 

@@ -25,6 +25,7 @@ from .rvm_carbon import (
     build_carbon_intermediates, compute_portfolio_outputs,
     get_risk_divisor_for_trl, get_carbon_defaults,
 )
+from .dilution import get_trl_modifiers, TRL_MODIFIERS, STAGE_ORDER
 from .position_sizing import (
     optimize_position_size,
     optimize_followon_position,
@@ -301,9 +302,19 @@ def generate_deal_report(
     )
 
     # ── Section 2: Carbon assessment ──────────────────────────────────────────
+    # Use simulation survival_rate as the carbon risk multiplier so it matches
+    # the probability-weighted financial model (Carta + TRL calibrated).
+    _sim_survival_rate = sim.get("summary", {}).get("survival_rate")
+    if _sim_survival_rate is None or _sim_survival_rate <= 0:
+        # Fallback: invert the TRL risk divisor to a rough survival rate
+        _fallback_div = get_risk_divisor_for_trl(trl)
+        _sim_survival_rate = 1.0 / _fallback_div
+        _carbon_rate_source = f"TRL {trl} divisor ({_fallback_div}→ {_sim_survival_rate:.2f})"
+    else:
+        _carbon_rate_source = "Monte Carlo simulation survival_rate"
     carbon = _run_carbon_assessment(
         company_name, volume, op_carbon, emb_carbon,
-        portfolio, risk_divisor,
+        portfolio, risk_divisor, survival_rate=_sim_survival_rate,
     )
 
     # ── Section 3: S-curve data ───────────────────────────────────────────────
@@ -459,6 +470,41 @@ def generate_deal_report(
         "survival_rate": survival,
     }
 
+    _trl_mods = get_trl_modifiers(trl)
+
+    # ── Extract per-stage Carta graduation rates for this sector ──────────────
+    _carta_rounds = (carta_data or {}).get("carta_rounds", {})
+    _sector_rounds = _carta_rounds.get(sector_profile, {})
+    _carta_stage_data = {}
+    for _stg in STAGE_ORDER:
+        _sd = _sector_rounds.get(_stg)
+        if _sd:
+            _base_grad = _sd.get("graduation_rate")
+            _sp = _trl_mods.get("survival_penalty", 0.0)
+            # decay(s) = max(0, 1 - s × 0.3) — same formula as dilution.py
+            _decay = max(0.0, 1.0 - _sp * 0.3)
+            _eff_grad = round(_base_grad * _decay, 4) if _base_grad is not None else None
+            _carta_stage_data[_stg] = {
+                "graduation_rate": _base_grad,
+                "effective_graduation_rate": _eff_grad,
+                "trl_decay_factor": round(_decay, 4),
+                "round_size_p50": _sd.get("round_size", {}).get("p50"),
+                "pre_money_p50": _sd.get("pre_money", {}).get("p50"),
+                "months_to_grad_median": _sd.get("median_months_to_grad"),
+                "sample_size": _sd.get("sample_size_rounds"),
+            }
+
+    # Full TRL modifier lookup table (all 9 levels) for the Cohort Analysis section
+    _trl_table = {
+        lvl: {
+            "survival_penalty": m.get("survival_penalty"),
+            "capital_multiplier": m.get("capital_multiplier"),
+            "extra_bridge_prob": m.get("extra_bridge_prob"),
+            "exit_multiple_discount": m.get("exit_multiple_discount"),
+        }
+        for lvl, m in TRL_MODIFIERS.items()
+    }
+
     report["simulation"] = {
         "outcome_breakdown": sim.get("outcome_breakdown"),
         "moic_unconditional": sim.get("moic_unconditional"),
@@ -474,6 +520,23 @@ def generate_deal_report(
         "n_simulations": n_simulations,
         "survival_rate": survival,
         "meaningful_exit_rate": meaningful_exit,
+        # TRL-driven risk modifiers applied in simulation paths
+        "trl_modifiers": {
+            "trl": trl,
+            "survival_penalty": _trl_mods.get("survival_penalty"),
+            "capital_multiplier": _trl_mods.get("capital_multiplier"),
+            "extra_bridge_prob": _trl_mods.get("extra_bridge_prob"),
+            "exit_multiple_discount": _trl_mods.get("exit_multiple_discount"),
+        },
+        "carta_inputs": {
+            "entry_stage": entry_stage,
+            "sector_profile": sector_profile,
+        },
+        # Per-stage Carta graduation rates with TRL modifier applied
+        # Used by Cohort Analysis section. Loaded from Carta Insights Excel at runtime.
+        "carta_stage_data": _carta_stage_data,
+        # Full TRL modifier lookup table (TRL 1-9) for display in Cohort Analysis
+        "trl_modifier_table": _trl_table,
     }
 
     report["founder_comparison"] = founder_comparison
@@ -483,6 +546,8 @@ def generate_deal_report(
     report["carbon_impact"] = carbon
     report["carbon_impact"]["risk_divisor_used"] = risk_divisor
     report["carbon_impact"]["risk_divisor_source"] = f"Auto-derived from TRL {trl}"
+    report["carbon_impact"]["survival_rate_used"] = round(_sim_survival_rate, 4)
+    report["carbon_impact"]["survival_rate_source"] = _carbon_rate_source
     # Store raw carbon inputs so the memo writer can explain each calculation step
     report["carbon_impact"]["carbon_inputs"] = {
         "displaced_resource": op_carbon.get("displaced_resource", ""),
@@ -493,8 +558,13 @@ def generate_deal_report(
         "unit_service_life_yrs": volume.get("unit_service_life_yrs"),
         "commercial_launch_yr": volume.get("commercial_launch_yr"),
         "year_volumes": volume.get("year_volumes", []),
+        "n_ll_years": volume.get("n_ll_years", 10),          # analysis horizon (PRIME §5)
         "tam_10y": volume.get("tam_10y"),
         "sam_10y": volume.get("sam_10y"),
+        "sam_pct_of_tam": volume.get("sam_pct_of_tam"),      # SAM as fraction of TAM
+        "s_curve_M": volume.get("s_curve_M"),                # PRIME §4 S-curve params
+        "s_curve_K": volume.get("s_curve_K"),
+        "s_curve_X": volume.get("s_curve_x"),
         "emb_displaced_resource": emb_carbon.get("displaced_resource", "") or "",
         "emb_baseline_production": emb_carbon.get("baseline_production"),
         "emb_range_improvement": emb_carbon.get("range_improvement"),
@@ -863,16 +933,24 @@ def _compute_sensitivity(
 
 def _run_carbon_assessment(
     company_name, volume, op_carbon, emb_carbon, portfolio_inputs, risk_divisor,
+    survival_rate: float = None,
 ) -> dict:
     try:
         launch_year = int(volume.get("commercial_launch_yr", 2024))
         year_vols = volume.get("year_volumes", [0.0] * 10)
         year_vols = (year_vols + [0.0] * 10)[:10]
 
+        # Convert survival_rate to an equivalent divisor for the carbon model.
+        # risk_adj_t = prorata_t * survival_rate  ≡  prorata_t / (1/survival_rate)
+        if survival_rate and survival_rate > 0:
+            effective_divisor = 1.0 / survival_rate
+        else:
+            effective_divisor = float(risk_divisor) if risk_divisor else 1.0
+
         company = CompanyModel(
             company_name=company_name,
             stage=volume.get("stage", "Portfolio"),
-            risk_adjustment_divisor=risk_divisor,
+            risk_adjustment_divisor=effective_divisor,
             volume=VolumeInputs(
                 unit_definition=volume.get("unit_definition", ""),
                 unit_service_life_yrs=int(volume.get("unit_service_life_yrs", 10)),

@@ -4200,63 +4200,221 @@ h2 .info-tip-body {
 
 /* ==================== PDF / PRINT ==================== */
 @media print {
+
     /* ── Nuclear hide: everything disappears first ── */
     body * { visibility: hidden; }
 
-    /* ── Then show only the memo content ── */
+    /* ── Show only the memo content ── */
     #memo-rendered,
     #memo-rendered * { visibility: visible; }
 
-    /* ── Position memo-rendered to fill the page ── */
+    /* ── Position memo at top of page ── */
     #memo-rendered {
         position: absolute;
-        top: 0;
-        left: 0;
+        top: 0; left: 0;
         width: 100%;
-        padding: 0;
+        padding: 0; margin: 0;
+        background: white !important;
+    }
+
+    /* ════════════════════════════════════════
+       PAGE SETUP — US Letter, portrait
+    ════════════════════════════════════════ */
+    @page {
+        size: letter portrait;
+        margin: 0.75in 0.75in 0.85in 0.75in;
+        /* Running page-number footer */
+        @bottom-center {
+            content: counter(page);
+            font-size: 8pt;
+            color: #888;
+        }
+    }
+    /* Cover page: no margin (full bleed) */
+    @page :first {
         margin: 0;
     }
 
-    /* ── Page setup ── */
-    @page {
-        size: A4;
-        margin: 20mm 18mm 22mm 18mm;
+    /* ════════════════════════════════════════
+       FRONT MATTER — each page breaks alone
+    ════════════════════════════════════════ */
+
+    /* Cover: bleed to page edge by compensating for @page margin on all other pages */
+    .memo-front-matter { border-radius: 0 !important; overflow: visible !important; margin: 0 !important; }
+
+    .memo-cover-page {
+        break-after: page;
+        page-break-after: always;
+        /* Full-bleed: cover prints on @page :first which has 0 margin */
+        min-height: 100vh;
+        margin: 0 !important;
+        border-radius: 0 !important;
     }
 
-    /* ── Typography ── */
-    #memo-rendered { font-size: 10.5pt; color: #1a1a1a !important; background: white !important; }
-    #memo-rendered h1 { font-size: 20pt; page-break-after: avoid; }
-    #memo-rendered h2 { font-size: 13pt; page-break-after: avoid; margin-top: 16pt; border-bottom: 1px solid #ccc; padding-bottom: 3pt; }
-    #memo-rendered h3 { font-size: 11pt; page-break-after: avoid; }
-    #memo-rendered p, #memo-rendered li { font-size: 10pt; line-height: 1.5; }
+    .memo-disclaimer-page {
+        break-before: page;   page-break-before: always;
+        break-after: page;    page-break-after: always;
+        border: none !important;
+        border-radius: 0 !important;
+        background: white !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
 
-    /* ── Page breaks ── */
-    #memo-rendered .memo-section-wrapper { page-break-inside: avoid; }
-    #memo-rendered h2 + p { page-break-before: avoid; }
+    .memo-toc-page {
+        break-before: page;   page-break-before: always;
+        break-after: page;    page-break-after: always;
+        border: none !important;
+        border-radius: 0 !important;
+        background: white !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
 
-    /* ── Charts ── */
-    #memo-rendered .memo-chart-inline { page-break-inside: avoid; margin: 10pt 0; }
-    #memo-rendered .memo-chart-row { display: flex !important; gap: 10pt; }
+    /* ════════════════════════════════════════
+       SECTION BREAKS — each major section
+       starts on a new page
+    ════════════════════════════════════════ */
+    #memo-rendered .memo-section-wrapper {
+        break-before: page;
+        page-break-before: always;
+        /* Allow long sections to flow across multiple pages naturally */
+        break-inside: auto;
+        page-break-inside: auto;
+        margin-top: 0 !important;
+    }
+    /* First section after TOC — TOC's break-after already opens a new page;
+       avoid doubling up with an extra blank page */
+    #memo-rendered .memo-section-wrapper:first-of-type {
+        break-before: avoid;
+        page-break-before: avoid;
+    }
+
+    /* Headings: never orphan a heading at the bottom of a page */
+    #memo-rendered h2 { break-after: avoid; page-break-after: avoid; }
+    #memo-rendered h3 { break-after: avoid; page-break-after: avoid; }
+    #memo-rendered h4 { break-after: avoid; page-break-after: avoid; }
+    #memo-rendered h2 + p,
+    #memo-rendered h3 + p,
+    #memo-rendered h2 + ul,
+    #memo-rendered h3 + ul { break-before: avoid; page-break-before: avoid; }
+
+    /* Prevent widows/orphans in paragraphs */
+    #memo-rendered p { orphans: 3; widows: 3; }
+
+    /* ════════════════════════════════════════
+       TYPOGRAPHY
+    ════════════════════════════════════════ */
+    #memo-rendered {
+        font-size: 10.5pt;
+        color: #1a1a1a !important;
+        line-height: 1.55;
+    }
+    #memo-rendered h1 { font-size: 18pt; }
+    #memo-rendered h2 {
+        font-size: 13pt; font-weight: 700;
+        margin-top: 0; margin-bottom: 8pt;
+        border-bottom: 1.5px solid #5B7744;
+        padding-bottom: 3pt; color: #1a2332;
+    }
+    #memo-rendered h3 { font-size: 11pt; font-weight: 600; margin-top: 10pt; }
+    #memo-rendered p, #memo-rendered li { font-size: 10.5pt; line-height: 1.55; }
+    #memo-rendered ul, #memo-rendered ol { padding-left: 18pt; }
+
+    /* ════════════════════════════════════════
+       ATOMIC ELEMENTS — keep together
+       (small enough to fit on half a page)
+    ════════════════════════════════════════ */
+
+    /* Hero metric cards */
+    #memo-rendered .memo-rvm-hero {
+        display: flex !important;
+        flex-wrap: wrap;
+        gap: 6pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    #memo-rendered .memo-rvm-hero-card {
+        border: 1px solid #ccc !important;
+        border-radius: 4pt !important;
+        padding: 5pt 8pt;
+        flex: 1; min-width: 70pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    /* Deal summary card */
+    #memo-rendered .memo-deal-card {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+
+    /* Charts — keep the container together; cap height to fit on half a page */
+    #memo-rendered .memo-chart-inline {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        margin: 8pt 0;
+    }
+    #memo-rendered .memo-chart-row {
+        display: flex !important;
+        gap: 10pt;
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
     #memo-rendered .memo-chart-wrap { flex: 1; overflow: hidden; }
-    #memo-rendered canvas, #memo-rendered .memo-chart-wrap img { max-height: 160pt !important; width: 100% !important; object-fit: contain; }
+    #memo-rendered canvas,
+    #memo-rendered .memo-chart-wrap img {
+        max-height: 190pt !important;
+        width: 100% !important;
+        object-fit: contain;
+    }
 
-    /* ── Images ── */
-    #memo-rendered .memo-image-figure { page-break-inside: avoid; max-width: 55%; margin: 10pt auto; display: block; text-align: center; }
+    /* Images */
+    #memo-rendered .memo-image-figure {
+        break-inside: avoid;
+        page-break-inside: avoid;
+        max-width: 58%;
+        margin: 8pt auto;
+        display: block;
+        text-align: center;
+    }
     #memo-rendered .memo-image-embed { max-width: 100%; height: auto; }
 
-    /* ── Tables ── */
-    #memo-rendered table { page-break-inside: avoid; width: 100%; font-size: 9pt; border-collapse: collapse; }
+    /* Tables — allow row-level breaks for long tables;
+       repeat header on each page; keep individual rows together */
+    #memo-rendered table {
+        width: 100%;
+        font-size: 9pt;
+        border-collapse: collapse;
+        break-inside: auto;
+        page-break-inside: auto;
+    }
     #memo-rendered thead { display: table-header-group; }
-    #memo-rendered th, #memo-rendered td { border: 1px solid #ddd; padding: 4pt 6pt; }
+    #memo-rendered tr {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
+    #memo-rendered th, #memo-rendered td {
+        border: 1px solid #ddd;
+        padding: 3.5pt 5pt;
+    }
 
-    /* ── Hero metric cards ── */
-    #memo-rendered .memo-rvm-hero { display: flex !important; gap: 6pt; flex-wrap: wrap; }
-    #memo-rendered .memo-rvm-hero-card { border: 1px solid #ccc !important; padding: 5pt 8pt; flex: 1; min-width: 70pt; }
+    /* Cohort / displacement chain tables (often wide) */
+    #memo-rendered .memo-displacement-table,
+    #memo-rendered .memo-impact-table {
+        font-size: 8.5pt;
+    }
 
-    /* ── Deal card ── */
-    #memo-rendered .memo-deal-card { page-break-inside: avoid; }
+    /* Inline metric badges / chips */
+    #memo-rendered .rvm-badge,
+    #memo-rendered .memo-metric-chip {
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }
 
-    /* ── Hide UI chrome that got injected into content ── */
+    /* ════════════════════════════════════════
+       HIDE UI CHROME
+    ════════════════════════════════════════ */
     #memo-rendered .memo-section-toolbar,
     #memo-rendered .memo-sect-btn,
     #memo-rendered .memo-edit-panel,
@@ -4264,18 +4422,28 @@ h2 .info-tip-body {
     #memo-rendered .memo-history-panel,
     #memo-rendered .memo-image-remove,
     #memo-rendered sup[data-cite],
-    #memo-rendered .memo-citation-chip { display: none !important; visibility: hidden !important; }
+    #memo-rendered .memo-citation-chip,
+    #memo-rendered .memo-toc-link,      /* remove hyperlink underlines in print */
+    #memo-rendered .lock-badge          { display: none !important; visibility: hidden !important; }
 
-    /* ── Confidentiality footer ── */
+    /* Keep TOC text visible but un-linked */
+    #memo-rendered .memo-toc-title,
+    #memo-rendered .memo-toc-num,
+    #memo-rendered .memo-toc-dots      { visibility: visible !important; }
+
+    /* ════════════════════════════════════════
+       RUNNING FOOTER — every page except cover
+    ════════════════════════════════════════ */
     #memo-rendered::after {
         content: "VoLo Earth Ventures — Confidential & Proprietary";
         display: block;
-        margin-top: 20pt;
+        margin-top: 24pt;
         padding-top: 5pt;
-        border-top: 1px solid #ccc;
-        font-size: 8pt;
-        color: #888;
+        border-top: 1px solid #ddd;
+        font-size: 7.5pt;
+        color: #aaa;
         text-align: center;
+        letter-spacing: 0.04em;
         visibility: visible;
     }
 }
@@ -4373,3 +4541,127 @@ h2 .info-tip-body {
 .ddr-job-error .ddr-hist-status { background: #fde8e8; color: #b91c1c; }
 .ddr-job-running .ddr-hist-status { background: #e0f0ff; color: #1e6bb8; }
 .ddr-hist-date { color: #888; font-size: 0.8rem; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   Memo Front Matter — Cover Page, Legal Disclaimer, Table of Contents
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Shared page container */
+.memo-front-matter {
+    margin: 0 0 0 0;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+/* ── Cover Page ── */
+.memo-cover-page {
+    background: #1e2d24;
+    color: #fff;
+    min-height: 540px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 56px 48px;
+    margin-bottom: 24px;
+}
+.memo-cover-inner { max-width: 520px; width: 100%; }
+.memo-cover-logo {
+    display: flex; align-items: center; justify-content: center;
+    gap: 12px; margin-bottom: 36px;
+}
+.memo-cover-logo-mark {
+    width: 42px; height: 42px; background: #5B7744; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+.memo-cover-logo-text {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #8BA872;
+}
+.memo-cover-divider {
+    width: 64px; height: 1px; background: #5B7744; margin: 0 auto 36px;
+}
+.memo-cover-type {
+    font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: #8BA872; margin-bottom: 14px; font-weight: 600;
+}
+.memo-cover-company {
+    font-size: 30px; font-weight: 700; color: #fff;
+    line-height: 1.15; margin-bottom: 12px;
+}
+.memo-cover-detail { font-size: 11px; color: #999; margin-bottom: 28px; }
+.memo-cover-date { font-size: 10px; color: #8BA872; margin-bottom: 36px; }
+.memo-cover-confidential {
+    font-size: 8px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: #dc2626; border: 1px solid #dc2626; padding: 6px 18px;
+    border-radius: 3px; margin-bottom: 28px; font-weight: 600; line-height: 1.6;
+}
+.memo-cover-footer { font-size: 9px; color: #666; line-height: 1.6; }
+
+/* ── Legal Disclaimer ── */
+.memo-disclaimer-page {
+    background: #fafaf9;
+    border: 1px solid #e5e7eb;
+    padding: 40px 48px;
+    margin-bottom: 24px;
+}
+.memo-disclaimer-inner { max-width: 760px; margin: 0 auto; }
+.memo-disclaimer-title {
+    font-size: 17px; font-weight: 700; color: #1a1a1a;
+    margin: 0 0 20px; padding-bottom: 10px;
+    border-bottom: 2px solid #5B7744;
+}
+.memo-disclaimer-block {
+    font-size: 11px; line-height: 1.7; margin-bottom: 12px;
+    color: #333; text-align: justify;
+}
+.memo-disclaimer-nonreliance {
+    display: block; font-size: 11px; font-weight: 700;
+    line-height: 1.7; color: #1a1a1a;
+}
+.memo-disclaimer-date {
+    font-size: 9px; color: #999; margin-top: 24px;
+    border-top: 1px solid #e5e7eb; padding-top: 10px;
+}
+
+/* ── Table of Contents ── */
+.memo-toc-page {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    padding: 40px 48px 48px;
+    margin-bottom: 24px;
+}
+.memo-toc-inner { max-width: 680px; margin: 0 auto; }
+.memo-toc-header { margin-bottom: 28px; border-bottom: 2px solid #5B7744; padding-bottom: 10px; }
+.memo-toc-header-company {
+    font-size: 10px; color: #999; font-weight: 600;
+    letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 4px;
+}
+.memo-toc-header-label { font-size: 22px; font-weight: 700; color: #1a1a1a; }
+.memo-toc-table { width: 100%; border-collapse: collapse; }
+.memo-toc-row td { padding: 6px 0; border: none; vertical-align: baseline; }
+.memo-toc-row:hover td { background: rgba(91,119,68,0.04); }
+.memo-toc-num {
+    font-size: 10px; font-weight: 700; color: #5B7744;
+    width: 22px; white-space: nowrap; padding-right: 8px;
+}
+.memo-toc-title { font-size: 11px; color: #1a1a1a; font-weight: 500; padding-right: 8px; }
+.memo-toc-link {
+    color: #1a1a1a; text-decoration: none;
+    border-bottom: 1px dotted #bbb; transition: color 0.15s, border-color 0.15s;
+}
+.memo-toc-link:hover { color: #5B7744; border-bottom-color: #5B7744; }
+.memo-toc-dots { font-size: 10px; color: #ccc; }
+.memo-toc-appendix .memo-toc-num { color: #aaa; }
+.memo-toc-appendix .memo-toc-title { font-size: 10.5px; color: #777; }
+.memo-toc-note { font-size: 9px; color: #aaa; margin-top: 20px; font-style: italic; }
+
+/* Lock button styling */
+.memo-sect-btn-lock {
+    font-size: 0.75rem; padding: 2px 8px;
+    border: 1px solid #5B7744; color: #5B7744;
+    border-radius: 4px; background: transparent; cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.memo-sect-btn-lock:hover { background: #5B7744; color: #fff; }
