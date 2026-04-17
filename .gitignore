@@ -29,8 +29,22 @@ Thumbs.db
 .env
 .env.local
 
-# SQLite database (auto-generated on startup)
+# SQLite databases (auto-generated on startup)
 data/rvm.db
+volo_engine.db
+*.db
+*.sqlite
+*.sqlite3
+
+# User-uploaded memo materials (often confidential)
+data/memo_uploads/
+
+# Secrets
+data/.jwt_secret
+
+# Generated output
+out/
+*.log
 
 # Replit internals
 .cache/
