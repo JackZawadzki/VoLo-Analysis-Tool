@@ -335,6 +335,85 @@ Rules:
 
 # ── Routes: Standalone financial model extraction (wizard flow) ───────────────
 
+def _adapt_new_extractor_response(new_res: dict, file_name: str) -> dict:
+    """Map the new extractor's output shape to the shape the UI expects.
+
+    The new extractor returns:
+        {scope:{sheet, years_covered, ...}, metrics:{canonical:{values, unit, ...}}, ...}
+
+    The legacy UI expects:
+        {status, file_name, financials:{metric:{year_str: value}},
+         units:{metric: unit_str}, fiscal_years:[...], scale_info,
+         model_summary, scenarios, detected_scenarios, primary_scenario,
+         _diagnostics:{...}}
+    """
+    metrics = new_res.get("metrics") or {}
+    scope = new_res.get("scope") or {}
+    years = scope.get("years_covered") or []
+    verification = new_res.get("verification") or {}
+
+    # financials: {canonical: {year_str: value}} — drop null entries so the
+    # UI's zero-filter treats missing years as missing, not zero.
+    financials: dict = {}
+    units: dict = {}
+    for canonical, m in metrics.items():
+        if not m or not isinstance(m, dict):
+            continue
+        vals = m.get("values") or {}
+        kept = {y: v for y, v in vals.items() if v is not None}
+        if not kept:
+            continue
+        financials[canonical] = kept
+        if m.get("unit"):
+            units[canonical] = m["unit"]
+
+    # Scale info: use the unit declared on the revenue row if present.
+    rev_unit = units.get("revenue") or next(iter(units.values()), None) or "USD"
+    scale_info = {"USD_M": "USD_M (in millions)",
+                  "USD_K": "USD_K (in thousands)",
+                  "USD_B": "USD_B (in billions)",
+                  "USD": "USD"}.get(rev_unit, rev_unit)
+
+    # Surface the new extractor's selection rationale and verification
+    # summary in a diagnostics block that an operator can inspect.
+    diagnostics = {
+        "extractor": "single_source_v0.1",
+        "chosen_sheet": scope.get("sheet"),
+        "scope_description": scope.get("scope_description"),
+        "selection_rationale": new_res.get("selection_rationale"),
+        "verification_checks_passed": verification.get("checks_passed", []),
+        "verification_warnings": verification.get("warnings", []),
+        "verification_errors": verification.get("errors", []),
+        "candidates_considered": new_res.get("candidates_considered", []),
+        "fallback_attempted": new_res.get("fallback_attempted"),
+        "metric_source_cells": {
+            k: m.get("source_row_excel_addr")
+            for k, m in metrics.items() if m
+        },
+    }
+
+    return {
+        "status": new_res.get("status", "ok"),
+        "file_name": file_name,
+        "records_count": sum(len(v) for v in financials.values()),
+        "failures_count": 0,
+        "financials": financials,
+        "units": units,
+        "fiscal_years": years,
+        "scale_info": scale_info,
+        "model_summary": {
+            "sheet": scope.get("sheet"),
+            "description": scope.get("scope_description"),
+            "years": f"{min(years)}–{max(years)}" if years else "",
+            "metrics_extracted": sorted(financials.keys()),
+        },
+        "scenarios": None,             # new extractor does not (yet) split scenarios
+        "detected_scenarios": ["base"],
+        "primary_scenario": "base",
+        "_diagnostics": diagnostics,
+    }
+
+
 @router.post("/api/extract-model")
 async def extract_financial_model_standalone(
     file: UploadFile = File(...),
@@ -361,6 +440,27 @@ async def extract_financial_model_standalone(
 
     out_dir = os.path.join(upload_dir, "output")
     os.makedirs(out_dir, exist_ok=True)
+
+    # ── Try new single-source-of-truth extractor first (opt-out via env) ─────
+    # The new extractor guarantees every row comes from one sheet, so there's
+    # no silent source-switch bug. If it returns ok/ok_with_warnings we use
+    # its output. Any error or ambiguity falls back to the legacy pipeline so
+    # behavior on non-standard workbooks is preserved.
+    if os.environ.get("VOLO_USE_NEW_EXTRACTOR", "1") != "0":
+        try:
+            from ..engine.extract_financials import extract as _new_extract
+            new_res = _new_extract(input_path)
+            if new_res.get("status") in ("ok", "ok_with_warnings"):
+                return _adapt_new_extractor_response(
+                    new_res, file_name=file.filename,
+                )
+            # clarifying_question or error -> fall through to legacy pipeline
+            logger.info(
+                "New extractor did not resolve (status=%s); falling back to legacy",
+                new_res.get("status"),
+            )
+        except Exception as _new_err:
+            logger.exception("New extractor raised; falling back to legacy: %s", _new_err)
 
     try:
         from ..engine.financial_pipeline import run_pipeline
