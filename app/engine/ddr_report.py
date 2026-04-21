@@ -197,10 +197,10 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 borderColor=colors.HexColor('#c8dcc8'),
                 fillColor=colors.HexColor('#f8fbf9'),
                 textColor=colors.black, forceBorder=True, relative=True,
-                # List form of fieldFlags for broadest reportlab+reader
-                # compatibility. 'multiline' enables wrapping; scrolling
-                # is on by default (doNotScroll is NOT set).
-                fieldFlags=['multiline'],
+                # reportlab's fieldFlags expects a space-separated
+                # string of flag names. 'multiline' enables wrapping;
+                # scrolling is on by default (doNotScroll is NOT set).
+                fieldFlags='multiline',
                 fontSize=10,
             )
 
