@@ -169,12 +169,8 @@ def generate_report_pdf(analysis: dict, output_path: str):
             toc_tracker[self.key] = self.canv.getPageNumber()
 
     class _CommentaryField(Flowable):
-        # Default height bumped 1.5" -> 3.5" so team members can write
-        # thorough notes without running into the viewer-scrolling bug
-        # that made small AcroForm fields appear to "cut off" after one
-        # line in macOS Preview / Chrome PDF viewer.
         def __init__(self, field_name, label="Team Commentary:",
-                     field_width=6.5*inch, field_height=3.5*inch):
+                     field_width=6.5*inch, field_height=1.5*inch):
             Flowable.__init__(self)
             self.field_name = field_name
             self.label = label
@@ -197,11 +193,13 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 borderColor=colors.HexColor('#c8dcc8'),
                 fillColor=colors.HexColor('#f8fbf9'),
                 textColor=colors.black, forceBorder=True, relative=True,
-                # reportlab's fieldFlags expects a space-separated
-                # string of flag names. 'multiline' enables wrapping;
-                # scrolling is on by default (doNotScroll is NOT set).
                 fieldFlags='multiline',
-                fontSize=10,
+                # CRITICAL: reportlab's internal default maxlen=100 caps
+                # the field at 100 characters — the reason users couldn't
+                # type more than about one line of text. Explicitly setting
+                # a very large limit removes the cap in practice.
+                maxlen=100000,
+                fontSize=9,
             )
 
     def _toc_flowables(entries=None):
@@ -561,11 +559,10 @@ def generate_report_pdf(analysis: dict, output_path: str):
         ))
 
         story.append(Spacer(1, 0.15 * inch))
-        # Final Notes gets the most writing — give it the tallest field.
         story.append(_CommentaryField(
             "commentary_conclusion",
             "Team Commentary \u2014 Final Notes & Next Steps:",
-            field_height=5.0*inch))
+            field_height=2.0*inch))
 
         # ── SOURCES PAGE
         story.append(PageBreak())
