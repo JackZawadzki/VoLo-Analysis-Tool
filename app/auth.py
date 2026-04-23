@@ -321,11 +321,14 @@ def register(req: RegisterRequest, request: Request):
     if len(password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters.")
 
-    email_domain = email.split("@")[-1] if "@" in email else ""
+    if "@" not in email or email.count("@") != 1:
+        raise HTTPException(400, "Enter a valid email address.")
+    email_domain = email.rsplit("@", 1)[-1]
     if email_domain not in ALLOWED_DOMAINS:
         raise HTTPException(
             403,
-            "Registration is restricted to @voloearth.com email addresses.",
+            "You need a @voloearth.com email to sign up. "
+            "This tool is restricted to VoLo Earth team members.",
         )
 
     db = get_db()
@@ -334,37 +337,41 @@ def register(req: RegisterRequest, request: Request):
             "SELECT id, verified FROM users WHERE email=?", (email,)
         ).fetchone()
 
-        if existing and existing["verified"]:
+        # Strict: one email = one account. Re-registration is never allowed,
+        # whether the existing account is verified or still pending. Users
+        # who registered but lost their verification code should use
+        # "Send a new one" on the verify screen (hits /resend-code), which
+        # re-issues a code to the existing account without creating a new
+        # one or changing the password.
+        if existing:
+            if existing["verified"]:
+                raise HTTPException(
+                    409,
+                    "This email is already registered. Please log in instead.",
+                )
             raise HTTPException(
                 409,
-                "This email is already registered. Please log in instead.",
+                "This email is already registered but not verified yet. "
+                "Enter the code we emailed you, or click 'Send a new one' "
+                "on the verify screen.",
             )
 
-        if existing and not existing["verified"]:
-            # Re-use the row, resend a fresh code.
-            uid = existing["id"]
-            # Update password too in case the user forgot what they typed.
-            db.execute(
-                "UPDATE users SET username=?, password_hash=? WHERE id=?",
-                (username, generate_password_hash(password), uid),
+        # Past this point: no existing account, create a new one.
+        if db.execute(
+            "SELECT id FROM users WHERE username=?", (username,)
+        ).fetchone():
+            raise HTTPException(
+                409, "Username already taken. Please choose another."
             )
-            db.commit()
-        else:
-            if db.execute(
-                "SELECT id FROM users WHERE username=?", (username,)
-            ).fetchone():
-                raise HTTPException(
-                    409, "Username already taken. Please choose another."
-                )
-            is_first = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
-            role = "admin" if is_first else "user"
-            cur = db.execute(
-                "INSERT INTO users (username, email, password_hash, role, verified) "
-                "VALUES (?,?,?,?,0)",
-                (username, email, generate_password_hash(password), role),
-            )
-            db.commit()
-            uid = cur.lastrowid
+        is_first = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        role = "admin" if is_first else "user"
+        cur = db.execute(
+            "INSERT INTO users (username, email, password_hash, role, verified) "
+            "VALUES (?,?,?,?,0)",
+            (username, email, generate_password_hash(password), role),
+        )
+        db.commit()
+        uid = cur.lastrowid
     except sqlite3.IntegrityError:
         raise HTTPException(409, "Username or email already taken.")
     finally:

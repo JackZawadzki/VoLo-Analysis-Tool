@@ -677,9 +677,15 @@ let _pendingVerifyEmail = '';
 
 async function doRegister() {
     const u = document.getElementById('reg-username').value.trim();
-    const e = document.getElementById('reg-email').value.trim();
+    const e = document.getElementById('reg-email').value.trim().toLowerCase();
     const p = document.getElementById('reg-password').value;
     if (!u || !e || p.length < 8) return _authError('Fill all fields (password 8+ chars)');
+    // Client-side domain check so the user gets instant feedback without
+    // waiting for a round-trip. Backend still enforces this as the source
+    // of truth — this is just for UX.
+    if (!/^[^@\s]+@voloearth\.com$/i.test(e)) {
+        return _authError('You need a @voloearth.com email to sign up. This tool is restricted to VoLo Earth team members.');
+    }
     // IMPORTANT: clear any leftover session before registering. Without
     // this, a user who registers while they already have a valid JWT in
     // localStorage (e.g. from a previous account) would skip the verify
