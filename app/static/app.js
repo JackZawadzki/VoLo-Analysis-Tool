@@ -680,13 +680,22 @@ async function doRegister() {
     const e = document.getElementById('reg-email').value.trim();
     const p = document.getElementById('reg-password').value;
     if (!u || !e || p.length < 8) return _authError('Fill all fields (password 8+ chars)');
+    // IMPORTANT: clear any leftover session before registering. Without
+    // this, a user who registers while they already have a valid JWT in
+    // localStorage (e.g. from a previous account) would skip the verify
+    // screen — _checkAuth would happily hand them the old session.
+    _rvmToken = '';
+    _rvmUser = null;
+    localStorage.removeItem('rvm_token');
     try {
         const r = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, email:e, password:p})});
         const d = await r.json();
         if (!r.ok) return _authError(d.detail || d.error || 'Registration failed');
-        // Backend now returns {status:"verification_required", email, message}
-        // — it does NOT log the user in until they prove they own the email.
-        if (d.status === 'verification_required' || !d.token) {
+        // Backend returns {status:"verification_sent"|"verification_required",
+        // email, message} — it does NOT log the user in until they prove
+        // they own the email.
+        const statusStr = String(d.status || '');
+        if (statusStr.startsWith('verification') || !d.token) {
             _pendingVerifyEmail = d.email || e;
             const lbl = document.getElementById('verify-email-label');
             if (lbl) lbl.textContent = _pendingVerifyEmail;
