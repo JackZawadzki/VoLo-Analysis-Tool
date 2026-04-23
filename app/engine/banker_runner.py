@@ -21,6 +21,7 @@ import logging
 import queue
 import threading
 import traceback
+from pathlib import Path
 from typing import Any, Dict, Generator, Optional
 
 logger = logging.getLogger(__name__)

@@ -333,59 +333,85 @@ Rules:
     }
 
 
-# ── Routes: Standalone financial model extraction (wizard flow) ───────────────
+# ── Deep-extract: background job + polling ────────────────────────────────────
+#
+# The earlier implementation used chunked NDJSON streaming for progress
+# events. That works locally but fails on proxies that buffer responses
+# (Replit's in particular — confirmed by their support team). We now follow
+# the same pattern DDR uses: start a job, spawn a background worker, poll
+# a status endpoint for progress + final result. No streaming required.
 
-async def _deep_extract_streaming(file: UploadFile):
-    """Run the banker agent on an uploaded workbook and stream JSONL events.
+import threading
+import uuid
+from datetime import datetime
 
-    Each line of the response body is a JSON object with a `type` field:
-      - `progress` + `message`    — per-phase status update
-      - `result`   + `data`       — final extraction dict (same shape as the
-                                     quick-extract response)
-      - `error`    + `message`    — terminal failure
+_DEEP_JOBS: dict = {}
+_DEEP_LOCK = threading.Lock()
 
-    Uses NDJSON (one JSON per line) over chunked HTTP so a browser can read it
-    with fetch().body.getReader() without pulling a dedicated SSE endpoint.
-    """
-    from fastapi.responses import StreamingResponse
-    import tempfile, secrets
 
-    # Persist the upload to a temp file so the banker can read it by path.
-    upload_dir = os.path.join(tempfile.gettempdir(), f"banker_wiz_{secrets.token_hex(6)}")
-    os.makedirs(upload_dir, exist_ok=True)
-    input_path = os.path.join(upload_dir, file.filename)
-    content = await file.read()
-    with open(input_path, "wb") as f:
-        f.write(content)
-
-    def _event_stream():
-        # Wrap the synchronous generator from banker_runner. Each yield below
-        # emits a single JSON line; the browser reads them incrementally.
-        yield json.dumps({
-            "type": "progress",
-            "message": "Preparing workbook for AI extraction..."
-        }) + "\n"
-        try:
-            from ..engine.banker_runner import run_banker_streaming
-        except Exception as exc:
-            logger.exception("Failed to import banker_runner")
-            yield json.dumps({
-                "type": "error",
-                "message": f"Could not load banker integration: {exc}",
-            }) + "\n"
+def _deep_job_append_progress(job_id: str, message: str) -> None:
+    with _DEEP_LOCK:
+        job = _DEEP_JOBS.get(job_id)
+        if job is None:
             return
+        job["progress"].append({
+            "ts": datetime.utcnow().isoformat() + "Z",
+            "message": message,
+        })
 
-        for evt in run_banker_streaming(input_path, file_name=file.filename):
-            yield json.dumps(evt) + "\n"
 
-    return StreamingResponse(
-        _event_stream(),
-        media_type="application/x-ndjson",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable proxy buffering if behind nginx
-        },
-    )
+def _run_banker_background(job_id: str, input_path: str, file_name: str) -> None:
+    """Background worker that consumes banker events and writes them to the
+    in-memory job dict. Caller polls GET /api/extract-model-deep/status/{id}.
+    """
+    # First progress message — we're past the HTTP boundary, so the user
+    # gets an immediate signal that work has started.
+    _deep_job_append_progress(job_id, "Preparing workbook for AI extraction...")
+
+    try:
+        from ..engine.banker_runner import run_banker_streaming
+    except Exception as exc:
+        logger.exception("Failed to import banker_runner")
+        with _DEEP_LOCK:
+            job = _DEEP_JOBS.get(job_id)
+            if job:
+                job["status"] = "error"
+                job["error"] = f"Could not load banker integration: {exc}"
+                job["finished_at"] = datetime.utcnow().isoformat() + "Z"
+        return
+
+    try:
+        for evt in run_banker_streaming(input_path, file_name=file_name):
+            etype = evt.get("type")
+            if etype == "progress":
+                _deep_job_append_progress(job_id, evt.get("message", ""))
+            elif etype == "result":
+                with _DEEP_LOCK:
+                    job = _DEEP_JOBS.get(job_id)
+                    if job:
+                        job["status"] = "done"
+                        job["result"] = evt.get("data")
+                        job["finished_at"] = datetime.utcnow().isoformat() + "Z"
+                return
+            elif etype == "error":
+                with _DEEP_LOCK:
+                    job = _DEEP_JOBS.get(job_id)
+                    if job:
+                        job["status"] = "error"
+                        job["error"] = evt.get("message", "Unknown error")
+                        job["finished_at"] = datetime.utcnow().isoformat() + "Z"
+                return
+    except Exception as exc:
+        logger.exception("Banker background worker crashed")
+        with _DEEP_LOCK:
+            job = _DEEP_JOBS.get(job_id)
+            if job:
+                job["status"] = "error"
+                job["error"] = f"{type(exc).__name__}: {exc}"
+                job["finished_at"] = datetime.utcnow().isoformat() + "Z"
+
+
+# ── Routes: Standalone financial model extraction (wizard flow) ───────────────
 
 
 def _adapt_new_extractor_response(new_res: dict, file_name: str) -> dict:
@@ -484,15 +510,16 @@ async def extract_financial_model_standalone(
     """
     ext = os.path.splitext(file.filename)[1].lower()
 
-    # ── Deep extraction path: banker agent with streamed progress ────────────
+    # ── Deep extraction path: redirect to the polling endpoint ───────────────
+    # Deep extraction is async now (background job + polling). Callers that
+    # still send mode=deep here get a 400 pointing at the new endpoint.
     if mode == "deep":
-        if ext not in (".xlsx", ".xlsm", ".xls", ".csv"):
-            raise HTTPException(
-                400,
-                f"Deep extraction supports spreadsheet files only (got {ext}). "
-                f"Upload .xlsx/.xls/.csv for AI extraction, or use Quick extract for images.",
-            )
-        return await _deep_extract_streaming(file)
+        raise HTTPException(
+            400,
+            "Deep extraction has moved to a background-job endpoint. "
+            "POST the file to /api/extract-model-deep, then poll "
+            "/api/extract-model-deep/status/{job_id} until status is 'done'.",
+        )
 
     # ── Image path: vision extraction ────────────────────────────────────────
     if ext in _VISION_IMAGE_EXTS:
@@ -748,4 +775,100 @@ async def extract_financial_model_standalone(
         traceback.print_exc()
         raise HTTPException(500, f"Financial model extraction failed: {exc}")
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deep-extract: two endpoints, background job + polling
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/api/extract-model-deep")
+async def extract_model_deep_start(
+    file: UploadFile = File(...),
+    user: CurrentUser = Depends(get_optional_user),
+):
+    """Start a deep (LLM banker) extraction as a background job.
+
+    Returns immediately with {"job_id": "...", "status": "queued"}. The
+    caller then polls /api/extract-model-deep/status/{job_id} until status
+    becomes "done" or "error". This replaces the earlier streaming endpoint
+    which did not survive proxy buffering on some hosts (Replit, in
+    particular).
+    """
+    if not file.filename:
+        raise HTTPException(400, "No file provided")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".xlsx", ".xlsm", ".xls", ".csv"):
+        raise HTTPException(
+            400,
+            f"Deep extraction supports spreadsheet files only (got {ext}). "
+            "Upload .xlsx/.xls/.csv for AI extraction, or use Quick extract "
+            "for images.",
+        )
+
+    # Persist upload to a temp path the banker can read.
+    upload_dir = os.path.join(tempfile.gettempdir(), f"banker_wiz_{secrets.token_hex(6)}")
+    os.makedirs(upload_dir, exist_ok=True)
+    input_path = os.path.join(upload_dir, file.filename)
+    content = await file.read()
+    with open(input_path, "wb") as f:
+        f.write(content)
+
+    job_id = uuid.uuid4().hex[:12]
+    with _DEEP_LOCK:
+        _DEEP_JOBS[job_id] = {
+            "status": "queued",
+            "progress": [],
+            "result": None,
+            "error": None,
+            "started_at": datetime.utcnow().isoformat() + "Z",
+            "finished_at": None,
+            "file_name": file.filename,
+            "owner_id": getattr(user, "id", None) if user else None,
+        }
+
+    def _run():
+        # Flip status to running once the worker actually starts.
+        with _DEEP_LOCK:
+            if job_id in _DEEP_JOBS:
+                _DEEP_JOBS[job_id]["status"] = "running"
+        _run_banker_background(job_id, input_path, file.filename)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "poll_url": f"/api/extract-model-deep/status/{job_id}",
+    }
+
+
+@router.get("/api/extract-model-deep/status/{job_id}")
+async def extract_model_deep_status(job_id: str):
+    """Return the current state of a deep-extract job.
+
+    Response shape (client polls this until status in {"done", "error"}):
+      {
+        "job_id": "...",
+        "status": "queued" | "running" | "done" | "error",
+        "progress": [{"ts": "...", "message": "..."}, ...],
+        "result":   {...VoLo response shape...}  # when done
+        "error":    "..."                         # when error
+      }
+    """
+    with _DEEP_LOCK:
+        job = _DEEP_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(404, "Deep extract job not found or expired")
+        # Shallow copy under lock so we don't hand out a live reference.
+        snap = {
+            "job_id": job_id,
+            "status": job["status"],
+            "progress": list(job["progress"]),
+            "result": job["result"],
+            "error": job["error"],
+            "started_at": job["started_at"],
+            "finished_at": job["finished_at"],
+            "file_name": job.get("file_name"),
+        }
+    return snap
 

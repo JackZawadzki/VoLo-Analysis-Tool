@@ -3095,16 +3095,24 @@ document.querySelectorAll('.wiz-mode-pill').forEach(btn => {
     });
 });
 
-// ── Deep (AI) extraction with JSONL progress streaming ────────────────
+// ── Deep (AI) extraction via background job + polling ────────────────
+// Replaces the older NDJSON streaming approach, which failed on hosts
+// whose proxy buffers chunked responses (Replit in particular). The
+// user-visible UX is unchanged: same overlay, same progress log lines,
+// same result shape handed to the caller. Under the hood we now:
+//   1. POST the file to /api/extract-model-deep, get a job_id back.
+//   2. Poll /api/extract-model-deep/status/{job_id} every 2s.
+//   3. Render any NEW progress messages since the last poll.
+//   4. Stop once status is 'done' (unwrap result) or 'error' (show).
 async function _wizDeepExtract(modelFile, statusEl) {
     const overlay = document.getElementById('wiz-deep-progress');
     const statusLine = document.getElementById('wiz-deep-status');
     const logLine = document.getElementById('wiz-deep-log');
     const elapsedLine = document.getElementById('wiz-deep-elapsed');
 
-    // Reveal progress overlay
     overlay.style.display = 'block';
     logLine.innerHTML = '';
+    statusLine.style.color = '';
     statusLine.textContent = 'Preparing workbook…';
     const startedAt = Date.now();
     const elapsedTimer = setInterval(() => {
@@ -3130,14 +3138,15 @@ async function _wizDeepExtract(modelFile, statusEl) {
         if (!keepError) overlay.style.display = 'none';
     }
 
+    const headers = {};
+    if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
+
+    // ── 1. Start the background job ─────────────────────────────────────
+    let jobId;
     try {
         const fd = new FormData();
         fd.append('file', modelFile);
-        fd.append('mode', 'deep');
-        const headers = {};
-        if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
-
-        const r = await fetch('/api/extract-model', {method: 'POST', headers, body: fd});
+        const r = await fetch('/api/extract-model-deep', {method: 'POST', headers, body: fd});
         if (!r.ok) {
             const text = await r.text();
             _appendLog(`HTTP ${r.status}: ${text.slice(0, 300)}`);
@@ -3146,54 +3155,14 @@ async function _wizDeepExtract(modelFile, statusEl) {
             _hideOverlay(true);
             return null;
         }
-
-        const reader = r.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let result = null;
-        let errorMsg = null;
-
-        while (true) {
-            const {value, done} = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, {stream: true});
-
-            let newlineIdx;
-            while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
-                const line = buffer.slice(0, newlineIdx).trim();
-                buffer = buffer.slice(newlineIdx + 1);
-                if (!line) continue;
-                let evt;
-                try { evt = JSON.parse(line); } catch (e) { _appendLog('(malformed event: ' + line.slice(0,120) + ')'); continue; }
-
-                if (evt.type === 'progress') {
-                    statusLine.textContent = evt.message || 'Working…';
-                    _appendLog(evt.message || '');
-                } else if (evt.type === 'result') {
-                    result = evt.data;
-                    _appendLog('Extraction complete.');
-                    statusLine.textContent = 'Done.';
-                } else if (evt.type === 'error') {
-                    errorMsg = evt.message || 'Unknown error';
-                    _appendLog('ERROR: ' + errorMsg);
-                }
-            }
-        }
-
-        if (errorMsg) {
+        const startData = await r.json();
+        jobId = startData.job_id;
+        if (!jobId) {
             statusLine.style.color = '#b54700';
-            statusLine.textContent = errorMsg;
+            statusLine.textContent = 'Server did not return a job_id.';
             _hideOverlay(true);
             return null;
         }
-        if (!result) {
-            statusLine.style.color = '#b54700';
-            statusLine.textContent = 'Extraction ended without a result.';
-            _hideOverlay(true);
-            return null;
-        }
-        _hideOverlay(false);
-        return result;
     } catch (e) {
         statusLine.style.color = '#b54700';
         statusLine.textContent = 'Network error: ' + e.message;
@@ -3201,6 +3170,63 @@ async function _wizDeepExtract(modelFile, statusEl) {
         _hideOverlay(true);
         return null;
     }
+
+    // ── 2. Poll until done, rendering new progress entries each tick ────
+    const pollIntervalMs = 2000;
+    const hardTimeoutMs = 15 * 60 * 1000;  // 15-min ceiling
+    let shownProgressCount = 0;
+
+    while ((Date.now() - startedAt) < hardTimeoutMs) {
+        let data;
+        try {
+            const r = await fetch(`/api/extract-model-deep/status/${jobId}`, {headers});
+            if (!r.ok) {
+                const text = await r.text();
+                _appendLog(`Status poll failed HTTP ${r.status}: ${text.slice(0, 200)}`);
+                // Transient — keep trying a few more times.
+                await new Promise(res => setTimeout(res, pollIntervalMs));
+                continue;
+            }
+            data = await r.json();
+        } catch (e) {
+            _appendLog('Network error during poll: ' + e.message);
+            await new Promise(res => setTimeout(res, pollIntervalMs));
+            continue;
+        }
+
+        const progress = Array.isArray(data.progress) ? data.progress : [];
+        while (shownProgressCount < progress.length) {
+            const evt = progress[shownProgressCount];
+            const msg = (evt && evt.message) ? evt.message : '';
+            if (msg) {
+                statusLine.textContent = msg;
+                _appendLog(msg);
+            }
+            shownProgressCount++;
+        }
+
+        if (data.status === 'done') {
+            _appendLog('Extraction complete.');
+            statusLine.textContent = 'Done.';
+            _hideOverlay(false);
+            return data.result;
+        }
+        if (data.status === 'error') {
+            const errMsg = data.error || 'Unknown error';
+            _appendLog('ERROR: ' + errMsg);
+            statusLine.style.color = '#b54700';
+            statusLine.textContent = errMsg;
+            _hideOverlay(true);
+            return null;
+        }
+
+        await new Promise(res => setTimeout(res, pollIntervalMs));
+    }
+
+    statusLine.style.color = '#b54700';
+    statusLine.textContent = 'Extraction timed out (15 min). Check server logs.';
+    _hideOverlay(true);
+    return null;
 }
 
 // File input display
