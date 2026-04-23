@@ -111,6 +111,66 @@
                         <p>XLSX, XLS, CSV — or a screenshot (PNG/JPG)</p>
                         <input type="file" id="wiz-model-file" accept=".xlsx,.xls,.xlsm,.csv,.png,.jpg,.jpeg,.webp" class="upload-input">
                         <div id="wiz-model-name" class="upload-filename"></div>
+
+                        <!-- Extraction mode pill toggle (NEW) -->
+                        <div class="wiz-extraction-mode" style="margin-top:14px;padding-top:12px;border-top:1px dashed #d6d6d6;">
+                            <div style="font-size:12px;color:#555;font-weight:600;margin-bottom:8px;text-align:left;">Extraction mode</div>
+                            <div class="wiz-mode-pills" style="display:flex;gap:8px;">
+                                <button type="button" class="wiz-mode-pill active" data-mode="quick">
+                                    <div class="wiz-mode-pill-title">Quick extract</div>
+                                    <div class="wiz-mode-pill-sub">Instant · Best for simpler Excel sheets and standard financial models</div>
+                                </button>
+                                <button type="button" class="wiz-mode-pill" data-mode="deep">
+                                    <div class="wiz-mode-pill-title">Deep extract (AI)</div>
+                                    <div class="wiz-mode-pill-sub">~2–4 min · For more complex or multi-sheet financial models</div>
+                                </button>
+                            </div>
+                            <input type="hidden" id="wiz-model-mode" value="quick">
+                        </div>
+
+                        <!-- Deep extraction progress overlay (hidden by default) -->
+                        <div id="wiz-deep-progress" style="display:none;margin-top:14px;padding:14px;background:#f0f4ef;border:1px solid #c5d5bc;border-radius:8px;text-align:left;">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+                                <div class="wiz-deep-spinner" style="width:14px;height:14px;border:2px solid #d5e0cd;border-top-color:#5B7744;border-radius:50%;animation:wizSpin 0.8s linear infinite;"></div>
+                                <div style="font-weight:600;color:#3B5249;font-size:13px;">AI extraction running…</div>
+                                <div id="wiz-deep-elapsed" style="font-size:11px;color:#6b7a65;margin-left:auto;">0s</div>
+                            </div>
+                            <div id="wiz-deep-status" style="font-size:12px;color:#3B5249;margin-bottom:8px;">Preparing workbook…</div>
+                            <div id="wiz-deep-log" style="max-height:140px;overflow-y:auto;font-family:'SF Mono',Menlo,monospace;font-size:11px;color:#6b7a65;line-height:1.5;padding:6px 8px;background:#fff;border:1px solid #e0e6dc;border-radius:4px;"></div>
+                        </div>
+                        <style>
+                            @keyframes wizSpin { to { transform: rotate(360deg); } }
+
+                            /* Pill base — applied to every button by default (unselected look). */
+                            .wiz-mode-pill {
+                                flex: 1;
+                                padding: 10px 14px;
+                                border: 1px solid #ccc;
+                                background: #fff;
+                                color: #333;
+                                border-radius: 8px;
+                                cursor: pointer;
+                                font-size: 13px;
+                                font-weight: 600;
+                                text-align: left;
+                                transition: background 0.12s, border-color 0.12s, color 0.12s;
+                            }
+                            .wiz-mode-pill:hover { border-color: #8fa684; }
+                            .wiz-mode-pill:focus { outline: none; }
+                            .wiz-mode-pill:focus-visible { outline: 2px solid #5B7744; outline-offset: 2px; }
+
+                            .wiz-mode-pill-title { font-weight: 600; }
+                            .wiz-mode-pill-sub { font-size: 11px; font-weight: 400; opacity: 0.7; margin-top: 2px; }
+
+                            /* Pill selected — overrides base. All "selected" styling goes here,
+                               never inline, so toggling the .active class fully swaps the look. */
+                            .wiz-mode-pill.active {
+                                border-color: #5B7744;
+                                background: #5B7744;
+                                color: #fff;
+                            }
+                            .wiz-mode-pill.active .wiz-mode-pill-sub { opacity: 0.9; }
+                        </style>
                     </div>
                 </div>
                 <div class="upload-alt">

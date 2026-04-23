@@ -335,6 +335,59 @@ Rules:
 
 # ── Routes: Standalone financial model extraction (wizard flow) ───────────────
 
+async def _deep_extract_streaming(file: UploadFile):
+    """Run the banker agent on an uploaded workbook and stream JSONL events.
+
+    Each line of the response body is a JSON object with a `type` field:
+      - `progress` + `message`    — per-phase status update
+      - `result`   + `data`       — final extraction dict (same shape as the
+                                     quick-extract response)
+      - `error`    + `message`    — terminal failure
+
+    Uses NDJSON (one JSON per line) over chunked HTTP so a browser can read it
+    with fetch().body.getReader() without pulling a dedicated SSE endpoint.
+    """
+    from fastapi.responses import StreamingResponse
+    import tempfile, secrets
+
+    # Persist the upload to a temp file so the banker can read it by path.
+    upload_dir = os.path.join(tempfile.gettempdir(), f"banker_wiz_{secrets.token_hex(6)}")
+    os.makedirs(upload_dir, exist_ok=True)
+    input_path = os.path.join(upload_dir, file.filename)
+    content = await file.read()
+    with open(input_path, "wb") as f:
+        f.write(content)
+
+    def _event_stream():
+        # Wrap the synchronous generator from banker_runner. Each yield below
+        # emits a single JSON line; the browser reads them incrementally.
+        yield json.dumps({
+            "type": "progress",
+            "message": "Preparing workbook for AI extraction..."
+        }) + "\n"
+        try:
+            from ..engine.banker_runner import run_banker_streaming
+        except Exception as exc:
+            logger.exception("Failed to import banker_runner")
+            yield json.dumps({
+                "type": "error",
+                "message": f"Could not load banker integration: {exc}",
+            }) + "\n"
+            return
+
+        for evt in run_banker_streaming(input_path, file_name=file.filename):
+            yield json.dumps(evt) + "\n"
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable proxy buffering if behind nginx
+        },
+    )
+
+
 def _adapt_new_extractor_response(new_res: dict, file_name: str) -> dict:
     """Map the new extractor's output shape to the shape the UI expects.
 
@@ -417,10 +470,29 @@ def _adapt_new_extractor_response(new_res: dict, file_name: str) -> dict:
 @router.post("/api/extract-model")
 async def extract_financial_model_standalone(
     file: UploadFile = File(...),
+    mode: str = Form("quick"),
     user: CurrentUser = Depends(get_optional_user),
 ):
-    """Extract financial data from an Excel/CSV model or a screenshot image."""
+    """Extract financial data from an Excel/CSV model or a screenshot image.
+
+    The `mode` form field controls the extraction engine:
+      - "quick" (default): deterministic rule-based parser. Instant, robust
+        for standard single-sheet P&L layouts.
+      - "deep": LLM-driven banker agent that reads the workbook cell-by-cell.
+        Handles multi-sheet models, non-standard labels, complex structures.
+        Takes ~2-4 minutes. Streams JSONL progress events back to the client.
+    """
     ext = os.path.splitext(file.filename)[1].lower()
+
+    # ── Deep extraction path: banker agent with streamed progress ────────────
+    if mode == "deep":
+        if ext not in (".xlsx", ".xlsm", ".xls", ".csv"):
+            raise HTTPException(
+                400,
+                f"Deep extraction supports spreadsheet files only (got {ext}). "
+                f"Upload .xlsx/.xls/.csv for AI extraction, or use Quick extract for images.",
+            )
+        return await _deep_extract_streaming(file)
 
     # ── Image path: vision extraction ────────────────────────────────────────
     if ext in _VISION_IMAGE_EXTS:

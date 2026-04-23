@@ -1097,26 +1097,39 @@ async function wizExtractAndNext() {
         if (modelFile) {
             const modelExt = ('.' + modelFile.name.split('.').pop()).toLowerCase();
             const isVision = _IMAGE_EXTS.has(modelExt);
-            status.textContent = isVision
-                ? '✦ Vision AI: reading financial model screenshot (15-25 seconds)...'
-                : 'Extracting financial model (this may take 20-30 seconds)...';
-            const mfd = new FormData();
-            mfd.append('file', modelFile);
-            const mHeaders = {};
-            if (_rvmToken) mHeaders['Authorization'] = 'Bearer ' + _rvmToken;
-            const mr = await fetch('/api/extract-model', {method: 'POST', headers: mHeaders, body: mfd});
+            const modeField = document.getElementById('wiz-model-mode');
+            const mode = (modeField && modeField.value === 'deep' && !isVision) ? 'deep' : 'quick';
+
             let md;
-            try { md = await mr.json(); } catch(_) { md = {detail: 'Server error (HTTP ' + mr.status + ')'}; }
-            if (mr.ok && md && md.status === 'ok') {
-                _wizFmData = md;
-                extractionOk = true;
+            if (mode === 'deep') {
+                // Deep extraction: AI agent with streamed progress.
+                status.textContent = '';  // handled by overlay
+                md = await _wizDeepExtract(modelFile, status);
+                if (!md) { // user-visible error already shown by _wizDeepExtract
+                    document.getElementById('wiz-extract-btn').disabled = false;
+                    return;
+                }
             } else {
-                const fmErr = (md && md.detail) ? md.detail : 'Financial model extraction failed';
-                status.className = 'wiz-status error';
-                status.textContent = fmErr;
-                document.getElementById('wiz-extract-btn').disabled = false;
-                return;
+                status.textContent = isVision
+                    ? '✦ Vision AI: reading financial model screenshot (15-25 seconds)...'
+                    : 'Extracting financial model (this may take 20-30 seconds)...';
+                const mfd = new FormData();
+                mfd.append('file', modelFile);
+                mfd.append('mode', 'quick');
+                const mHeaders = {};
+                if (_rvmToken) mHeaders['Authorization'] = 'Bearer ' + _rvmToken;
+                const mr = await fetch('/api/extract-model', {method: 'POST', headers: mHeaders, body: mfd});
+                try { md = await mr.json(); } catch(_) { md = {detail: 'Server error (HTTP ' + mr.status + ')'}; }
+                if (!(mr.ok && md && md.status === 'ok')) {
+                    const fmErr = (md && md.detail) ? md.detail : 'Financial model extraction failed';
+                    status.className = 'wiz-status error';
+                    status.textContent = fmErr;
+                    document.getElementById('wiz-extract-btn').disabled = false;
+                    return;
+                }
             }
+            _wizFmData = md;
+            extractionOk = true;
         }
 
         if (!extractionOk) {
@@ -3069,6 +3082,125 @@ function showToast(msg) {
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 3200);
+}
+
+// ── Extraction mode toggle (Quick / Deep) ─────────────────────────────
+document.querySelectorAll('.wiz-mode-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.wiz-mode-pill').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const mode = btn.dataset.mode;
+        const hidden = document.getElementById('wiz-model-mode');
+        if (hidden) hidden.value = mode;
+    });
+});
+
+// ── Deep (AI) extraction with JSONL progress streaming ────────────────
+async function _wizDeepExtract(modelFile, statusEl) {
+    const overlay = document.getElementById('wiz-deep-progress');
+    const statusLine = document.getElementById('wiz-deep-status');
+    const logLine = document.getElementById('wiz-deep-log');
+    const elapsedLine = document.getElementById('wiz-deep-elapsed');
+
+    // Reveal progress overlay
+    overlay.style.display = 'block';
+    logLine.innerHTML = '';
+    statusLine.textContent = 'Preparing workbook…';
+    const startedAt = Date.now();
+    const elapsedTimer = setInterval(() => {
+        const s = Math.floor((Date.now() - startedAt) / 1000);
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        elapsedLine.textContent = m > 0 ? `${m}m ${r}s` : `${s}s`;
+    }, 500);
+
+    function _appendLog(msg) {
+        const ts = new Date();
+        const hh = String(ts.getHours()).padStart(2, '0');
+        const mm = String(ts.getMinutes()).padStart(2, '0');
+        const ss = String(ts.getSeconds()).padStart(2, '0');
+        const line = document.createElement('div');
+        line.textContent = `${hh}:${mm}:${ss}  ${msg}`;
+        logLine.appendChild(line);
+        logLine.scrollTop = logLine.scrollHeight;
+    }
+
+    function _hideOverlay(keepError = false) {
+        clearInterval(elapsedTimer);
+        if (!keepError) overlay.style.display = 'none';
+    }
+
+    try {
+        const fd = new FormData();
+        fd.append('file', modelFile);
+        fd.append('mode', 'deep');
+        const headers = {};
+        if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
+
+        const r = await fetch('/api/extract-model', {method: 'POST', headers, body: fd});
+        if (!r.ok) {
+            const text = await r.text();
+            _appendLog(`HTTP ${r.status}: ${text.slice(0, 300)}`);
+            statusLine.style.color = '#b54700';
+            statusLine.textContent = `Request failed (HTTP ${r.status}). See log.`;
+            _hideOverlay(true);
+            return null;
+        }
+
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let result = null;
+        let errorMsg = null;
+
+        while (true) {
+            const {value, done} = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, {stream: true});
+
+            let newlineIdx;
+            while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
+                const line = buffer.slice(0, newlineIdx).trim();
+                buffer = buffer.slice(newlineIdx + 1);
+                if (!line) continue;
+                let evt;
+                try { evt = JSON.parse(line); } catch (e) { _appendLog('(malformed event: ' + line.slice(0,120) + ')'); continue; }
+
+                if (evt.type === 'progress') {
+                    statusLine.textContent = evt.message || 'Working…';
+                    _appendLog(evt.message || '');
+                } else if (evt.type === 'result') {
+                    result = evt.data;
+                    _appendLog('Extraction complete.');
+                    statusLine.textContent = 'Done.';
+                } else if (evt.type === 'error') {
+                    errorMsg = evt.message || 'Unknown error';
+                    _appendLog('ERROR: ' + errorMsg);
+                }
+            }
+        }
+
+        if (errorMsg) {
+            statusLine.style.color = '#b54700';
+            statusLine.textContent = errorMsg;
+            _hideOverlay(true);
+            return null;
+        }
+        if (!result) {
+            statusLine.style.color = '#b54700';
+            statusLine.textContent = 'Extraction ended without a result.';
+            _hideOverlay(true);
+            return null;
+        }
+        _hideOverlay(false);
+        return result;
+    } catch (e) {
+        statusLine.style.color = '#b54700';
+        statusLine.textContent = 'Network error: ' + e.message;
+        _appendLog('Network error: ' + e.message);
+        _hideOverlay(true);
+        return null;
+    }
 }
 
 // File input display

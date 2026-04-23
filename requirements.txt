@@ -25,3 +25,5 @@ Pillow>=10.0.0
 # PDF export
 weasyprint>=60.0
 reportlab>=4.0.0
+# Banker agent CLI
+click>=8.0
