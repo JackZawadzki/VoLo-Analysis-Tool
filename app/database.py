@@ -244,6 +244,40 @@ CREATE TABLE IF NOT EXISTS dd_scenarios (
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
+
+-- One-time codes for email verification (6-digit on signup)
+-- and password reset (opaque token in an email link).
+-- Expired / used codes stay for audit history (see last_used_at).
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose       TEXT    NOT NULL,       -- 'verify_email' | 'password_reset'
+    code_hash     TEXT    NOT NULL,       -- hash of code/token (never store plaintext)
+    expires_at    TEXT    NOT NULL,
+    used_at       TEXT,                   -- when successfully consumed
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user ON auth_tokens(user_id, purpose);
+
+-- Per-user activity log. Every login, registration, and deal-report
+-- run gets a row here so Jack/Joseph can see "who did what when"
+-- without having to grep application logs.
+CREATE TABLE IF NOT EXISTS user_activity (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    email      TEXT,                       -- denormalized so entries survive user deletion
+    event      TEXT    NOT NULL,           -- 'register' | 'verify' | 'login' | 'login_failed'
+                                           -- | 'logout' | 'password_reset_requested'
+                                           -- | 'password_reset_completed' | 'deal_report'
+                                           -- | 'memo_generated' | 'ddr_started' | etc.
+    detail     TEXT    NOT NULL DEFAULT '',
+    ip_address TEXT    NOT NULL DEFAULT '',
+    user_agent TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_user_activity_event ON user_activity(event, created_at DESC);
 """
 
 _BUILTIN_RESOURCES = [

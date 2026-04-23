@@ -32,14 +32,51 @@
                 <div class="auth-field"><label>Email</label><input type="email" id="login-email" placeholder="you@voloearth.com"></div>
                 <div class="auth-field"><label>Password</label><input type="password" id="login-password" placeholder="Enter password"></div>
                 <button onclick="doLogin()" class="auth-submit">Sign In</button>
+                <p style="font-size:0.75rem;color:#666;margin-top:10px;text-align:center;">
+                    <a href="#" onclick="showAuthTab('forgot'); return false;" style="color:#5B7744;text-decoration:none;">Forgot password?</a>
+                </p>
             </div>
             <div id="auth-register-form" style="display:none">
                 <div class="auth-field"><label>Username</label><input type="text" id="reg-username" placeholder="Choose a display name"></div>
                 <div class="auth-field"><label>Email</label><input type="email" id="reg-email" placeholder="you@voloearth.com"></div>
                 <div class="auth-field"><label>Password (8+ chars)</label><input type="password" id="reg-password" placeholder="Choose password"></div>
                 <button onclick="doRegister()" class="auth-submit">Create Account</button>
-                <p style="font-size:0.75rem;color:#666;margin-top:8px;text-align:center;">Only @voloearth.com emails are allowed. A verification code will be sent.</p>
+                <p style="font-size:0.75rem;color:#666;margin-top:8px;text-align:center;">Only @voloearth.com emails are allowed. A 6-digit verification code will be sent to your email.</p>
             </div>
+            <div id="auth-verify-form" style="display:none">
+                <p style="font-size:0.9rem;color:#333;margin:8px 0 16px;text-align:center;">
+                    We sent a 6-digit code to <strong id="verify-email-label"></strong>.<br>
+                    <span style="font-size:0.78rem;color:#666;">It expires in 15 minutes.</span>
+                </p>
+                <div class="auth-field"><label>Verification code</label>
+                    <input type="text" id="verify-code" placeholder="123456" maxlength="6"
+                           style="font-size:1.3rem;letter-spacing:6px;text-align:center;font-family:monospace;">
+                </div>
+                <button onclick="doVerifyEmail()" class="auth-submit">Verify &amp; Sign In</button>
+                <p style="font-size:0.75rem;color:#666;margin-top:10px;text-align:center;">
+                    Didn't get the code?
+                    <a href="#" onclick="doResendCode(); return false;" style="color:#5B7744;text-decoration:none;">Send a new one</a>
+                </p>
+            </div>
+            <div id="auth-forgot-form" style="display:none">
+                <p style="font-size:0.88rem;color:#333;margin:8px 0 14px;text-align:center;">
+                    Enter the email on your account. We'll send you a password reset link.
+                </p>
+                <div class="auth-field"><label>Email</label><input type="email" id="forgot-email" placeholder="you@voloearth.com"></div>
+                <button onclick="doForgotPassword()" class="auth-submit">Send reset link</button>
+                <p style="font-size:0.75rem;color:#666;margin-top:10px;text-align:center;">
+                    <a href="#" onclick="showAuthTab('login'); return false;" style="color:#5B7744;text-decoration:none;">Back to sign in</a>
+                </p>
+            </div>
+            <div id="auth-reset-form" style="display:none">
+                <p style="font-size:0.88rem;color:#333;margin:8px 0 14px;text-align:center;">
+                    Choose a new password.
+                </p>
+                <div class="auth-field"><label>New password (8+ chars)</label><input type="password" id="reset-password" placeholder="New password"></div>
+                <div class="auth-field"><label>Confirm password</label><input type="password" id="reset-password-confirm" placeholder="Re-enter"></div>
+                <button onclick="doResetPassword()" class="auth-submit">Update password</button>
+            </div>
+            <div id="auth-info" class="auth-info" style="display:none;color:#2d6a3f;background:#e6f4ea;padding:10px;border-radius:4px;margin-top:10px;font-size:0.82rem;"></div>
             <div id="auth-error" class="auth-error"></div>
         </div>
     </div>

@@ -10,7 +10,10 @@ PYTHONUNBUFFERED = "1"
 PYTHONDONTWRITEBYTECODE = "1"
 
 [deployment]
-run = ["sh", "-c", "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]
+# Single worker so our SQLite database doesn't thrash under concurrent
+# writes. A single uvicorn worker with FastAPI's thread pool is fine
+# for an internal team tool.
+run = ["sh", "-c", "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
 deploymentTarget = "cloudrun"
 
 [[ports]]

@@ -608,23 +608,42 @@ function _rvmHeaders() {
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
+const _AUTH_TAB_IDS = ['login', 'register', 'verify', 'forgot', 'reset'];
+
 function showAuthTab(tab) {
-    const loginForm = document.getElementById('auth-login-form');
-    const regForm = document.getElementById('auth-register-form');
-    // Remove any CSS classes that might override inline display
-    loginForm.classList.remove('auth-hidden');
-    regForm.classList.remove('auth-hidden');
-    loginForm.style.display = tab === 'login' ? 'block' : 'none';
-    regForm.style.display = tab === 'register' ? 'block' : 'none';
-    document.getElementById('auth-tab-login').className = 'auth-tab' + (tab === 'login' ? ' active' : '');
-    document.getElementById('auth-tab-register').className = 'auth-tab' + (tab === 'register' ? ' active' : '');
-    document.getElementById('auth-error').style.display = 'none';
+    const tabs = document.querySelector('.auth-tabs');
+    // Hide the tab bar when on sub-flows (verify/forgot/reset) — those aren't
+    // user-switchable and the Login/Register tabs would just confuse.
+    if (tabs) tabs.style.display = (tab === 'login' || tab === 'register') ? '' : 'none';
+    _AUTH_TAB_IDS.forEach(t => {
+        const form = document.getElementById('auth-' + t + '-form');
+        if (!form) return;
+        form.classList.remove('auth-hidden');
+        form.style.display = (t === tab) ? 'block' : 'none';
+    });
+    const loginTab = document.getElementById('auth-tab-login');
+    const regTab = document.getElementById('auth-tab-register');
+    if (loginTab) loginTab.className = 'auth-tab' + (tab === 'login' ? ' active' : '');
+    if (regTab) regTab.className = 'auth-tab' + (tab === 'register' ? ' active' : '');
+    const errEl = document.getElementById('auth-error');
+    if (errEl) errEl.style.display = 'none';
 }
 
 function _authError(msg) {
     const el = document.getElementById('auth-error');
+    if (!el) { alert(msg); return; }
     el.textContent = msg;
     el.style.display = '';
+}
+
+function _authInfo(msg) {
+    // Non-error feedback (e.g. "code sent").
+    const el = document.getElementById('auth-error');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = '#2d6a3f';
+    el.style.display = '';
+    setTimeout(() => { el.style.color = ''; }, 4000);
 }
 
 async function doLogin() {
@@ -634,7 +653,19 @@ async function doLogin() {
     try {
         const r = await fetch('/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:e, password:p})});
         const d = await r.json();
-        if (!r.ok) return _authError(d.detail || d.error || 'Login failed');
+        if (!r.ok) {
+            // Special-case: if the backend says "not verified yet", bounce
+            // the user into the verify screen for this email automatically.
+            const msg = d.detail || d.error || 'Login failed';
+            if (r.status === 403 && /verified/i.test(msg)) {
+                _pendingVerifyEmail = e;
+                const lbl = document.getElementById('verify-email-label');
+                if (lbl) lbl.textContent = e;
+                showAuthTab('verify');
+                return _authInfo('Account not verified — enter the code we emailed you.');
+            }
+            return _authError(msg);
+        }
         _rvmToken = d.token;
         _rvmUser = d.user;
         localStorage.setItem('rvm_token', d.token);
@@ -653,12 +684,115 @@ async function doRegister() {
         const r = await fetch('/api/auth/register', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:u, email:e, password:p})});
         const d = await r.json();
         if (!r.ok) return _authError(d.detail || d.error || 'Registration failed');
+        // Backend now returns {status:"verification_required", email, message}
+        // — it does NOT log the user in until they prove they own the email.
+        if (d.status === 'verification_required' || !d.token) {
+            _pendingVerifyEmail = d.email || e;
+            const lbl = document.getElementById('verify-email-label');
+            if (lbl) lbl.textContent = _pendingVerifyEmail;
+            showAuthTab('verify');
+            return _authInfo(d.message || 'Check your inbox for a 6-digit code.');
+        }
+        // Legacy path: if the server still issues a token directly, honor it.
         _rvmToken = d.token;
         _rvmUser = d.user;
         localStorage.setItem('rvm_token', d.token);
         _onAuthSuccess();
     } catch(err) { _authError('Network error'); }
 }
+
+async function doVerifyEmail() {
+    const code = (document.getElementById('verify-code').value || '').trim();
+    if (!code || code.length < 4) return _authError('Enter the 6-digit code from your email');
+    const email = _pendingVerifyEmail
+        || document.getElementById('verify-email-label')?.textContent?.trim();
+    if (!email) return _authError('No email on file for verification. Register again.');
+    try {
+        const r = await fetch('/api/auth/verify-email', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({email, code}),
+        });
+        const d = await r.json();
+        if (!r.ok) return _authError(d.detail || d.error || 'Verification failed');
+        _rvmToken = d.token;
+        _rvmUser = d.user;
+        localStorage.setItem('rvm_token', d.token);
+        _pendingVerifyEmail = '';
+        _onAuthSuccess();
+    } catch(e) { _authError('Network error'); }
+}
+
+async function doResendCode() {
+    const email = _pendingVerifyEmail
+        || document.getElementById('verify-email-label')?.textContent?.trim();
+    if (!email) return _authError('No email on file. Register again.');
+    try {
+        const r = await fetch('/api/auth/resend-code', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({email}),
+        });
+        if (!r.ok) return _authError('Could not resend code. Try registering again.');
+        _authInfo('A new code was sent to ' + email + '.');
+    } catch(e) { _authError('Network error'); }
+}
+
+async function doForgotPassword() {
+    const email = (document.getElementById('forgot-email').value || '').trim();
+    if (!email) return _authError('Enter your email');
+    try {
+        const r = await fetch('/api/auth/forgot-password', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({email}),
+        });
+        // Server always returns 200 with a generic message (no leak of whether
+        // the email exists) — so show the same thing regardless.
+        _authInfo('If an account exists for ' + email + ', a reset link was sent. Check your inbox.');
+    } catch(e) { _authError('Network error'); }
+}
+
+async function doResetPassword() {
+    const p1 = document.getElementById('reset-password').value;
+    const p2 = document.getElementById('reset-password-confirm').value;
+    if (!p1 || p1.length < 8) return _authError('Password must be at least 8 characters');
+    if (p1 !== p2) return _authError('Passwords do not match');
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('reset_token');
+    if (!token) return _authError('Reset link is missing its token. Request a new reset email.');
+    try {
+        const r = await fetch('/api/auth/reset-password', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({token, new_password: p1}),
+        });
+        const d = await r.json();
+        if (!r.ok) return _authError(d.detail || d.error || 'Reset failed — link may have expired.');
+        _rvmToken = d.token;
+        _rvmUser = d.user;
+        localStorage.setItem('rvm_token', d.token);
+        // Clean the reset_token out of the URL so a refresh doesn't replay it.
+        try { history.replaceState({}, '', window.location.pathname); } catch(_) {}
+        _onAuthSuccess();
+    } catch(e) { _authError('Network error'); }
+}
+
+// On page load, if a ?reset_token=... is in the URL, show the reset form.
+(function _handleResetTokenInUrl() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('reset_token')) {
+            // Defer until DOM is ready in case this file loads before the
+            // auth overlay is rendered.
+            const show = () => {
+                document.getElementById('auth-overlay').style.display = 'flex';
+                showAuthTab('reset');
+            };
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', show);
+            } else {
+                show();
+            }
+        }
+    } catch(_) {}
+})();
 
 function doLogout() {
     _rvmToken = '';
