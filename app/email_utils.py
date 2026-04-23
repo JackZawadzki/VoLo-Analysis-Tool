@@ -165,7 +165,25 @@ def send_email(to: str, subject: str, html: str, text: str) -> bool:
     Returns True when the message was accepted by SOME path (including
     the console-log fallback). Returns False only when a configured
     real provider rejected the message AND no fallback succeeded.
+
+    DEFENSIVE GUARD: if the recipient isn't on an allowlisted domain,
+    refuse to send. This is a belt-and-suspenders check beneath the
+    route-level domain enforcement — so if any code path ever reaches
+    here with a @gmail.com or similar, we hard-fail instead of silently
+    delivering. `AUTH_ALLOWED_DOMAINS` env var (comma-separated) can
+    widen this list; default is voloearth.com only.
     """
+    allowed = os.environ.get("AUTH_ALLOWED_DOMAINS", "voloearth.com")
+    allowed_set = {d.strip().lower() for d in allowed.split(",") if d.strip()}
+    recipient_domain = (to or "").rsplit("@", 1)[-1].lower()
+    if recipient_domain not in allowed_set:
+        logger.warning(
+            "email send blocked — recipient %s is not on an allowlisted "
+            "domain (%s). No email was sent.",
+            to, sorted(allowed_set),
+        )
+        return False
+
     # 1. Gmail SMTP (primary when GMAIL_USER+GMAIL_APP_PASSWORD are set)
     if _gmail_creds():
         if _send_via_gmail(to, subject, html, text):

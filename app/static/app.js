@@ -732,16 +732,31 @@ async function doLogin() {
 
 let _pendingVerifyEmail = '';
 
+let _registerInFlight = false;
 async function doRegister() {
+    // Guard against double-submit — if the user somehow clicks twice (rapid
+    // double-click, Enter key in a field, etc.) we silently ignore the
+    // second click while the first is still running. Prevents a race where
+    // a second submit could happen after the popup fires.
+    if (_registerInFlight) return;
+    _registerInFlight = true;
+    const _btn = document.querySelector('#auth-register-form .auth-submit');
+    if (_btn) { _btn.disabled = true; _btn.style.opacity = '0.6'; }
+    const _release = () => {
+        _registerInFlight = false;
+        if (_btn) { _btn.disabled = false; _btn.style.opacity = ''; }
+    };
+    try {
     const u = document.getElementById('reg-username').value.trim();
     const e = document.getElementById('reg-email').value.trim().toLowerCase();
     const p = document.getElementById('reg-password').value;
-    if (!u || !e || p.length < 8) return _authError('Fill all fields (password 8+ chars)');
-    // Client-side domain check so the user gets instant feedback without
-    // waiting for a round-trip. Backend still enforces this as the source
-    // of truth — this is just for UX.
+    if (!u || !e || p.length < 8) { _authError('Fill all fields (password 8+ chars)'); return; }
+    // Client-side domain check — backend enforces this too (defense in
+    // depth) but we short-circuit here so there's zero network round-trip
+    // and zero chance of a race where a code could be dispatched.
     if (!/^[^@\s]+@voloearth\.com$/i.test(e)) {
-        return _authError('You need a @voloearth.com email to sign up. This tool is restricted to VoLo Earth team members.');
+        _authError('You need a @voloearth.com email to sign up. This tool is restricted to VoLo Earth team members.');
+        return;
     }
     // IMPORTANT: clear any leftover session before registering. Without
     // this, a user who registers while they already have a valid JWT in
@@ -771,6 +786,9 @@ async function doRegister() {
         localStorage.setItem('rvm_token', d.token);
         _onAuthSuccess();
     } catch(err) { _authError('Network error'); }
+    } finally {
+        _release();
+    }
 }
 
 async function doVerifyEmail() {
