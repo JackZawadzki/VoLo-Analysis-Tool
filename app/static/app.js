@@ -629,21 +629,78 @@ function showAuthTab(tab) {
     if (errEl) errEl.style.display = 'none';
 }
 
+// ── Auth popup dialogs ───────────────────────────────────────────────
+// _authError and _authInfo both render a real centered popup modal
+// with a single dismiss button. The older behavior of inline red
+// text under the form was easy to miss — users reported clicking
+// Register with an @gmail.com address and seeing "nothing happen"
+// because the inline error was below the fold on their screen.
+// We still update the legacy #auth-error div for accessibility /
+// screen readers, but the modal is what the user actually sees.
+
+function _showAuthPopup(msg, kind /* 'error' | 'info' */) {
+    const accent = kind === 'error' ? '#b54700' : '#2d6a3f';
+    // Remove any previous popup before creating a new one.
+    const prev = document.getElementById('auth-popup-overlay');
+    if (prev) prev.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'auth-popup-overlay';
+    overlay.style.cssText = (
+        'position:fixed;inset:0;background:rgba(15,25,18,0.55);' +
+        'display:flex;align-items:center;justify-content:center;' +
+        'z-index:10000;animation:fadeIn 120ms ease-out;'
+    );
+    const card = document.createElement('div');
+    card.style.cssText = (
+        'background:#fff;border-radius:10px;padding:24px 28px;max-width:420px;' +
+        'box-shadow:0 8px 32px rgba(0,0,0,0.25);border-top:4px solid ' + accent + ';'
+    );
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:0.82rem;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:' + accent + ';margin-bottom:8px;';
+    title.textContent = kind === 'error' ? 'Unable to continue' : 'Info';
+    const body = document.createElement('div');
+    body.style.cssText = 'font-size:0.95rem;line-height:1.5;color:#1a1a1a;margin-bottom:18px;';
+    body.textContent = msg;
+    const btn = document.createElement('button');
+    btn.textContent = 'OK';
+    btn.style.cssText = (
+        'background:' + accent + ';color:#fff;border:none;border-radius:4px;' +
+        'padding:8px 22px;font-size:0.9rem;font-weight:600;cursor:pointer;' +
+        'float:right;'
+    );
+    btn.onclick = () => overlay.remove();
+    card.appendChild(title);
+    card.appendChild(body);
+    card.appendChild(btn);
+    overlay.appendChild(card);
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+    // Focus the dismiss button so Enter/Escape dismisses cleanly.
+    try { btn.focus(); } catch (_) {}
+    // Escape dismisses
+    const esc = (e) => {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', esc); }
+    };
+    document.addEventListener('keydown', esc);
+}
+
 function _authError(msg) {
+    // Show a blocking popup — this is the primary UX for auth errors now.
+    _showAuthPopup(msg, 'error');
+    // Keep the inline div up-to-date for accessibility tools / screen readers.
     const el = document.getElementById('auth-error');
-    if (!el) { alert(msg); return; }
-    el.textContent = msg;
-    el.style.display = '';
+    if (el) { el.textContent = msg; el.style.color = '#b54700'; el.style.display = ''; }
 }
 
 function _authInfo(msg) {
-    // Non-error feedback (e.g. "code sent").
+    // Non-blocking info popup (e.g. "code sent"). Auto-dismisses after a
+    // few seconds to avoid stacking, but still shows as an actual dialog
+    // so the user sees the confirmation clearly.
+    _showAuthPopup(msg, 'info');
+    const overlay = document.getElementById('auth-popup-overlay');
+    setTimeout(() => { if (overlay && overlay.parentNode) overlay.remove(); }, 4500);
     const el = document.getElementById('auth-error');
-    if (!el) return;
-    el.textContent = msg;
-    el.style.color = '#2d6a3f';
-    el.style.display = '';
-    setTimeout(() => { el.style.color = ''; }, 4000);
+    if (el) { el.textContent = msg; el.style.color = '#2d6a3f'; el.style.display = ''; }
 }
 
 async function doLogin() {
