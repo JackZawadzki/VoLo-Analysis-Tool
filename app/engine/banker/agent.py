@@ -104,6 +104,33 @@ Rules you MUST follow:
    the sheet that the canonical_metrics_map is primarily drawn from. Usually
    the Income Statement or P&L sheet. If the model doesn't have one, leave null.
 
+10. **Prefer the broadest-scope P&L sheet.** Many workbooks contain multiple
+    P&L-style sheets at different scopes — a combined/consolidated view AND
+    one or more single-facility or single-segment views. For a venture deal
+    analysis you MUST pick the broadest scope available.
+
+    Prefer sheets whose names contain any of these tokens:
+      "Combined", "Unified", "Consolidated", "Consolidation", "Group",
+      "Total", "Summary", "Overview".
+
+    Avoid (deprioritize) sheets whose names contain:
+      "L1", "L2", "Line 1", "Line 2", "Facility", "Plant", "Standalone",
+      or a specific city/place name (e.g. "Smyrna", "Bowling Green",
+      "Muskegon", "Kentucky") when a broader sheet exists.
+
+    Example: if the workbook has BOTH `FS_Combined` and `FS - Annual`, you
+    MUST pick `FS_Combined` — it is the multi-facility consolidated view,
+    while `FS - Annual` is a single-facility projection. Same for
+    `FS_Smyrna_L1+L2`, `FS_Bowling Green`, etc. — these are single-plant
+    views and should never be `primary_financials_sheet` when a
+    Combined/Consolidated sheet is available. Pull `canonical_metrics_map`
+    labels from the broadest sheet, not from a plant-level derivative.
+
+    If no consolidated sheet exists and only single-facility sheets are
+    available, pick the most representative one and note this in
+    `notes_on_missing` so the downstream consumer knows the extraction is
+    narrower than the company as a whole.
+
 Work pattern:
 
   1. Call list_sheets to see what's there.
@@ -326,6 +353,16 @@ def run_agent(
     for turn in range(max_turns):
         logger.info("Agent turn %d", turn + 1)
         _emit(f"Agent turn {turn + 1}: inspecting the workbook...")
+
+        # Token-budget safety net. Claude Sonnet 4.5 caps input at 200k
+        # tokens. On complex multi-sheet workbooks (Mitra: 32 sheets) the
+        # agent accumulates tool_result payloads across turns that can
+        # easily blow past that. If the estimated input is approaching
+        # the ceiling, collapse older tool_result messages in place so the
+        # conversation stays under budget while preserving the most
+        # recent context the agent needs to finish.
+        _prune_messages_if_needed(messages)
+
         # Streaming is required when max_tokens > 8192 per the Anthropic SDK.
         # We don't actually need the intermediate chunks — we just accumulate the
         # final message so the rest of the loop works identically.
@@ -388,6 +425,83 @@ def run_agent(
         messages.append({"role": "user", "content": tool_results})
 
     raise RuntimeError(f"Agent did not finish within {max_turns} turns")
+
+
+# Character-budget proxy for Claude's 200K input-token cap. ~3 characters per
+# token for English + JSON content is a conservative ratio, so ~480K chars
+# corresponds to roughly 160K tokens, leaving headroom for the system prompt,
+# tool schemas, and the current turn's assistant output budget.
+_INPUT_CHAR_BUDGET = 480_000
+# When pruning, keep this many most-recent messages intact. The initial user
+# turn (index 0) is always preserved since it contains the extraction schema.
+_PRUNE_KEEP_RECENT = 6
+_PRUNED_NOTICE = (
+    "[earlier tool result pruned to stay within the model's input budget — "
+    "re-call the relevant tool if you still need these cells]"
+)
+
+
+def _estimate_message_chars(messages: list[dict[str, Any]]) -> int:
+    """Rough byte-size proxy for the total input payload. We don't need
+    Claude-accurate tokenization; a character count over-estimates tokens
+    consistently enough to serve as a safety threshold."""
+    total = 0
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str):
+            total += len(c)
+        elif isinstance(c, list):
+            for block in c:
+                if isinstance(block, dict):
+                    # tool_result / tool_use / text blocks all serialize to
+                    # JSON-ish payloads. Measure the string form conservatively.
+                    total += len(str(block))
+                else:
+                    # SDK content block objects — .text, .input, etc.
+                    total += len(str(getattr(block, "text", "") or ""))
+                    total += len(str(getattr(block, "input", "") or ""))
+                    total += len(str(getattr(block, "content", "") or ""))
+    return total
+
+
+def _prune_messages_if_needed(messages: list[dict[str, Any]]) -> None:
+    """In-place: if the conversation is getting too big, collapse older
+    tool_result payloads to short placeholders. Preserves the initial user
+    turn and the most recent _PRUNE_KEEP_RECENT messages verbatim.
+
+    The agent will see the placeholder text, understand those tool results
+    were discarded to save context, and can re-query tools for any cells
+    it still needs.
+    """
+    if len(messages) <= _PRUNE_KEEP_RECENT + 1:
+        return
+    if _estimate_message_chars(messages) < _INPUT_CHAR_BUDGET:
+        return
+
+    # Indices 1 .. (len - _PRUNE_KEEP_RECENT) are eligible for pruning.
+    prunable_end = len(messages) - _PRUNE_KEEP_RECENT
+    for i in range(1, prunable_end):
+        m = messages[i]
+        c = m.get("content")
+        # Only prune user-role tool_result messages (these carry the bulky
+        # preview_sheet / read_range payloads). Assistant messages hold the
+        # agent's reasoning and tool_use plans — keep those intact.
+        if m.get("role") != "user" or not isinstance(c, list):
+            continue
+        new_blocks = []
+        for block in c:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                new_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.get("tool_use_id"),
+                    "content": _PRUNED_NOTICE,
+                })
+            else:
+                new_blocks.append(block)
+        m["content"] = new_blocks
+        # Stop as soon as we're back under budget.
+        if _estimate_message_chars(messages) < _INPUT_CHAR_BUDGET:
+            break
 
 
 def _build_user_prompt(file_name: str, extra_context: Optional[str]) -> str:

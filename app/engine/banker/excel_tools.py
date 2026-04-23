@@ -61,24 +61,66 @@ class ExcelWorkbook:
 
     # ── Reading ──────────────────────────────────────────────────────────
 
-    def preview_sheet(self, sheet: str, rows: int = 30, cols: Optional[int] = None) -> dict[str, Any]:
-        """Return the top-left NxM grid of a sheet as a 2D array.
+    # Default cap on preview width. Wider sheets (Mitra's plant-FS tabs are 45+
+    # cols) caused individual preview_sheet calls to return 80–120KB of JSON,
+    # which blew the Claude context window after ~6 previews. If the agent
+    # legitimately needs more columns, it can pass an explicit `cols` value.
+    _PREVIEW_COLS_DEFAULT = 20
 
-        Cells are returned as a {row, col, addr, value} dict so the agent
-        can reference any cell it wants to inspect further.
+    def preview_sheet(self, sheet: str, rows: int = 30, cols: Optional[int] = None) -> dict[str, Any]:
+        """Return a compact preview of a sheet.
+
+        For each row, we emit only the non-null cells as [address, value,
+        (formula?)] tuples. Empty cells are silently skipped. This cuts a
+        typical wide-sheet preview from ~100KB to ~10–15KB while keeping the
+        information the agent actually uses — where labels/values live.
+
+        The agent can always fall back to `read_range` or `read_cell` when it
+        needs formulas or the full grid of a specific region.
         """
         self._require_sheet(sheet)
         ws = self._wb_values[sheet]
         end_row = min(rows, ws.max_row) if ws.max_row else 0
-        end_col = min(cols if cols else ws.max_column, ws.max_column) if ws.max_column else 0
+        effective_cols = cols if cols else self._PREVIEW_COLS_DEFAULT
+        end_col = min(effective_cols, ws.max_column) if ws.max_column else 0
 
-        grid = []
+        rows_out: list[dict[str, Any]] = []
+        total_cells_scanned = 0
+        total_cells_emitted = 0
+        truncated = False
+
+        # Soft byte budget so one preview call can't dominate the context
+        # even if the sheet is unusually dense with long string cells.
+        BYTE_BUDGET = 12_000
+        approx_bytes = 0
+
         for r in range(1, end_row + 1):
-            row = []
+            row_cells: list[list[Any]] = []
             for c in range(1, end_col + 1):
                 cell = ws.cell(r, c)
-                row.append(self._cell_to_dict(cell, sheet))
-            grid.append(row)
+                total_cells_scanned += 1
+                v = self._serialize(cell.value)
+                if v is None or (isinstance(v, str) and v.strip() == ""):
+                    continue
+                addr = cell.coordinate
+                # Compact tuple: [address, value] — formula appended only if present.
+                entry: list[Any] = [addr, v]
+                try:
+                    fc = self._wb_formulas[sheet][addr]
+                    if isinstance(fc.value, str) and fc.value.startswith("="):
+                        entry.append(fc.value)
+                except KeyError:
+                    pass
+                row_cells.append(entry)
+                total_cells_emitted += 1
+                approx_bytes += len(str(entry))
+                if approx_bytes > BYTE_BUDGET:
+                    truncated = True
+                    break
+            if row_cells:
+                rows_out.append({"r": r, "cells": row_cells})
+            if truncated:
+                break
 
         return {
             "sheet": sheet,
@@ -86,7 +128,16 @@ class ExcelWorkbook:
             "cols_returned": end_col,
             "sheet_max_row": ws.max_row,
             "sheet_max_col": ws.max_column,
-            "grid": grid,
+            "cells_emitted": total_cells_emitted,
+            "cells_scanned": total_cells_scanned,
+            "truncated": truncated,
+            # Compact sparse format: one entry per non-empty row, each with
+            # a list of [address, value, formula?] tuples. Empty cells are
+            # omitted — the agent should infer "missing" from absence.
+            "rows": rows_out,
+            "format_note": "Sparse: each row dict has 'r' (row number) and "
+                           "'cells' (list of [address, value, optional formula]). "
+                           "Empty cells omitted. Use read_range for full grid.",
         }
 
     def read_range(self, sheet: str, range_str: str) -> dict[str, Any]:

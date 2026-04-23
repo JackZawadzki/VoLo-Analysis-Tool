@@ -49,7 +49,7 @@ class RangeRef(BaseModel):
 
 class LineItemDraft(BaseModel):
     """Line item as identified by the agent (no values yet)."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     label: str = Field(description="The label string as it appears in the sheet, verbatim.")
     label_cell: CellRef = Field(description="Where the label text lives.")
@@ -77,7 +77,7 @@ class LineItemDraft(BaseModel):
 
 class AssumptionDraft(BaseModel):
     """A named scalar (not time-indexed)."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     label: str
     label_cell: CellRef
@@ -97,7 +97,7 @@ class NarrativeBlock(BaseModel):
 
     Catches milestones, memos inside the sheet, commentary rows, etc.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     title: Optional[str] = None
     text: str
@@ -108,7 +108,7 @@ class NarrativeBlock(BaseModel):
 
 class SheetCharacterization(BaseModel):
     """Agent's free-text description of what a sheet contains."""
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     description: str = Field(description="One-to-three sentence summary of the sheet's content.")
@@ -132,7 +132,7 @@ class RequiredCore(BaseModel):
 
     Maps directly to the VoLo tool's DealPipelineRequest top-level fields.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     archetype: Optional[str] = Field(default=None, description="Technology archetype (free string).")
     tam_millions: Optional[float] = None
@@ -162,7 +162,7 @@ class CanonicalMetricMap(BaseModel):
     The agent must reference labels it has already extracted as line_items —
     do NOT invent labels.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     revenue: Optional[str] = Field(default=None, description="Label of the line_item that is total revenue.")
     cogs: Optional[str] = Field(default=None, description="Label of the line_item that is total cost of goods sold.")
@@ -205,7 +205,7 @@ class VoLoFinancialModel(BaseModel):
     With this shape, the banker's output can be fed to the existing adapter
     directly — no VoLo-side code changes required just to CONSUME it.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     status: str = "ok"
     scope: FinancialModelScope = Field(default_factory=FinancialModelScope)
@@ -227,7 +227,7 @@ class ExtractionDraft(BaseModel):
     referenced by each line_item / assumption / required_core source and
     produces the ExtractedModel below.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     sheets: list[SheetCharacterization]
     line_items: list[LineItemDraft]
@@ -307,7 +307,7 @@ class ExtractedModel(BaseModel):
     Callers that only want the VoLo-compatible path can read `financial_model` and
     ignore everything else.
     """
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     source_file: str
     extraction_version: str = "0.2.0"
