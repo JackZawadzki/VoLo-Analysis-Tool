@@ -1,0 +1,169 @@
+/* ==========================================================
+   VoLo Earth — Aesthetic Refresh (PREVIEW)
+   ----------------------------------------------------------
+   Loaded AFTER styles.css so every rule here is additive and
+   can be disabled by removing the <link> in index.html.
+
+   Scope: purely visual — palette, typography, shadows, page
+   texture. Nothing in this file changes layout, component
+   structure, form logic, chart rendering, or API calls.
+   ========================================================== */
+
+/* ── 1. Refined earth-tone palette ──────────────────────────
+   Warmer cream base, deeper forest green, new terracotta
+   accent reserved for badges/warnings (not chart colors). */
+:root {
+    /* Warmer, more paper-like backgrounds */
+    --bg-primary: #F4F1EA;       /* soft linen cream */
+    --bg-white:   #FCFAF5;       /* warm off-white */
+    --bg-subtle:  #EDE7DB;       /* deeper linen */
+    --bg-tertiary:#E8E1D0;
+
+    /* Slightly more saturated greens for chrome only */
+    --volo-green-dark: #3F6B57;
+    --volo-green:      #5E9378;
+    --volo-green-light:#8AB89E;
+    --volo-sage:       #7AA28C;
+
+    --accent:        #3F6B57;
+    --accent-light:  #DDE9E0;
+    --accent-hover:  #2F5544;
+
+    /* Earthy accent palette (badges, tags, subtle highlights) */
+    --earth-clay:   #B07A5B;    /* terracotta */
+    --earth-ochre:  #C89B5F;    /* muted gold */
+    --earth-moss:   #7C8F5A;    /* olive moss */
+    --earth-stone:  #8C8377;    /* warm stone */
+
+    /* Borders pick up a touch of warmth */
+    --border:       #D6CFC0;
+    --border-light: #E3DDCE;
+
+    /* Text tuned slightly warmer too */
+    --text-primary:   #2A2B26;
+    --text-secondary: #585549;
+    --text-tertiary:  #8A8577;
+
+    /* Softer multi-layer shadows (more premium feel) */
+    --shadow-sm: 0 1px 2px rgba(63,63,43,0.04), 0 1px 3px rgba(63,63,43,0.06);
+    --shadow-md: 0 2px 4px rgba(63,63,43,0.04), 0 8px 20px rgba(63,63,43,0.07);
+    --shadow-lg: 0 4px 10px rgba(63,63,43,0.05), 0 20px 40px rgba(63,63,43,0.10);
+    --shadow-xl: 0 8px 20px rgba(63,63,43,0.06), 0 32px 64px rgba(63,63,43,0.12);
+
+    /* Unified, slightly tighter radii */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+}
+
+/* ── 2. Typography pair — editorial serif + clean sans ──── */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --font-sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-display: 'Fraunces', 'Georgia', 'Times New Roman', serif;
+}
+
+/* Apply the display serif only to marquee headlines — never to
+   data cells, buttons, or form labels (those stay sans for clarity). */
+.page-header h1,
+.page-header h2,
+.rpt-company,
+.rpt-section-title,
+.memo-cover-company,
+.memo-toc-header-label,
+.section-subtitle + h2,
+#tab-ddr h2,
+#tab-references h1,
+.wizard-panel > h2 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+/* ── 3. Page texture — faint topographic/paper grain ────── */
+body {
+    background-color: var(--bg-primary);
+    background-image:
+        radial-gradient(circle at 20% 10%, rgba(124,143,90,0.025) 0, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(176,122,91,0.020) 0, transparent 45%);
+    background-attachment: fixed;
+}
+
+/* ── 4. Softer, more premium card shadows ───────────────── */
+.rpt-hero-card,
+.report-card-mini,
+.memo-history-item,
+.ddr-history-item,
+.ddr-progress-card,
+.memo-upload-dropzone,
+.wizard-panel,
+.deal-report {
+    box-shadow: var(--shadow-sm);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.rpt-hero-card:hover,
+.report-card-mini:hover,
+.memo-history-item:hover,
+.ddr-history-item:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+/* Deal report container gets a subtle paper-like frame */
+.deal-report {
+    background: var(--bg-white);
+    border-radius: var(--radius-lg);
+    padding: 8px 28px;
+}
+
+/* ── 5. Navigation polish — pill-style active tab ───────── */
+.nav-link {
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-link.active {
+    background: var(--accent-light);
+    color: var(--accent-hover);
+}
+.nav-link:hover:not(.active) {
+    background: rgba(62,107,87,0.06);
+}
+
+/* ── 6. Buttons — warmer primary, subtle lift on hover ──── */
+.btn-primary {
+    background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+    border: 1px solid var(--accent-hover);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), var(--shadow-sm);
+    transition: transform 0.1s ease, box-shadow 0.2s ease, filter 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+    filter: brightness(1.05);
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), var(--shadow-md);
+}
+.btn-primary:active:not(:disabled) {
+    transform: translateY(0);
+    filter: brightness(0.98);
+}
+
+/* ── 7. Auth overlay — warmer, more inviting ────────────── */
+.auth-overlay {
+    background:
+        radial-gradient(circle at 30% 20%, rgba(90,158,111,0.08) 0, transparent 50%),
+        radial-gradient(circle at 75% 75%, rgba(176,122,91,0.06) 0, transparent 50%),
+        var(--bg-primary);
+}
+
+/* ── 8. Meta chips / status badges — earth accents ──────── */
+.rpt-meta span,
+.memo-dc-tag,
+.ddr-company-badge {
+    background: var(--bg-subtle);
+    border-color: var(--border-light);
+    letter-spacing: 0.01em;
+}
+
+/* ── 9. Section breathing room in the deal report ───────── */
+.rpt-section { padding: 44px 0; }
+.rpt-section-title { margin-bottom: 22px; }
