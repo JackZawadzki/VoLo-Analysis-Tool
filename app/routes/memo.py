@@ -26,8 +26,10 @@ import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, List
 
@@ -41,6 +43,28 @@ from ..database import get_db, get_model_preferences, MODEL_DEFAULTS
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/memo", tags=["memo"])
+
+# ── In-memory memo job store ─────────────────────────────────────────────────
+# Memo generation moved to a background worker so proxy/CDN HTTP timeouts
+# (~2–3 min on Replit/Cloudflare) can't cut off a 3–5 min LLM pipeline.
+# The HTTP endpoint returns a job_id immediately; the frontend polls
+# /api/memo/generate/status/{job_id} for real per-call progress and the
+# final result payload.
+_MEMO_JOBS: dict[str, dict] = {}
+_MEMO_LOCK = threading.Lock()
+
+# Retention: jobs older than this are dropped from memory on access.
+_MEMO_JOB_TTL_SECONDS = 3600  # 1 hour
+
+
+def _prune_old_memo_jobs() -> None:
+    """Drop memo jobs older than the TTL to keep memory bounded."""
+    now = time.time()
+    with _MEMO_LOCK:
+        stale = [jid for jid, j in _MEMO_JOBS.items()
+                 if now - j.get("_created_mono", now) > _MEMO_JOB_TTL_SECONDS]
+        for jid in stale:
+            _MEMO_JOBS.pop(jid, None)
 
 # ── Upload directory ─────────────────────────────────────────────────────────
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "memo_uploads"
@@ -1926,26 +1950,171 @@ def _parse_template_sections(template_text: str) -> dict:
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  MAIN GENERATE ENDPOINT — orchestrates the 3-pass pipeline
+#
+#  Memo generation runs as a background job (like DDR). The HTTP endpoint
+#  starts a worker thread and returns a job_id immediately so the request
+#  cannot be killed by a proxy/CDN HTTP timeout (~2–3 min) while the pipeline
+#  is still making its 15–20 sequential LLM calls. The frontend polls
+#  /api/memo/generate/status/{job_id} for real progress.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+def _run_memo_background(job_id: str, req: "MemoGenerateRequest",
+                         user_id: int, user_username: str):
+    """Background worker: run _build_memo_payload and stash the result/error."""
+    def _update(**kwargs):
+        with _MEMO_LOCK:
+            job = _MEMO_JOBS.get(job_id)
+            if job is None:
+                return
+            job.update(kwargs)
+
+    def _progress_cb(pct: int, msg: str):
+        _update(progress_pct=pct, progress_msg=msg)
+
+    try:
+        _update(status="running", progress_pct=1, progress_msg="Starting memo generation...")
+        result = _build_memo_payload(req, user_id, progress_cb=_progress_cb)
+        _update(
+            status="complete",
+            progress_pct=100,
+            progress_msg="Memo ready.",
+            result=result,
+            finished_at=datetime.now().isoformat(),
+        )
+        logger.info(f"[MEMO] Job {job_id} complete for user={user_username}")
+    except Exception as e:
+        err_str = str(e)[:500] or type(e).__name__
+        logger.exception(f"[MEMO] Job {job_id} failed")
+        _update(
+            status="error",
+            progress_pct=0,
+            progress_msg="Generation failed.",
+            error=err_str,
+            finished_at=datetime.now().isoformat(),
+        )
+
+
 @router.post("/generate")
-async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(get_current_user)):
+async def generate_memo_start(
+    req: MemoGenerateRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Start a memo-generation background job. Returns a job_id for polling.
+
+    The heavy work (15–20 sequential LLM calls, ~3–5 min) runs in a background
+    thread so the HTTP response returns immediately and the connection can't
+    be cut by an intermediary proxy timeout.
+    """
+    _prune_old_memo_jobs()
+
+    # Pre-flight: fail fast on obvious misconfiguration before enqueuing.
+    prefs = get_model_preferences(user.id)
+    model = req.model_override or prefs.get("memo_generation", MODEL_DEFAULTS["memo_generation"])
+    if model.startswith("qwen"):
+        if not os.environ.get("REFIANT_API_KEY", ""):
+            raise HTTPException(500, "REFIANT_API_KEY not configured. Set it in .env or environment.")
+    else:
+        if not os.environ.get("ANTHROPIC_API_KEY", ""):
+            raise HTTPException(500, "ANTHROPIC_API_KEY not configured. Set it in .env or environment.")
+
+    # Minimal input validation: must have *something* to work with.
+    has_report = bool(req.report_id)
+    has_session = bool(req.session_id)
+    has_library = bool(req.library_id)
+    has_template = bool((req.template_text or "").strip() or req.template_id)
+    if not (has_report or has_session or has_library or has_template):
+        raise HTTPException(400, "Select a deal report, upload documents, or provide a template.")
+
+    job_id = str(uuid.uuid4())[:12]
+    with _MEMO_LOCK:
+        _MEMO_JOBS[job_id] = {
+            "status": "queued",
+            "progress_pct": 0,
+            "progress_msg": "Queued...",
+            "error": None,
+            "result": None,
+            "user_id": user.id,
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "_created_mono": time.time(),
+        }
+
+    t = threading.Thread(
+        target=_run_memo_background,
+        args=(job_id, req, user.id, user.username),
+        daemon=True,
+    )
+    t.start()
+    return {"job_id": job_id, "status": "queued"}
+
+
+@router.get("/generate/status/{job_id}")
+async def generate_memo_status(
+    job_id: str,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Poll memo-generation status. Returns progress while running, the full
+    response payload once complete, or the error message on failure."""
+    with _MEMO_LOCK:
+        job = _MEMO_JOBS.get(job_id)
+        snapshot = dict(job) if job else None
+
+    if not snapshot:
+        raise HTTPException(404, "Memo job not found or expired")
+    if snapshot.get("user_id") != user.id:
+        raise HTTPException(403, "Not your job")
+
+    resp = {
+        "job_id": job_id,
+        "status": snapshot["status"],
+        "progress_pct": snapshot["progress_pct"],
+        "progress_msg": snapshot["progress_msg"],
+        "error": snapshot["error"],
+        "started_at": snapshot["started_at"],
+        "finished_at": snapshot["finished_at"],
+    }
+    # Inline the full payload on completion so the client gets the memo in one
+    # poll — same shape the old synchronous /generate endpoint returned.
+    if snapshot["status"] == "complete" and snapshot.get("result"):
+        resp["result"] = snapshot["result"]
+    return resp
+
+
+def _build_memo_payload(
+    req: MemoGenerateRequest,
+    user_id: int,
+    progress_cb=None,
+):
+    """Run the full memo-generation pipeline synchronously. Returns the final
+    response payload dict, or raises RuntimeError with a user-friendly message.
+
+    Designed to be invoked from a background worker thread — no HTTPException,
+    no async/await. Emits real progress via `progress_cb(pct, msg)`.
+    """
     from ..engine.llm_utils import make_llm_client
     start_time = time.time()
 
+    def _progress(pct: int, msg: str):
+        if progress_cb:
+            try: progress_cb(pct, msg)
+            except Exception: pass
+
+    _progress(2, "Resolving model and loading inputs...")
+
     # ── Resolve model ──
-    prefs = get_model_preferences(user.id)
+    prefs = get_model_preferences(user_id)
     model = req.model_override or prefs.get("memo_generation", MODEL_DEFAULTS["memo_generation"])
     is_refiant = model.startswith("qwen")
 
     if is_refiant:
         api_key = os.environ.get("REFIANT_API_KEY", "")
         if not api_key:
-            raise HTTPException(status_code=500, detail="REFIANT_API_KEY not configured. Set it in .env or environment.")
+            raise RuntimeError("REFIANT_API_KEY not configured. Set it in .env or environment.")
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "")
         if not api_key:
-            raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured. Set it in .env or environment.")
+            raise RuntimeError("ANTHROPIC_API_KEY not configured. Set it in .env or environment.")
     client = make_llm_client(is_refiant, api_key)
 
     # ── Resolve active sections based on investment type ──
@@ -1963,7 +2132,7 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
         if report_id:
             row = conn.execute(
                 "SELECT * FROM deal_reports WHERE id=? AND owner_id=?",
-                (report_id, user.id),
+                (report_id, user_id),
             ).fetchone()
             if row:
                 report_context = _build_report_context(row)
@@ -1977,7 +2146,7 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
         if not template_text and template_id:
             tpl = conn.execute(
                 "SELECT content FROM memo_templates WHERE id=? AND owner_id=?",
-                (template_id, user.id),
+                (template_id, user_id),
             ).fetchone()
             if tpl:
                 template_text = tpl["content"]
@@ -1987,10 +2156,10 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
     # Load raw documents — from session uploads and/or deal library
     raw_docs = []
     if req.session_id:
-        raw_docs = _load_raw_documents(req.session_id, user.id)
+        raw_docs = _load_raw_documents(req.session_id, user_id)
     if req.library_id:
         from .drive import load_library_documents
-        library_docs = load_library_documents(req.library_id, user.id)
+        library_docs = load_library_documents(req.library_id, user_id)
         raw_docs.extend(library_docs)
 
     links = req.links or []
@@ -2003,8 +2172,22 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
     citation_index = _build_citation_index(raw_docs) if raw_docs else {"map": {}, "legend": "", "count": 0}
 
     # ═════════════════════════════════════════════════════════════════════════
-    #  Run all LLM passes in a thread to avoid blocking the async event loop
+    #  Run all LLM passes. We emit real progress via `progress_cb` before
+    #  each LLM call so the frontend can show actual status (not an estimate).
+    #  Budget: 2% → 95% spans the LLM pipeline; the remaining 5% covers
+    #  markdown assembly, HTML conversion, and the DB insert.
     # ═════════════════════════════════════════════════════════════════════════
+
+    _locked_preview = req.locked_sections or {}
+    _n_docs = len(raw_docs)
+    _n_data_steps = sum(1 for s in active_data if s["key"] not in _locked_preview)
+    _n_synth_steps = sum(1 for s in active_synth if s["key"] not in _locked_preview)
+    _total_llm_steps = max(1, _n_docs + _n_data_steps + _n_synth_steps)
+    _pct_span = 93  # 2% → 95%
+
+    def _emit_step_progress(step_idx: int, msg: str):
+        pct = 2 + int((step_idx / _total_llm_steps) * _pct_span)
+        _progress(min(pct, 95), msg)
 
     def _strip_leading_heading(text: str, section_title: str) -> str:
         """Remove any leading markdown heading the LLM added despite instructions.
@@ -2031,22 +2214,27 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
         _total_in = 0
         _total_out = 0
         _pass_log = []
+        _step = 0
 
         # PASS 1: Extract facts from each document
         all_extractions = []
         if raw_docs:
-            for doc in raw_docs:
+            for i, doc in enumerate(raw_docs):
+                _emit_step_progress(_step, f"Extracting facts from {doc['file_name']} ({i+1}/{_n_docs})")
                 extraction = _pass1_extract_document(client, model, doc)
                 all_extractions.append(extraction)
                 _total_in += extraction.get("_tokens_in", 0)
                 _total_out += extraction.get("_tokens_out", 0)
                 _pass_log.append({"pass": 1, "doc": doc["file_name"],
                                   "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
+                _step += 1
 
         # PASS 2: Write each data section
         # Locked sections are passed in verbatim — LLM is never called for them.
         _locked = req.locked_sections or {}
         section_texts = {}
+        _data_total = len([s for s in active_data if s["key"] not in _locked])
+        _data_done = 0
         for section in active_data:
             sk = section["key"]
             if sk in _locked:
@@ -2054,6 +2242,8 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
                 section_texts[sk] = _locked[sk]
                 _pass_log.append({"pass": 2, "section": sk, "tokens": 0, "locked": True})
                 continue
+            _data_done += 1
+            _emit_step_progress(_step, f"Writing section: {section['title']} ({_data_done}/{_data_total})")
             brief = _aggregate_section_briefs(all_extractions, sk, citation_index)
             report_slice = _get_report_fields_for_section(report_context, section)
             tpl_guidance = template_sections.get(sk, "")
@@ -2068,14 +2258,19 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
             _total_out += result["tokens_out"]
             _pass_log.append({"pass": 2, "section": sk,
                               "tokens": result["tokens_in"] + result["tokens_out"]})
+            _step += 1
 
         # PASS 3: Synthesize cross-cutting sections
+        _synth_total = len([s for s in active_synth if s["key"] not in _locked])
+        _synth_done = 0
         for section in active_synth:
             sk = section["key"]
             if sk in _locked:
                 section_texts[sk] = _locked[sk]
                 _pass_log.append({"pass": 3, "section": sk, "tokens": 0, "locked": True})
                 continue
+            _synth_done += 1
+            _emit_step_progress(_step, f"Synthesizing: {section['title']} ({_synth_done}/{_synth_total})")
             result = _pass3_synthesize(
                 client, model, section, section_texts,
                 report_context, company_name,
@@ -2086,11 +2281,12 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
             _total_out += result["tokens_out"]
             _pass_log.append({"pass": 3, "section": sk,
                               "tokens": result["tokens_in"] + result["tokens_out"]})
+            _step += 1
 
         return section_texts, _total_in, _total_out, _pass_log
 
     try:
-        pipeline_result = await asyncio.to_thread(_run_llm_pipeline)
+        pipeline_result = _run_llm_pipeline()
     except Exception as pipeline_err:
         err_str = str(pipeline_err)
         # Classify the error into a human-readable message
@@ -2111,8 +2307,9 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
             detail = "Input is too long for the selected model. Try reducing the number of documents."
         else:
             detail = f"Memo generation failed: {err_str[:300]}"
-        raise HTTPException(status_code=502, detail=detail)
+        raise RuntimeError(detail)
     section_texts, total_tokens_in, total_tokens_out, pass_log = pipeline_result
+    _progress(95, "Assembling memo and saving to database...")
 
     # ═════════════════════════════════════════════════════════════════════════
     #  ASSEMBLE final memo in section order
@@ -2295,7 +2492,7 @@ async def generate_memo(req: MemoGenerateRequest, user: CurrentUser = Depends(ge
                (owner_id, report_id, template_id, company_name, memo_markdown, memo_html,
                 model_used, input_token_count, output_token_count, generation_time_s, sections_json, memo_session_id)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user.id, report_id, template_id, company_name, memo_md, memo_html,
+            (user_id, report_id, template_id, company_name, memo_md, memo_html,
              model, total_tokens_in, total_tokens_out, elapsed, sections_json_str, req.session_id or ""),
         )
         conn.commit()

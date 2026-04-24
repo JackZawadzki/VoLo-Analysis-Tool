@@ -70,6 +70,16 @@ Rules you MUST follow:
    can infer it: "USD", "USD_M", "USD_K", "people", "%", "units", "MWh",
    "years", etc. Leave unit null if unclear.
 
+   Common scale notations and their canonical mappings:
+   - (000's), (000s), in thousands, $ thousands, ($000), USD 000  →  USD_K
+   - (M), ($ M), in millions, USD M, $MM, USD millions            →  USD_M
+   - (B), ($ B), in billions, USD B                               →  USD_B
+
+   The scale unit declared for a sheet (typically in its header row or a
+   parenthetical next to the title) must be applied to ALL monetary line
+   items on that sheet unless a specific row explicitly overrides it
+   (e.g., a row labeled "Headcount (people)" on a "$ in thousands" sheet).
+
 5. **Every row has a period axis or it's an assumption.** If the row has
    values across columns that represent periods (years, quarters, stages),
    it's a line_item. If it's a single scalar, it's an assumption.

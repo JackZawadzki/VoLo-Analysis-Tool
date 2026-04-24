@@ -38,6 +38,19 @@ def _import_banker():
     return run_agent, fill_values, ExtractedModel
 
 
+def _is_valid_year_key(k: Any) -> bool:
+    """True if k parses to an integer year between 2015 and 2040.
+
+    Filters header noise like "(000's)", "(M)", "USD_K" that the agent can
+    accidentally capture as period keys alongside real year columns.
+    """
+    try:
+        y = int(float(str(k)))
+    except (ValueError, TypeError):
+        return False
+    return 2015 <= y <= 2040
+
+
 def _extracted_model_to_volo_response(
     em,
     file_name: str,
@@ -61,7 +74,7 @@ def _extracted_model_to_volo_response(
         if not m:
             continue
         vals = m.values or {}
-        kept = {y: v for y, v in vals.items() if v is not None}
+        kept = {y: v for y, v in vals.items() if v is not None and _is_valid_year_key(y)}
         if not kept:
             continue
         financials[canonical] = kept
@@ -76,7 +89,17 @@ def _extracted_model_to_volo_response(
         "USD": "USD",
     }.get(rev_unit, rev_unit)
 
-    years = list(scope.years_covered or [])
+    _scale_mult = {"USD_K": 1_000, "USD_M": 1_000_000, "USD_B": 1_000_000_000}.get(rev_unit, 1)
+    if _scale_mult != 1:
+        financials = {
+            canonical: {
+                y: (v * _scale_mult if isinstance(v, (int, float)) else v)
+                for y, v in vals.items()
+            }
+            for canonical, vals in financials.items()
+        }
+
+    years = [y for y in (scope.years_covered or []) if _is_valid_year_key(y)]
     diagnostics = {
         "extractor": "banker-agent",
         "chosen_sheet": scope.sheet,

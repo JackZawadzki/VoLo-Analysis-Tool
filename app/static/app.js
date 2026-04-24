@@ -1373,8 +1373,12 @@ async function wizExtractAndNext() {
         wizPopulateReview();
         wizGoStep(2);
 
-        // Auto-trigger DDR in background for PDF pitch decks
-        if (deckFile) ddrAutoTrigger(deckFile);
+        // Remember the deck so the analyst can optionally run DDR on it
+        // from the Due Diligence Report tab. DDR no longer runs automatically.
+        if (deckFile) {
+            window._wizLastDeckFile = deckFile;
+            if (typeof ddrSyncSubmittedDeck === 'function') ddrSyncSubmittedDeck();
+        }
     } catch(e) {
         status.className = 'wiz-status error';
         status.textContent = 'Extraction error: ' + e.message;
@@ -3086,17 +3090,155 @@ function _wizRenderCharts(r) {
     }
 }
 
-function wizExportPDF() {
+async function wizExportPDF() {
     const reportEl = document.getElementById('deal-report');
     if (!reportEl || !reportEl.innerHTML.trim()) {
         showToast('Generate a report first');
         return;
     }
-    document.body.classList.add('printing-report');
-    setTimeout(() => {
-        window.print();
-        document.body.classList.remove('printing-report');
-    }, 300);
+
+    // 1. Clone so we never mutate the live DOM.
+    const clone = reportEl.cloneNode(true);
+
+    // 2. Replace every live <canvas> with a PNG snapshot. This is the fix for
+    //    blank-PDF: Chart.js canvases do not reliably rasterize under the
+    //    browser's print pipeline, so we flatten them to images up-front.
+    const liveCanvases  = Array.from(reportEl.querySelectorAll('canvas'));
+    const cloneCanvases = Array.from(clone.querySelectorAll('canvas'));
+    liveCanvases.forEach((canvas, i) => {
+        try {
+            const dataUrl = canvas.toDataURL('image/png');
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.style.width    = Math.min(canvas.offsetWidth,  680) + 'px';
+            img.style.height   = Math.min(canvas.offsetHeight, 320) + 'px';
+            img.style.maxWidth = '100%';
+            img.style.display  = 'block';
+            img.style.margin   = '6pt auto';
+            if (cloneCanvases[i]) cloneCanvases[i].replaceWith(img);
+        } catch (e) { if (cloneCanvases[i]) cloneCanvases[i].remove(); }
+    });
+
+    // 3. Strip interactive chrome: debug trace toggles, QA banner/panel,
+    //    action buttons, info-tip popovers.
+    clone.querySelectorAll(
+        '.rpt-trace,.qa-banner,.qa-panel,.report-actions,' +
+        'button,.info-tip,.info-tip-body,.info-tip-icon'
+    ).forEach(el => el.remove());
+
+    // 3b. Inject hard page-break divs. CSS break-before on class selectors
+    //     is unreliable in Chrome's print engine; zero-height divs with
+    //     inline page-break-before are the reliable path.
+    const cover = clone.querySelector('.rpt-cover');
+    if (cover) {
+        cover.style.pageBreakAfter = 'always';
+        cover.style.breakAfter     = 'page';
+    }
+    const sections = Array.from(clone.querySelectorAll('.rpt-section'));
+    sections.forEach((sec, idx) => {
+        // If there's a cover, its break-after opens the page for section 1.
+        // If there's no cover, section 1 rides the top of page 1.
+        if (idx === 0) return;
+        const pb = document.createElement('div');
+        pb.setAttribute('aria-hidden', 'true');
+        pb.style.cssText = 'page-break-before:always;break-before:page;' +
+                           'height:0;margin:0;padding:0;border:none;display:block;';
+        sec.parentNode.insertBefore(pb, sec);
+    });
+
+    const companyName = clone.querySelector('.rpt-company')?.textContent?.trim()
+        || 'Deal Report';
+    const safeTitle = companyName.replace(/[<>]/g, '');
+
+    // 4. Build self-contained print HTML. Opening via Blob URL lets the
+    //    browser fully lay out the document (resolving @page, decoding
+    //    images) before the embedded window.print() fires.
+    const printHtml = `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>${safeTitle} — VoLo Earth Ventures</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+-webkit-print-color-adjust:exact;print-color-adjust:exact;
+
+@page{size:letter portrait;margin:.6in .7in .75in .7in}
+
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+     font-size:10pt;color:#1a2332;background:#fff;margin:0;padding:0;width:100%;overflow:visible}
+
+h1{font-size:20pt;margin:0 0 6pt}
+h2{font-size:13pt;font-weight:700;margin:0 0 8pt;color:#1a2332;break-after:avoid;page-break-after:avoid}
+h3,h4{font-weight:600;margin:8pt 0 4pt;break-after:avoid;page-break-after:avoid}
+p,li{font-size:10pt;line-height:1.55;margin:3pt 0;orphans:3;widows:3}
+ul,ol{margin:4pt 0 4pt 18pt}
+
+/* Cover */
+.rpt-cover{padding:14pt 0 18pt;border-bottom:2px solid #e1e4e8;margin-bottom:14pt;
+           break-after:page;page-break-after:always}
+.rpt-company{font-size:22pt;font-weight:700;color:#1a2332;margin:0 0 4pt;letter-spacing:-.02em}
+.rpt-tech-desc{font-size:10.5pt;color:#4a5568;margin:4pt 0 14pt;line-height:1.5}
+.rpt-meta{display:flex;flex-wrap:wrap;gap:6pt;margin-bottom:16pt}
+.rpt-meta span{font-size:8pt;font-weight:500;padding:3pt 10pt;border-radius:40pt;
+               background:#f4f5f7;border:1px solid #e1e4e8;color:#4a5568}
+.rpt-deal-terms{display:grid;grid-template-columns:repeat(4,1fr);gap:8pt;margin-bottom:16pt;
+                break-inside:avoid;page-break-inside:avoid}
+.rpt-deal-terms>div{background:#f8f9fb;border:1px solid #e1e4e8;border-radius:4pt;padding:8pt 10pt}
+.rpt-dt-label{display:block;font-size:7pt;text-transform:uppercase;letter-spacing:.06em;
+              color:#6b7280;margin-bottom:2pt}
+.rpt-dt-val{font-size:11pt;font-weight:600;color:#1a2332;font-variant-numeric:tabular-nums}
+
+/* Hero rows (stat cards) */
+.rpt-hero-row{display:grid;grid-template-columns:repeat(4,1fr);gap:8pt;margin:8pt 0 12pt;
+              break-inside:avoid;page-break-inside:avoid}
+.rpt-hero-card{background:#fff;border:1px solid #e1e4e8;border-radius:4pt;padding:10pt 8pt;
+               text-align:center;break-inside:avoid;page-break-inside:avoid}
+.rpt-hero-card.accent{border-color:#5B7744;border-width:2px;background:#f0f4ef;
+                      -webkit-print-color-adjust:exact;print-color-adjust:exact}
+.rpt-hero-num{font-size:14pt;font-weight:700;color:#1a2332;line-height:1.1;margin-bottom:3pt;
+              font-variant-numeric:tabular-nums}
+.rpt-hero-label{font-size:7pt;text-transform:uppercase;letter-spacing:.05em;color:#6b7280}
+
+/* Sections */
+.rpt-section{padding:14pt 0;break-inside:auto;page-break-inside:auto}
+.rpt-section-num{font-size:7pt;font-weight:600;text-transform:uppercase;letter-spacing:.08em;
+                 color:#8b949e;margin-bottom:4pt}
+.rpt-section-title{font-size:13pt;font-weight:700;color:#1a2332;margin-bottom:10pt;
+                   padding-bottom:6pt;border-bottom:1px solid #e1e4e8;
+                   break-after:avoid;page-break-after:avoid}
+
+/* Probability / outcome rows */
+.rpt-prob-bar{display:flex;flex-wrap:wrap;gap:6pt;margin-bottom:12pt;
+              break-inside:avoid;page-break-inside:avoid}
+
+/* Tables */
+.rpt-table-wrap{margin:8pt 0;overflow:visible;break-inside:auto;page-break-inside:auto}
+table{width:100%;border-collapse:collapse;font-size:9pt;margin:6pt 0}
+thead{display:table-header-group}
+tr{break-inside:avoid;page-break-inside:avoid}
+th,td{border:1px solid #e1e4e8;padding:4pt 6pt;text-align:left;vertical-align:top}
+th{background:#f4f5f7;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+
+/* Charts (rasterized to <img> above) */
+img{max-width:100%;height:auto;display:block;margin:6pt auto;
+    break-inside:avoid;page-break-inside:avoid}
+
+footer{margin-top:20pt;padding-top:5pt;border-top:1px solid #e1e4e8;font-size:7.5pt;
+       color:#8b949e;text-align:center;letter-spacing:.04em}
+</style></head><body>
+${clone.innerHTML}
+<footer>VoLo Earth Ventures — Quantitative Underwriting Engine — Confidential</footer>
+<script>
+window.addEventListener('load', function () {
+    setTimeout(function () { window.print(); }, 600);
+});
+<\/script>
+</body></html>`;
+
+    // 5. Open as Blob URL so the new window treats it as a real navigation,
+    //    completes layout, then fires the embedded print().
+    const blob = new Blob([printHtml], { type: 'text/html' });
+    const url  = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
 }
 
 
@@ -6372,59 +6514,22 @@ async function memoGenerate() {
     const statusEl = document.getElementById('memo-generate-status');
     if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
 
-    // Switch to preview tab and show progress
+    // Switch to preview tab and show initial progress
     memoSwitchOutputTab('preview');
 
-    // Build progress tracker — estimate passes based on doc count
     const invType = document.querySelector('input[name="memo-inv-type"]:checked')?.value || 'first';
-    const nDocs = _memo.documents.length;
-    const isFollowon = invType === 'followon';
-    const sectionNames = ['Company Overview','Market','Business Model','Team','Traction',
-                          'Competitive Position','Carbon Impact','Technology, IP & Moat',
-                          'Financing Overview & Exit Planning'];
-    if (isFollowon) sectionNames.push('Portfolio Tracking Scorecard');
-    const nDataSections = sectionNames.length;
-    const nSynthesisSections = 4;  // Investment Overview, Opportunities, Risks, Recommendation
-    const totalSteps = nDocs + nDataSections + nSynthesisSections;
-    let currentStep = 0;
 
-    const progressStages = [];
-    if (nDocs > 0) {
-        for (let i = 0; i < nDocs; i++) {
-            progressStages.push(`Pass 1 — Extracting facts from "${_memo.documents[i]?.file_name || 'document ' + (i+1)}" (${i+1}/${nDocs})`);
-        }
-    }
-    sectionNames.forEach((s, i) => progressStages.push(`Pass 2 — Writing: ${s} (${i+1}/${nDataSections})`));
-    progressStages.push('Pass 3 — Synthesizing: Investment Overview');
-    progressStages.push('Pass 3 — Synthesizing: High Level Opportunities');
-    progressStages.push('Pass 3 — Synthesizing: High Level Risks');
-    progressStages.push('Pass 3 — Synthesizing: Investment Recommendation');
-
-    // Animate progress
-    const updateProgress = () => {
-        if (!_memo.generating) return;
-        if (currentStep < progressStages.length) {
-            const pct = Math.round((currentStep / totalSteps) * 100);
-            if (statusEl) {
-                statusEl.style.display = 'block';
-                statusEl.className = 'memo-generate-status info';
-                statusEl.innerHTML = `
-                    <div class="memo-progress-bar"><div class="memo-progress-fill" style="width:${pct}%"></div></div>
-                    <div class="memo-progress-text">${progressStages[currentStep]} <span style="float:right">${pct}%</span></div>`;
-            }
-            currentStep++;
-            // Estimate ~8-15s per LLM call
-            const delay = currentStep <= nDocs ? 10000 : 12000;
-            setTimeout(updateProgress, delay);
-        } else {
-            if (statusEl) {
-                statusEl.innerHTML = `
-                    <div class="memo-progress-bar"><div class="memo-progress-fill" style="width:95%"></div></div>
-                    <div class="memo-progress-text">Assembling final memo... <span style="float:right">95%</span></div>`;
-            }
-        }
+    // Paint the progress bar from the real backend status.
+    const renderProgress = (pct, msg) => {
+        if (!statusEl) return;
+        const safePct = Math.max(0, Math.min(100, pct || 0));
+        statusEl.style.display = 'block';
+        statusEl.className = 'memo-generate-status info';
+        statusEl.innerHTML = `
+            <div class="memo-progress-bar"><div class="memo-progress-fill" style="width:${safePct}%"></div></div>
+            <div class="memo-progress-text">${msg || 'Working...'} <span style="float:right">${safePct}%</span></div>`;
     };
-    updateProgress();
+    renderProgress(0, 'Queued...');
 
     const body = {
         report_id: reportId ? parseInt(reportId) : null,
@@ -6443,24 +6548,53 @@ async function memoGenerate() {
             : {},
     };
 
+    // ── Start the background memo job ───────────────────────────────────────
+    // The HTTP response returns immediately with a job_id; the heavy LLM
+    // pipeline runs in a background thread so proxy/CDN HTTP timeouts can't
+    // kill the request mid-way.
+    let jobId;
     try {
-        const abortCtrl = new AbortController();
-        const fetchTimeout = setTimeout(() => abortCtrl.abort(), 20 * 60 * 1000); // 20 min timeout
         const r = await fetch('/api/memo/generate', {
             method: 'POST',
             headers: { ..._rvmHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            signal: abortCtrl.signal,
-            keepalive: false,
         });
-        clearTimeout(fetchTimeout);
-
         if (!r.ok) {
             const err = await r.json().catch(() => ({ detail: r.statusText }));
-            throw new Error(err.detail || err.error || 'Generation failed');
+            throw new Error(err.detail || err.error || 'Failed to start memo job');
         }
+        const startData = await r.json();
+        jobId = startData.job_id;
+        if (!jobId) throw new Error('Server did not return a job_id');
+    } catch (e) {
+        console.error('Memo job start failed:', e);
+        if (statusEl) { statusEl.innerHTML = `Error: ${e.message}`; statusEl.className = 'memo-generate-status error'; }
+        _memo.generating = false;
+        if (btn) { btn.disabled = false; btn.textContent = 'Generate Investment Memo'; }
+        return;
+    }
 
-        const data = await r.json();
+    // ── Poll for progress until complete or error ───────────────────────────
+    // Up to 20 minutes at 3s intervals.
+    const POLL_INTERVAL_MS = 3000;
+    const MAX_POLLS = Math.ceil((20 * 60 * 1000) / POLL_INTERVAL_MS);
+    let data = null;
+    try {
+        for (let i = 0; i < MAX_POLLS; i++) {
+            await new Promise(res => setTimeout(res, POLL_INTERVAL_MS));
+            if (!_memo.generating) break;  // user navigated away / aborted
+            const sr = await fetch(`/api/memo/generate/status/${jobId}`, { headers: _rvmHeaders() });
+            if (!sr.ok) {
+                const err = await sr.json().catch(() => ({ detail: sr.statusText }));
+                throw new Error(err.detail || 'Status poll failed');
+            }
+            const snap = await sr.json();
+            renderProgress(snap.progress_pct, snap.progress_msg);
+            if (snap.status === 'complete') { data = snap.result; break; }
+            if (snap.status === 'error')    { throw new Error(snap.error || 'Generation failed'); }
+        }
+        if (!data) throw new Error('Memo generation timed out after 20 minutes.');
+
         _memo.currentMemoId = data.id;
         _memo.currentMemoMd = data.memo_markdown;
 
@@ -10838,7 +10972,7 @@ switchTab = function(tab) {
     if (tab === 'funddeployment') {
         setTimeout(() => fdInit(), 50);
     }
-    if (tab === 'ddr') ddrLoadHistory();
+    if (tab === 'ddr') { ddrInitDropzone(); ddrLoadHistory(); }
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -10848,35 +10982,120 @@ switchTab = function(tab) {
 let _ddrCurrentJobId = null;
 let _ddrPollTimer = null;
 let _ddrPdfFilename = null;
+let _ddrSelectedDeck = null;  // File selected via the DDR dropzone (overrides the deck from Deal Pipeline)
 
-function ddrAutoTrigger(deckFile) {
+function _ddrStartJob(deckFile) {
     if (!deckFile) return;
     const ext = deckFile.name.split('.').pop().toLowerCase();
-    if (ext !== 'pdf') return;
+    if (ext !== 'pdf') {
+        showToast('DDR requires a PDF pitch deck.');
+        return;
+    }
 
     const fd = new FormData();
     fd.append('file', deckFile);
     const headers = {};
     if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
 
+    const runBtn = document.getElementById('ddr-run-btn');
+    const origLabel = 'Run on Already Submitted Deck';
+    if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Starting...'; }
+
     fetch('/api/ddr/start', { method: 'POST', headers, body: fd })
         .then(async r => {
             const d = await r.json();
             if (r.status === 429) {
                 showToast(d.detail || 'Please wait before starting another analysis.');
+                if (runBtn) { runBtn.disabled = false; runBtn.textContent = origLabel; }
                 return;
             }
             if (d.job_id) {
                 _ddrCurrentJobId = d.job_id;
                 ddrShowActive(deckFile.name);
                 ddrStartPolling(d.job_id);
-                showToast('Due diligence report started in background');
+                showToast('Due diligence report started');
+                if (runBtn) { runBtn.disabled = false; runBtn.textContent = origLabel; }
             } else {
                 showToast(d.detail || 'DDR start failed');
                 console.warn('[DDR] Start failed:', d.detail || d);
+                if (runBtn) { runBtn.disabled = false; runBtn.textContent = origLabel; }
             }
         })
-        .catch(err => { showToast('DDR error: ' + err.message); console.warn('[DDR] Auto-trigger error:', err); });
+        .catch(err => {
+            showToast('DDR error: ' + err.message);
+            console.warn('[DDR] Start error:', err);
+            if (runBtn) { runBtn.disabled = false; runBtn.textContent = origLabel; }
+        });
+}
+
+// Called when the analyst clicks "Run DDR on Deck Already Submitted".
+// Prefers a deck dropped into the DDR dropzone; otherwise falls back to the
+// deck uploaded in the Deal Pipeline tab (window._wizLastDeckFile).
+function ddrRunSubmittedDeck() {
+    const deck = _ddrSelectedDeck || window._wizLastDeckFile;
+    if (!deck) {
+        showToast('No deck submitted yet. Drop a PDF above or upload one in the Deal Pipeline tab.');
+        return;
+    }
+    _ddrStartJob(deck);
+}
+
+// Update the dropzone display + button enabled state based on what deck
+// is currently available (DDR-dropzone file or Deal Pipeline fallback).
+function ddrSyncSubmittedDeck() {
+    const selEl = document.getElementById('ddr-selected-file');
+    const runBtn = document.getElementById('ddr-run-btn');
+
+    const deck = _ddrSelectedDeck || window._wizLastDeckFile;
+    const source = _ddrSelectedDeck ? 'dropzone' : (window._wizLastDeckFile ? 'pipeline' : null);
+
+    if (selEl) {
+        if (deck) {
+            const size = (deck.size / (1024 * 1024)).toFixed(1);
+            const label = source === 'pipeline' ? 'from Deal Pipeline' : 'ready';
+            selEl.innerHTML = `<strong>${deck.name}</strong> <span style="color:#6b7280;">(${size} MB · ${label})</span>`;
+            selEl.style.display = 'block';
+        } else {
+            selEl.style.display = 'none';
+            selEl.innerHTML = '';
+        }
+    }
+    if (runBtn) runBtn.disabled = !deck;
+}
+
+function ddrInitDropzone() {
+    const dropzone = document.getElementById('ddr-dropzone');
+    const fileInput = document.getElementById('ddr-file-input');
+    if (!dropzone || !fileInput || dropzone._initDone) {
+        ddrSyncSubmittedDeck();
+        return;
+    }
+    dropzone._initDone = true;
+
+    const handleFile = (file) => {
+        if (!file) return;
+        const ext = (file.name.split('.').pop() || '').toLowerCase();
+        if (ext !== 'pdf') { showToast('DDR requires a PDF pitch deck.'); return; }
+        _ddrSelectedDeck = file;
+        ddrSyncSubmittedDeck();
+    };
+
+    dropzone.addEventListener('click', (e) => {
+        if (e.target.tagName !== 'LABEL' && e.target.tagName !== 'INPUT') fileInput.click();
+    });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) handleFile(fileInput.files[0]);
+        fileInput.value = '';
+    });
+
+    ddrSyncSubmittedDeck();
 }
 
 function ddrShowActive(filename) {

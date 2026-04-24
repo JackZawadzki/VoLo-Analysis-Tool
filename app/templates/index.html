@@ -631,12 +631,26 @@
         <div id="tab-ddr" class="tab-content">
             <div class="page-header">
                 <h2>Due Diligence Report</h2>
-                <p class="section-subtitle">AI-powered due diligence runs automatically when a PDF pitch deck is uploaded. View progress and results here.</p>
+                <p class="section-subtitle">AI-powered due diligence. Drop a PDF pitch deck below, or run DDR on the deck already submitted in the Deal Pipeline tab.</p>
+            </div>
+
+            <!-- Run DDR on a submitted deck -->
+            <div id="ddr-run-section" class="ddr-run-section">
+                <div class="memo-upload-dropzone" id="ddr-dropzone">
+                    <div class="memo-upload-icon">&#128206;</div>
+                    <div class="memo-upload-text">
+                        Drop a PDF pitch deck here or <label for="ddr-file-input" class="memo-upload-link">browse</label>
+                    </div>
+                    <div class="memo-upload-hint">PDF only (max 50MB)</div>
+                    <div id="ddr-selected-file" class="ddr-selected-file" style="display:none;"></div>
+                    <input type="file" id="ddr-file-input" accept=".pdf" style="display:none">
+                </div>
+                <button id="ddr-run-btn" class="btn btn-primary" onclick="ddrRunSubmittedDeck()" style="margin-top:12px;" disabled>Run on Already Submitted Deck</button>
             </div>
 
             <!-- Empty state -->
             <div id="ddr-empty" class="ddr-empty-state">
-                <p>No due diligence report yet. Upload a PDF pitch deck in the Deal Pipeline tab to automatically generate one.</p>
+                <p>No due diligence report yet. Drop a PDF pitch deck above and click "Run DDR" to generate one.</p>
             </div>
 
             <!-- Progress card -->

@@ -208,8 +208,12 @@ def make_llm_client(is_refiant: bool, api_key: str):
 
     Returns a `RefiantClient` for QWEN/Refiant models, otherwise a real
     `anthropic.Anthropic` client.  Both expose `.messages.create(...)`.
+
+    The Anthropic client is configured with an expanded retry budget (6 vs.
+    SDK default 2) because the memo pipeline fires 15–20 sequential calls —
+    one transient 429/529 should not kill the whole memo.
     """
     if is_refiant:
         return RefiantClient(api_key=api_key)
     import anthropic
-    return anthropic.Anthropic(api_key=api_key)
+    return anthropic.Anthropic(api_key=api_key, max_retries=6, timeout=180.0)
