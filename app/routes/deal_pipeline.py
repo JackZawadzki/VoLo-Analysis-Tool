@@ -244,13 +244,18 @@ def list_reports(user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/report/{rid}")
 def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
+    """Fetch a deal report. Visible to any authenticated VoLo team member —
+    the team library is shared so analysts can review each other's work."""
     db = get_db()
     try:
-        row = db.execute("SELECT * FROM deal_reports WHERE id=?", (rid,)).fetchone()
+        row = db.execute(
+            "SELECT r.*, u.username AS owner_username "
+            "FROM deal_reports r LEFT JOIN users u ON u.id = r.owner_id "
+            "WHERE r.id=?",
+            (rid,),
+        ).fetchone()
         if not row:
             raise HTTPException(404, "Report not found")
-        if row["owner_id"] != user.id and user.role != "admin":
-            raise HTTPException(403, "Forbidden")
         return {
             "id": row["id"],
             "company_name": row["company_name"],
@@ -259,9 +264,110 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
             "report": json.loads(row["report_json"]),
             "inputs": json.loads(row["inputs_json"]),
             "created_at": row["created_at"],
+            "owner_username": row["owner_username"],
         }
     finally:
         db.close()
+
+
+@router.get("/library")
+def list_library(user: CurrentUser = Depends(get_current_user)):
+    """Shared team library — every deal report, DDR, and IC memo across all
+    VoLo analysts, grouped by company name (case-insensitive). Used by the
+    Deal Pipeline tab to show what's already been analyzed.
+    """
+    db = get_db()
+    try:
+        deals = db.execute(
+            """SELECT r.id, r.company_name, r.archetype, r.entry_stage,
+                      r.status, r.created_at, u.username AS owner_username
+               FROM deal_reports r
+               LEFT JOIN users u ON u.id = r.owner_id
+               ORDER BY r.created_at DESC"""
+        ).fetchall()
+        memos = db.execute(
+            """SELECT m.id, m.company_name, m.report_id, m.created_at,
+                      m.model_used, u.username AS owner_username
+               FROM generated_memos m
+               LEFT JOIN users u ON u.id = m.owner_id
+               WHERE m.status = 'completed' OR m.status = ''
+               ORDER BY m.created_at DESC"""
+        ).fetchall()
+        ddrs = db.execute(
+            """SELECT id, company_name, filename, generated_by, generated_at,
+                      file_size_bytes
+               FROM ddr_reports
+               ORDER BY generated_at DESC"""
+        ).fetchall()
+    finally:
+        db.close()
+
+    def _norm(name: str) -> str:
+        # Group "Mitra Chem", "mitra chem", "  Mitra  Chem  " together.
+        return " ".join((name or "").strip().split()).lower()
+
+    groups: dict[str, dict] = {}
+    for d in deals:
+        key = _norm(d["company_name"])
+        if not key:
+            continue
+        g = groups.setdefault(key, {
+            "company_name": d["company_name"].strip(),
+            "deal_reports": [], "memos": [], "ddrs": [],
+            "latest_at": d["created_at"],
+        })
+        g["deal_reports"].append({
+            "id": d["id"],
+            "owner_username": d["owner_username"] or "unknown",
+            "created_at": d["created_at"],
+            "archetype": d["archetype"],
+            "entry_stage": d["entry_stage"],
+            "status": d["status"],
+        })
+        if (d["created_at"] or "") > (g["latest_at"] or ""):
+            g["latest_at"] = d["created_at"]
+
+    for m in memos:
+        key = _norm(m["company_name"])
+        if not key:
+            continue
+        g = groups.setdefault(key, {
+            "company_name": (m["company_name"] or "").strip() or "Untitled",
+            "deal_reports": [], "memos": [], "ddrs": [],
+            "latest_at": m["created_at"],
+        })
+        g["memos"].append({
+            "id": m["id"],
+            "owner_username": m["owner_username"] or "unknown",
+            "created_at": m["created_at"],
+            "report_id": m["report_id"],
+            "model_used": m["model_used"],
+        })
+        if (m["created_at"] or "") > (g["latest_at"] or ""):
+            g["latest_at"] = m["created_at"]
+
+    for d in ddrs:
+        key = _norm(d["company_name"])
+        if not key:
+            continue
+        g = groups.setdefault(key, {
+            "company_name": (d["company_name"] or "").strip() or "Untitled",
+            "deal_reports": [], "memos": [], "ddrs": [],
+            "latest_at": d["generated_at"],
+        })
+        g["ddrs"].append({
+            "id": d["id"],
+            "filename": d["filename"],
+            "generated_by": d["generated_by"] or "unknown",
+            "generated_at": d["generated_at"],
+            "file_size_bytes": d["file_size_bytes"],
+        })
+        if (d["generated_at"] or "") > (g["latest_at"] or ""):
+            g["latest_at"] = d["generated_at"]
+
+    # Newest companies first
+    library = sorted(groups.values(), key=lambda g: g["latest_at"] or "", reverse=True)
+    return {"companies": library}
 
 
 class QAReviewRequest(BaseModel):

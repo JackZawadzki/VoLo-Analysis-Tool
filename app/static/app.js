@@ -1040,21 +1040,283 @@ function wizLoadResources() {
         }).catch(() => {});
 }
 
+// ── Team Deal Library ─────────────────────────────────────────────────
+// Shared library of every deal report, DDR, and IC memo across all VoLo
+// analysts. Replaces the old per-user "Recent Reports" mini-bar.
+let _libCompanies = [];   // raw library payload from /api/deal-pipeline/library
+let _libQuery = "";       // current search filter
+
 function wizLoadReports() {
     if (!_rvmToken) return;
-    fetch('/api/deal-pipeline/reports', {headers: _rvmHeaders()})
-        .then(r => r.json())
-        .then(reports => {
-            const list = document.getElementById('wiz-reports-list');
-            if (!reports.length) { list.innerHTML = '<p style="color:var(--text-tertiary); font-size:0.78rem;">No reports yet.</p>'; return; }
-            list.innerHTML = reports.slice(0, 12).map(r => `
-                <div class="report-card-mini" onclick="wizLoadReport(${r.id})">
-                    <div class="rc-name">${r.company_name}</div>
-                    <div class="rc-meta">${r.archetype} &middot; ${r.entry_stage} &middot; ${r.created_at?.split('T')[0] || ''}</div>
-                </div>
-            `).join('');
-        }).catch(() => {});
+    fetch('/api/deal-pipeline/library', { headers: _rvmHeaders() })
+        .then(r => r.ok ? r.json() : { companies: [] })
+        .then(data => {
+            _libCompanies = (data && data.companies) || [];
+            _wizRenderLibrary();
+        })
+        .catch(() => {
+            _libCompanies = [];
+            _wizRenderLibrary();
+        });
 }
+
+function _libEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _libFmtDate(iso) {
+    if (!iso) return '';
+    // Backend stores UTC timestamps via SQLite datetime('now'). Append 'Z' so
+    // the browser parses it as UTC instead of local time (which would give
+    // negative diffs for timestamps within the last few hours).
+    const isoStr = String(iso).replace(' ', 'T');
+    const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(isoStr) ? isoStr : isoStr + 'Z');
+    if (isNaN(d.getTime())) return String(iso).split('T')[0] || String(iso);
+    const diffMs = Date.now() - d.getTime();
+    const diff = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diff <= 0) return 'today';
+    if (diff === 1) return 'yesterday';
+    if (diff < 7)   return `${diff}d ago`;
+    if (diff < 30)  return `${Math.floor(diff/7)}w ago`;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: diff > 365 ? 'numeric' : undefined });
+}
+
+function _libCollectAuthors(group) {
+    const set = new Set();
+    (group.deal_reports || []).forEach(d => set.add(d.owner_username));
+    (group.memos        || []).forEach(m => set.add(m.owner_username));
+    (group.ddrs         || []).forEach(d => set.add(d.generated_by));
+    return [...set].filter(Boolean);
+}
+
+function _wizRenderLibrary() {
+    const list = document.getElementById('wiz-reports-list');
+    const summaryEl = document.getElementById('lib-summary');
+    if (!list) return;
+
+    const q = (_libQuery || '').trim().toLowerCase();
+    const filtered = !q ? _libCompanies
+        : _libCompanies.filter(g => (g.company_name || '').toLowerCase().includes(q));
+
+    if (summaryEl) {
+        const totalCompanies = _libCompanies.length;
+        const totalArtifacts = _libCompanies.reduce((acc, g) =>
+            acc + (g.deal_reports?.length || 0) + (g.ddrs?.length || 0) + (g.memos?.length || 0), 0);
+        if (totalCompanies === 0) {
+            summaryEl.textContent = '';
+        } else if (q) {
+            summaryEl.textContent = `${filtered.length} of ${totalCompanies} ${totalCompanies === 1 ? 'company' : 'companies'} match "${_libEscape(q)}"`;
+        } else {
+            summaryEl.textContent = `${totalCompanies} ${totalCompanies === 1 ? 'company' : 'companies'} · ${totalArtifacts} ${totalArtifacts === 1 ? 'artifact' : 'artifacts'}`;
+        }
+    }
+
+    if (!_libCompanies.length) {
+        list.innerHTML = `
+            <div class="lib-empty">
+                <div class="lib-empty-title">No deals analyzed yet</div>
+                <div class="lib-empty-text">Once anyone on the team runs a deal report, DDR, or IC memo, it will appear here for everyone to browse.</div>
+            </div>`;
+        return;
+    }
+    if (!filtered.length) {
+        list.innerHTML = `
+            <div class="lib-empty">
+                <div class="lib-empty-title">No matches</div>
+                <div class="lib-empty-text">No companies in the library match your search.</div>
+            </div>`;
+        return;
+    }
+
+    list.innerHTML = filtered.map((g, idx) => {
+        const nDeal = g.deal_reports?.length || 0;
+        const nDdr  = g.ddrs?.length         || 0;
+        const nMemo = g.memos?.length        || 0;
+        const authors = _libCollectAuthors(g);
+        const authorText = authors.length ? authors.join(', ') : 'unknown';
+
+        const chips = [];
+        if (nDeal) chips.push(`<span class="lib-chip lib-chip-deal"><span class="lib-chip-dot"></span>Deal Report${nDeal>1?` ×${nDeal}`:''}</span>`);
+        if (nDdr)  chips.push(`<span class="lib-chip lib-chip-ddr"><span class="lib-chip-dot"></span>DDR${nDdr>1?` ×${nDdr}`:''}</span>`);
+        if (nMemo) chips.push(`<span class="lib-chip lib-chip-memo"><span class="lib-chip-dot"></span>IC Memo${nMemo>1?` ×${nMemo}`:''}</span>`);
+        if (!chips.length) chips.push(`<span class="lib-chip lib-chip-empty">No artifacts</span>`);
+
+        return `
+            <div class="lib-card" onclick="wizOpenFolder(${idx})" role="button" tabindex="0">
+                <div class="lib-card-header">
+                    <h4 class="lib-card-name">${_libEscape(g.company_name)}</h4>
+                    <div class="lib-card-username">${_libEscape(authorText)}</div>
+                </div>
+                <div class="lib-chips">${chips.join('')}</div>
+                <div class="lib-card-meta">
+                    <span class="lib-card-date">${_libFmtDate(g.latest_at)}</span>
+                    <span class="lib-card-arrow">&rsaquo;</span>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+// ── Folder modal ──────────────────────────────────────────────────────
+function wizOpenFolder(idx) {
+    const g = _libCompanies[idx];
+    if (!g) return;
+    const modal = document.getElementById('lib-folder-modal');
+    const nameEl = document.getElementById('lib-modal-company');
+    const metaEl = document.getElementById('lib-modal-meta');
+    const bodyEl = document.getElementById('lib-modal-body');
+    if (!modal || !nameEl || !bodyEl) return;
+
+    nameEl.textContent = g.company_name;
+
+    const authors = _libCollectAuthors(g);
+    const totalArtifacts = (g.deal_reports?.length || 0) + (g.ddrs?.length || 0) + (g.memos?.length || 0);
+    metaEl.innerHTML = `${totalArtifacts} ${totalArtifacts === 1 ? 'artifact' : 'artifacts'} · contributors: <strong>${_libEscape(authors.join(', ') || 'unknown')}</strong>`;
+
+    const html = [];
+
+    if (g.deal_reports?.length) {
+        html.push('<div class="lib-art-group">');
+        html.push('<div class="lib-art-grouptitle">Deal Reports</div>');
+        html.push('<div class="lib-art-list">');
+        g.deal_reports.forEach(d => {
+            html.push(`
+                <div class="lib-art-item" onclick="wizOpenFolderDeal(${d.id})">
+                    <div class="lib-art-icon lib-art-deal">&#9974;</div>
+                    <div class="lib-art-info">
+                        <div class="lib-art-title">Deal Report${d.archetype ? ` · ${_libEscape(d.archetype)}` : ''}${d.entry_stage ? ` · ${_libEscape(d.entry_stage)}` : ''}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong> · ${_libFmtDate(d.created_at)}</div>
+                    </div>
+                    <span class="lib-art-arrow">&rsaquo;</span>
+                </div>`);
+        });
+        html.push('</div></div>');
+    }
+
+    if (g.ddrs?.length) {
+        html.push('<div class="lib-art-group">');
+        html.push('<div class="lib-art-grouptitle">Due Diligence Reports</div>');
+        html.push('<div class="lib-art-list">');
+        g.ddrs.forEach(d => {
+            const sizeMB = ((d.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
+            html.push(`
+                <div class="lib-art-item" onclick="wizOpenFolderDdr(${d.id}, ${JSON.stringify(d.filename || 'DDR_Report.pdf').replace(/"/g, '&quot;')})">
+                    <div class="lib-art-icon lib-art-ddr">&#128209;</div>
+                    <div class="lib-art-info">
+                        <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${_libFmtDate(d.generated_at)} · ${sizeMB} MB</div>
+                    </div>
+                    <span class="lib-art-arrow">&darr;</span>
+                </div>`);
+        });
+        html.push('</div></div>');
+    }
+
+    if (g.memos?.length) {
+        html.push('<div class="lib-art-group">');
+        html.push('<div class="lib-art-grouptitle">IC Memos</div>');
+        html.push('<div class="lib-art-list">');
+        g.memos.forEach(m => {
+            html.push(`
+                <div class="lib-art-item" onclick="wizOpenFolderMemo(${m.id})">
+                    <div class="lib-art-icon lib-art-memo">&#128221;</div>
+                    <div class="lib-art-info">
+                        <div class="lib-art-title">Investment Memo${m.model_used ? ` · ${_libEscape(m.model_used)}` : ''}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong> · ${_libFmtDate(m.created_at)}</div>
+                    </div>
+                    <span class="lib-art-arrow">&rsaquo;</span>
+                </div>`);
+        });
+        html.push('</div></div>');
+    }
+
+    if (!html.length) {
+        html.push('<div class="lib-empty"><div class="lib-empty-text">No artifacts yet for this company.</div></div>');
+    }
+
+    bodyEl.innerHTML = html.join('');
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+
+    document.addEventListener('keydown', _wizFolderEsc);
+}
+
+function wizCloseFolder() {
+    const modal = document.getElementById('lib-folder-modal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', _wizFolderEsc);
+}
+
+function _wizFolderEsc(e) {
+    if (e.key === 'Escape') wizCloseFolder();
+}
+
+function wizOpenFolderDeal(reportId) {
+    wizCloseFolder();
+    wizLoadReport(reportId);
+}
+
+function wizOpenFolderDdr(ddrId, filename) {
+    // Reuse the existing DDR-by-id download endpoint
+    fetch(`/api/ddr/reports/${ddrId}/download`, { headers: _rvmHeaders() })
+        .then(r => r.ok ? r.blob() : Promise.reject('Download failed'))
+        .then(blob => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || 'DDR_Report.pdf';
+            a.click();
+            URL.revokeObjectURL(url);
+        })
+        .catch(err => showToast('DDR download failed: ' + err));
+}
+
+function wizOpenFolderMemo(memoId) {
+    wizCloseFolder();
+    switchTab('memo');
+    setTimeout(() => {
+        if (typeof memoLoadHistoryItem === 'function') {
+            memoLoadHistoryItem(memoId);
+        }
+    }, 200);
+}
+
+// ── Soft warning during extraction ────────────────────────────────────
+// Called after a successful extraction to nudge the analyst if a teammate
+// has already analyzed this company.
+function wizCheckLibraryForCompany(companyName) {
+    if (!companyName || !_libCompanies?.length) return;
+    const norm = companyName.trim().toLowerCase();
+    const match = _libCompanies.find(g =>
+        (g.company_name || '').trim().toLowerCase() === norm);
+    if (!match) return;
+
+    const idx = _libCompanies.indexOf(match);
+    const authors = _libCollectAuthors(match);
+    const authorList = authors.length ? authors.join(', ') : 'someone';
+    const banner = document.createElement('div');
+    banner.className = 'lib-already-banner';
+    banner.innerHTML = `
+        <div>
+            <strong>${_libEscape(match.company_name)}</strong> has already been analyzed by ${_libEscape(authorList)}
+            (${_libFmtDate(match.latest_at)}).
+        </div>
+        <span class="lib-already-link" onclick="wizOpenFolder(${idx})">View existing folder &rsaquo;</span>`;
+    const review = document.getElementById('wiz-review-fields');
+    if (review && !review.parentNode.querySelector('.lib-already-banner')) {
+        review.parentNode.insertBefore(banner, review);
+    }
+}
+
+// Wire the search box once on first render
+document.addEventListener('input', (e) => {
+    if (e.target && e.target.id === 'lib-search') {
+        _libQuery = e.target.value;
+        _wizRenderLibrary();
+    }
+});
 
 async function wizLoadReport(rid) {
     try {
@@ -1378,6 +1640,12 @@ async function wizExtractAndNext() {
         if (deckFile) {
             window._wizLastDeckFile = deckFile;
             if (typeof ddrSyncSubmittedDeck === 'function') ddrSyncSubmittedDeck();
+        }
+
+        // Soft warning: nudge if a teammate already analyzed this company.
+        const extractedName = (_wizExtraction && _wizExtraction.name) || '';
+        if (extractedName && typeof wizCheckLibraryForCompany === 'function') {
+            wizCheckLibraryForCompany(extractedName);
         }
     } catch(e) {
         status.className = 'wiz-status error';

@@ -551,17 +551,381 @@ body {
 .deal-report { max-width: 900px; margin: 0 auto; }
 .report-actions { display: flex; gap: 10px; justify-content: flex-end; margin-bottom: 20px; }
 
-/* ==================== Saved Reports Bar ==================== */
-.saved-reports-bar { margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--border); }
-.saved-reports-bar h3 { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 12px; }
-.reports-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+/* ==================== Team Deal Library (replaces Saved Reports) ====================
+   A shared, browsable index of every deal report, DDR, and IC memo
+   the VoLo team has produced. Designed to feel like an editorial
+   research library — calm typography, generous spacing, restrained color,
+   green used deliberately for primary artifacts. */
+.lib-section {
+    margin-top: 40px;
+    padding: 28px 0 8px;
+    border-top: 1px solid var(--border);
+}
+.lib-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.lib-title-block { flex: 1; min-width: 280px; }
+.lib-title {
+    font-family: var(--font-sans);
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.015em;
+    margin: 0 0 6px 0;
+}
+.lib-subtitle {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+    max-width: 640px;
+}
+.lib-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+/* Toolbar with search + summary count */
+.lib-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+.lib-search-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 240px;
+    max-width: 460px;
+}
+.lib-search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.85rem;
+    opacity: 0.55;
+    pointer-events: none;
+}
+.lib-search-input {
+    width: 100%;
+    padding: 11px 14px 11px 38px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    font-size: 0.88rem;
+    font-family: var(--font-sans);
+    color: var(--text-primary);
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.lib-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(78, 122, 101, 0.12);
+}
+.lib-summary {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    letter-spacing: 0.01em;
+}
+
+/* Card grid: 1 column on mobile, 2 on tablet, 3 on desktop */
+.lib-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 14px;
+}
+
+/* Empty state */
+.lib-empty {
+    grid-column: 1 / -1;
+    padding: 56px 24px;
+    text-align: center;
+    color: var(--text-tertiary);
+    background: var(--bg-white);
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-lg);
+}
+.lib-empty-title { font-size: 1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.lib-empty-text  { font-size: 0.82rem; }
+
+/* Company card — the hero of the library */
+.lib-card {
+    position: relative;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 18px 20px 16px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    overflow: hidden;
+}
+.lib-card::before {
+    /* Subtle green left-rail to signal "this is a VoLo deal" */
+    content: "";
+    position: absolute;
+    top: 14px; bottom: 14px; left: 0;
+    width: 3px;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    opacity: 0.55;
+    transition: opacity 0.15s;
+}
+.lib-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 6px 18px rgba(45, 52, 54, 0.08);
+    transform: translateY(-1px);
+}
+.lib-card:hover::before { opacity: 1; }
+
+.lib-card-header { margin-bottom: 12px; }
+.lib-card-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.lib-card-author {
+    font-size: 0.76rem;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+.lib-card-author strong { color: var(--text-secondary); font-weight: 600; }
+
+/* Plain username line under the company name */
+.lib-card-username {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    font-weight: 500;
+    margin-top: 2px;
+    line-height: 1.3;
+}
+
+/* Artifact chips on the card — color-coded per type */
+.lib-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.lib-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px 4px 8px;
+    border-radius: 100px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    line-height: 1.2;
+}
+.lib-chip-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: currentColor;
+    opacity: 0.85;
+}
+.lib-chip.lib-chip-deal   { color: var(--accent); border-color: var(--accent-light); background: var(--accent-light); }
+.lib-chip.lib-chip-ddr    { color: #8a6a3c;        border-color: #f0e4cf; background: #faf3e3; }
+.lib-chip.lib-chip-memo   { color: #4f6b75;        border-color: #d8e3e8; background: #ecf3f5; }
+.lib-chip.lib-chip-empty  { color: var(--text-tertiary); }
+
+.lib-card-meta {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-light);
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.lib-card-date { font-variant-numeric: tabular-nums; }
+.lib-card-arrow { opacity: 0.4; transition: opacity 0.15s, transform 0.15s; font-size: 0.85rem; }
+.lib-card:hover .lib-card-arrow { opacity: 1; transform: translateX(2px); }
+
+/* ── Folder modal ─────────────────────────────────────────── */
+.lib-modal {
+    position: fixed; inset: 0;
+    z-index: 9000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+.lib-modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(20, 28, 24, 0.45);
+    backdrop-filter: blur(2px);
+    animation: libFadeIn 0.18s ease;
+}
+.lib-modal-card {
+    position: relative;
+    width: 100%;
+    max-width: 640px;
+    max-height: 86vh;
+    overflow-y: auto;
+    background: var(--bg-white);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    box-shadow: 0 24px 64px rgba(20, 28, 24, 0.22);
+    animation: libZoomIn 0.18s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.lib-modal-close {
+    position: absolute;
+    top: 14px; right: 14px;
+    background: transparent;
+    border: none;
+    font-size: 1.6rem;
+    line-height: 1;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
+}
+.lib-modal-close:hover { background: var(--bg-subtle); color: var(--text-primary); }
+
+.lib-modal-header {
+    padding: 28px 32px 20px;
+    border-bottom: 1px solid var(--border-light);
+    background: linear-gradient(180deg, var(--bg-subtle) 0%, var(--bg-white) 100%);
+}
+.lib-modal-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin-bottom: 6px;
+}
+.lib-modal-company {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 6px 0;
+    letter-spacing: -0.02em;
+}
+.lib-modal-meta { font-size: 0.8rem; color: var(--text-secondary); }
+
+.lib-modal-body { padding: 20px 28px 28px; }
+
+/* Artifact group inside the folder */
+.lib-art-group { margin-bottom: 22px; }
+.lib-art-group:last-child { margin-bottom: 0; }
+.lib-art-grouptitle {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-tertiary);
+    margin: 0 0 10px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.lib-art-grouptitle::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border-light);
+}
+.lib-art-list { display: flex; flex-direction: column; gap: 8px; }
+.lib-art-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, transform 0.12s;
+}
+.lib-art-item:hover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+.lib-art-item:active { transform: scale(0.99); }
+.lib-art-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    background: var(--bg-subtle);
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+.lib-art-icon.lib-art-deal  { background: var(--accent-light); color: var(--accent); }
+.lib-art-icon.lib-art-ddr   { background: #faf3e3; color: #8a6a3c; }
+.lib-art-icon.lib-art-memo  { background: #ecf3f5; color: #4f6b75; }
+.lib-art-info { flex: 1; min-width: 0; }
+.lib-art-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 2px;
+    line-height: 1.3;
+}
+.lib-art-sub {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    line-height: 1.3;
+}
+.lib-art-sub strong { color: var(--text-secondary); font-weight: 600; }
+.lib-art-arrow {
+    color: var(--text-tertiary);
+    font-size: 1rem;
+    flex-shrink: 0;
+    transition: transform 0.15s, color 0.15s;
+}
+.lib-art-item:hover .lib-art-arrow { color: var(--accent); transform: translateX(3px); }
+
+/* Soft "already analyzed" warning banner during extraction */
+.lib-already-banner {
+    margin: 12px 0 0;
+    padding: 12px 16px;
+    background: var(--accent-light);
+    border: 1px solid var(--accent);
+    border-left-width: 3px;
+    border-radius: var(--radius-md);
+    font-size: 0.84rem;
+    color: var(--text-primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.lib-already-banner strong { color: var(--accent-hover); }
+.lib-already-banner .lib-already-link {
+    color: var(--accent);
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: rgba(78,122,101,0.4);
+    text-underline-offset: 3px;
+}
+.lib-already-banner .lib-already-link:hover { text-decoration-color: var(--accent); }
+
+@keyframes libFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes libZoomIn { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+
+/* Backwards-compat: keep old class names visible if anything still references them */
+.saved-reports-bar { margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--border); }
+.reports-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
 .report-card-mini {
-    padding: 12px 16px; background: var(--bg-white); border: 1px solid var(--border);
-    border-radius: var(--radius-sm); cursor: pointer; transition: 0.15s; font-size: 0.78rem;
+    padding: 14px 18px; background: var(--bg-white); border: 1px solid var(--border);
+    border-radius: var(--radius-md); cursor: pointer; transition: 0.15s; font-size: 0.82rem;
 }
 .report-card-mini:hover { box-shadow: var(--shadow-sm); border-color: var(--accent); }
 .report-card-mini .rc-name { font-weight: 600; color: var(--text-primary); }
-.report-card-mini .rc-meta { font-size: 0.68rem; color: var(--text-tertiary); margin-top: 2px; }
+.report-card-mini .rc-meta { font-size: 0.7rem; color: var(--text-tertiary); margin-top: 2px; }
 
 /* ==================== Toast Notifications ==================== */
 .toast {

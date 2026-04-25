@@ -2768,11 +2768,13 @@ async def list_memos(user: CurrentUser = Depends(get_current_user)):
 
 @router.get("/history/{memo_id}")
 async def get_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Fetch a single memo. Visible to any authenticated VoLo team member —
+    the team library is shared so analysts can review each other's memos."""
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM generated_memos WHERE id=? AND owner_id=?",
-            (memo_id, user.id),
+            "SELECT * FROM generated_memos WHERE id=?",
+            (memo_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Memo not found")
@@ -2785,8 +2787,8 @@ async def get_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
         # Include report_data for chart injection
         if row["report_id"]:
             rpt_row = conn.execute(
-                "SELECT report_json FROM deal_reports WHERE id=? AND owner_id=?",
-                (row["report_id"], user.id),
+                "SELECT report_json FROM deal_reports WHERE id=?",
+                (row["report_id"],),
             ).fetchone()
             if rpt_row:
                 try:
@@ -2800,8 +2802,8 @@ async def get_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
             img_rows = conn.execute(
                 """SELECT id, file_name, doc_category, file_type, file_path
                    FROM memo_documents
-                   WHERE memo_session_id=? AND owner_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')""",
-                (session_id, user.id),
+                   WHERE memo_session_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')""",
+                (session_id,),
             ).fetchall()
             for ir in img_rows:
                 fpath = Path(ir["file_path"]) if ir["file_path"] else None

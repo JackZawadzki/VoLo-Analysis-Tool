@@ -516,16 +516,43 @@
                 </div>
             </div>
 
-            <!-- Saved Reports Section -->
-            <div id="wiz-saved-reports" class="saved-reports-bar">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                    <h3 style="margin:0;">Recent Reports</h3>
-                    <div style="display:flex;gap:8px;">
+            <!-- ── Team Deal Library — shared across all VoLo analysts ───── -->
+            <div id="wiz-saved-reports" class="lib-section">
+                <div class="lib-header">
+                    <div class="lib-title-block">
+                        <h3 class="lib-title">Team Deal Library</h3>
+                        <p class="lib-subtitle">Every deal report, DDR, and IC memo run by anyone on the VoLo team. Click a company to open its folder.</p>
+                    </div>
+                    <div class="lib-actions">
                         <button onclick="wizExportCSV()" class="btn-secondary btn-sm" title="Export all deals as CSV">Export CSV</button>
                         <button onclick="wizUploadPortfolio()" class="btn-secondary btn-sm" title="Upload portfolio holdings (.csv or .json)">Upload Portfolio</button>
                     </div>
                 </div>
-                <div id="wiz-reports-list" class="reports-list"></div>
+
+                <div class="lib-toolbar">
+                    <div class="lib-search-wrap">
+                        <span class="lib-search-icon">&#128269;</span>
+                        <input id="lib-search" class="lib-search-input" type="text"
+                               placeholder="Search by company name…" autocomplete="off">
+                    </div>
+                    <div class="lib-summary" id="lib-summary"></div>
+                </div>
+
+                <div id="wiz-reports-list" class="lib-grid"></div>
+
+                <!-- Folder modal: opens when a company row is clicked -->
+                <div id="lib-folder-modal" class="lib-modal" style="display:none;">
+                    <div class="lib-modal-backdrop" onclick="wizCloseFolder()"></div>
+                    <div class="lib-modal-card">
+                        <button class="lib-modal-close" onclick="wizCloseFolder()" aria-label="Close">&times;</button>
+                        <div class="lib-modal-header">
+                            <div class="lib-modal-eyebrow">Company Folder</div>
+                            <h2 id="lib-modal-company" class="lib-modal-company"></h2>
+                            <div id="lib-modal-meta" class="lib-modal-meta"></div>
+                        </div>
+                        <div class="lib-modal-body" id="lib-modal-body"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
