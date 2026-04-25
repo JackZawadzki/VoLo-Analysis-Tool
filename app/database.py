@@ -6,11 +6,39 @@ compatible with FastAPI's sync endpoint model (uvicorn thread pool).
 """
 
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
-DB_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = str(DB_DIR / "rvm.db")
+# DB location.
+#
+# Default lives inside the source tree at <repo>/data/rvm.db, which is fine for
+# local development. On Replit Reserved-VM Deployments (and any host where each
+# redeploy replaces the source tree), the source-tree path gets WIPED on every
+# redeploy — taking the database with it. To survive redeploys, set
+# VOLO_DB_PATH to a path *outside* the source tree, e.g.:
+#     VOLO_DB_PATH=/home/runner/.volo/rvm.db   (Replit Reserved VM)
+# The directory is created automatically on first run.
+_LEGACY_DB_DIR  = Path(__file__).resolve().parent.parent / "data"
+_LEGACY_DB_PATH = _LEGACY_DB_DIR / "rvm.db"
+
+_env_db_path = os.environ.get("VOLO_DB_PATH", "").strip()
+if _env_db_path:
+    DB_PATH = _env_db_path
+    DB_DIR  = Path(DB_PATH).parent
+    DB_DIR.mkdir(parents=True, exist_ok=True)
+    # One-time migration: if a legacy in-source DB exists but the new
+    # location is empty, copy it over so existing accounts/reports survive.
+    if _LEGACY_DB_PATH.exists() and not Path(DB_PATH).exists():
+        try:
+            shutil.copy2(_LEGACY_DB_PATH, DB_PATH)
+            print(f"[VoLo Engine] Migrated DB: {_LEGACY_DB_PATH} -> {DB_PATH}", flush=True)
+        except OSError as e:
+            print(f"[VoLo Engine] WARN: could not migrate legacy DB: {e}", flush=True)
+else:
+    DB_DIR  = _LEGACY_DB_DIR
+    DB_PATH = str(_LEGACY_DB_PATH)
+DB_PATH = str(DB_PATH)
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS users (
