@@ -1,0 +1,420 @@
+/* ==========================================================
+   VoLo Earth — Polish Overlay (v2)
+   ----------------------------------------------------------
+   Loaded AFTER styles.css. Every rule here is additive — to
+   fully revert, remove the single <link> in index.html.
+
+   Direction: premium and professional without sterility.
+   Carta-grade clarity, Stripe-grade restraint, with VoLo's
+   forest green used purposefully (primary actions, active
+   state, positive numbers) — no decorative textures, no
+   gradients, no hover transforms, no fluff.
+
+   Touches: typography, palette, surfaces, dividers, buttons,
+   nav, focus states, scrollbars, micro-interactions.
+   No layout, JS, or component-structure changes.
+   ========================================================== */
+
+/* ── 1. Typography pair ───────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+    --font-sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-display: 'Sora', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+html { font-size: 15px; }
+body {
+    line-height: 1.55;
+    letter-spacing: 0.003em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "kern" 1, "calt" 1, "ss01" 1;
+}
+
+p, li, td, th, .form-group label, .info-text, .section-subtitle, .page-subtitle {
+    line-height: 1.6;
+}
+
+/* Display font reserved for hero / brand surfaces only — keeps
+   the rest of the UI calm and uniform in Inter. */
+.page-header h1,
+.page-header h2,
+.rpt-company,
+.rpt-section-title,
+.lib-title,
+.memo-cover-company,
+.memo-toc-header-label,
+#tab-ddr h2,
+#tab-references h1,
+#tab-references h2,
+#tab-funddeployment h2,
+.wizard-panel > h2,
+.section-subtitle + h2,
+.lib-modal-company {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.page-header h1 { font-size: 1.9rem; line-height: 1.18; color: #15201A; }
+.page-header h2 { font-size: 1.5rem; line-height: 1.22; color: #15201A; }
+.lib-title      { font-size: 1.45rem; line-height: 1.22; color: #15201A; }
+.rpt-company    { font-size: 2.1rem; }
+
+.section-subtitle, .page-subtitle, .lib-subtitle {
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    max-width: 720px;
+}
+
+/* Tabular figures wherever numbers carry meaning. */
+.rpt-hero-num,
+.rpt-dt-val,
+.lib-card-date,
+.lib-card-meta,
+.report-card-mini .rc-meta,
+table td:not(:first-child),
+table th:not(:first-child),
+.metric-num,
+.metric-value {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+}
+
+/* ── 2. Refined palette — calm, premium, intentional ───────── */
+:root {
+    /* Backgrounds: barely-warm pale linen — not cream. Paper, not parchment. */
+    --bg-primary: #F7F6F2;
+    --bg-white:   #FFFFFF;
+    --bg-subtle:  #F1EFE8;
+    --bg-tertiary:#E9E6DC;
+
+    /* Forest green primary, used sparingly */
+    --volo-green-dark: #1F4334;
+    --volo-green:      #3F6B57;
+    --volo-green-light:#86AE96;
+    --volo-sage:       #7AA28C;
+
+    --accent:        #2A5443;       /* deeper forest for primary actions */
+    --accent-light:  #E5EDE7;
+    --accent-hover:  #1B3D2D;
+    --accent-tint:   rgba(42,84,67,0.06);
+
+    /* Borders: cool-warm hybrid, very subtle */
+    --border:       #E2DDD0;
+    --border-light: #ECE7DA;
+    --border-strong:#CFC9BA;
+
+    /* Text — warm near-black hierarchy */
+    --text-primary:   #1B1D1A;
+    --text-secondary: #4A4D45;
+    --text-tertiary:  #7B7E73;
+    --text-quaternary:#9FA298;
+
+    /* Status — earthy, not saturated */
+    --success: #3F7A57;
+    --warning: #B68845;
+    --danger:  #A84B43;
+
+    /* Shadows: barely visible. Premium = restraint. */
+    --shadow-sm: 0 1px 1px rgba(20,25,15,0.03), 0 1px 2px rgba(20,25,15,0.04);
+    --shadow-md: 0 1px 2px rgba(20,25,15,0.04), 0 4px 12px rgba(20,25,15,0.05);
+    --shadow-lg: 0 2px 4px rgba(20,25,15,0.04), 0 12px 28px rgba(20,25,15,0.07);
+
+    /* Tighter, sharper radii */
+    --radius-sm: 5px;
+    --radius-md: 7px;
+    --radius-lg: 10px;
+}
+
+/* ── 3. Body — solid, calm, no texture ─────────────────────── */
+body {
+    background-color: var(--bg-primary);
+    background-image: none;
+    color: var(--text-primary);
+}
+
+/* ── 4. Top nav — refined, with a green active-tab underline ─── */
+.top-nav {
+    background: var(--bg-white);
+    border-bottom: 1px solid var(--border);
+    box-shadow: none;
+}
+.nav-brand, .nav-brand-text { white-space: nowrap; }
+.nav-link {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-size: 0.83rem;
+    padding: 10px 14px 10px 14px;
+    border-radius: 0;
+    background: transparent !important;
+    transition: color 0.12s ease;
+    position: relative;
+    white-space: nowrap;
+}
+.nav-link:hover { color: var(--accent-hover); }
+.nav-link.active {
+    color: var(--accent-hover);
+    font-weight: 600;
+    background: transparent !important;
+}
+/* Subtle 2px underline indicator for the active tab — Stripe-style polish */
+.nav-link.active::after {
+    content: "";
+    position: absolute;
+    left: 14px; right: 14px; bottom: -1px;
+    height: 2px;
+    background: var(--accent);
+    border-radius: 2px 2px 0 0;
+}
+
+/* ── 5. Surfaces — clean white cards, crisp 1px border ─────── */
+.deal-report,
+.wizard-panel,
+.lib-card,
+.report-card-mini,
+.lib-modal-card,
+.memo-history-item,
+.ddr-history-item,
+.ddr-progress-card,
+.memo-upload-dropzone,
+.qa-banner,
+.card,
+.rpt-hero-card {
+    background-color: var(--bg-white);
+    background-image: none;
+}
+
+.lib-card,
+.report-card-mini,
+.memo-history-item,
+.ddr-history-item {
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lib-card:hover,
+.report-card-mini:hover,
+.memo-history-item:hover,
+.ddr-history-item:hover {
+    border-color: var(--accent);
+    box-shadow: var(--shadow-md);
+    /* No transform — premium products don't bounce on hover. */
+    transform: none;
+}
+
+/* Library card title sized confidently */
+.lib-card-name {
+    font-size: 1.08rem;
+    font-weight: 700;
+    letter-spacing: -0.012em;
+    color: var(--text-primary);
+}
+.lib-card-username {
+    color: var(--text-tertiary);
+    font-style: normal;
+    font-weight: 500;
+    letter-spacing: 0.005em;
+    font-size: 0.78rem;
+}
+
+/* Strip the green left-rail decoration on library cards — too "themed" */
+.lib-card::before { display: none; }
+
+/* ── 6. Buttons — solid, confident, premium ───────────────── */
+.btn-primary {
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 0.005em;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+    transition: background 0.12s, border-color 0.12s, box-shadow 0.15s;
+}
+.btn-primary:hover:not(:disabled) {
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.btn-primary:active:not(:disabled) {
+    background: var(--accent-hover);
+    box-shadow: inset 0 1px 0 rgba(0,0,0,0.05);
+}
+
+.btn-secondary {
+    background: var(--bg-white);
+    border: 1px solid var(--border-strong);
+    color: var(--text-primary);
+    font-weight: 500;
+    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+}
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent-hover);
+    background: var(--bg-white);
+}
+
+.btn-sm { font-size: 0.78rem; padding: 6px 12px; }
+
+/* ── 7. Auth overlay — premium welcome ─────────────────────── */
+.auth-overlay {
+    background:
+        radial-gradient(circle at 25% 20%, rgba(63,107,87,0.06) 0, transparent 55%),
+        radial-gradient(circle at 80% 85%, rgba(63,107,87,0.04) 0, transparent 55%),
+        var(--bg-primary);
+}
+.auth-card {
+    background: var(--bg-white);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+}
+
+/* ── 8. Forms — clean focus, no default glow ────────────────── */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="search"],
+select,
+textarea,
+.lib-search-input {
+    background: var(--bg-white);
+    border: 1px solid var(--border-strong);
+    color: var(--text-primary);
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+input:focus, select:focus, textarea:focus, .lib-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(42,84,67,0.12);
+}
+
+/* Placeholder reads softly */
+input::placeholder, textarea::placeholder {
+    color: var(--text-quaternary);
+    font-weight: 400;
+}
+
+/* ── 9. Tables — readable, restrained ────────────────────── */
+table {
+    font-feature-settings: "tnum" 1;
+    border-color: var(--border);
+}
+th {
+    background: var(--bg-subtle) !important;
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.7rem;
+}
+td { color: var(--text-primary); }
+
+/* ── 10. Section titles — clean, no decorative marks ────────── */
+.rpt-section-title {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 12px;
+    margin-bottom: 20px;
+    letter-spacing: -0.018em;
+}
+/* Strip the previous decorative under-mark */
+.rpt-section-title::after { display: none; }
+
+/* Library section: no decorative top mark either */
+.lib-section { border-top: 1px solid var(--border); }
+.lib-section::before { display: none; }
+.lib-header { margin-bottom: 22px; }
+
+/* ── 11. Library chips — clean small caps, calm color ──────── */
+.lib-chip {
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.66rem;
+    padding: 4px 10px;
+    border-width: 1px;
+}
+.lib-chip-deal { color: var(--accent); border-color: var(--accent-light); background: var(--accent-light); }
+.lib-chip-ddr  { color: #7E5F33; border-color: #EFE3CB; background: #F8F0DA; }
+.lib-chip-memo { color: #44616B; border-color: #DBE4E8; background: #ECF1F4; }
+
+/* ── 12. Hero metrics — confident display numerals ─────────── */
+.rpt-hero-num,
+.rpt-dt-val {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.024em;
+    color: var(--text-primary);
+}
+.rpt-hero-label,
+.rpt-dt-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
+    font-weight: 600;
+}
+
+/* Color-cue: positive/strong metrics nudge toward forest green */
+.rpt-hero-card.accent .rpt-hero-num { color: var(--accent); }
+
+/* ── 13. Modal polish ─────────────────────────────────────── */
+.lib-modal-card {
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+}
+.lib-modal-header {
+    background: linear-gradient(180deg, var(--bg-subtle) 0%, var(--bg-white) 100%);
+}
+.lib-modal-eyebrow {
+    color: var(--accent);
+    font-weight: 600;
+    letter-spacing: 0.14em;
+}
+.lib-modal-company {
+    color: var(--text-primary);
+    letter-spacing: -0.022em;
+}
+
+/* Folder-modal artifact items: cleaner, calmer hover */
+.lib-art-item {
+    border-color: var(--border);
+    transition: border-color 0.12s, background 0.12s;
+}
+.lib-art-item:hover {
+    border-color: var(--accent);
+    background: var(--accent-tint);
+    transform: none;
+}
+
+/* ── 14. Scrollbars — refined ─────────────────────────────── */
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: var(--bg-subtle); }
+::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border: 2px solid var(--bg-subtle);
+    border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--volo-sage); }
+
+/* ── 15. Subtle code/mono refinement ──────────────────────── */
+code, pre, .ddr-file-info code {
+    background: var(--bg-subtle);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-feature-settings: "calt" 0;
+}
+
+/* ── 16. Detail polish — the small things that signal quality ── */
+hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+::selection { background: var(--accent-light); color: var(--accent-hover); }
+
+/* Page header treatment — generous breathing room */
+.page-header { margin-bottom: 28px; padding-bottom: 0; }
+.page-header h1, .page-header h2 { margin-bottom: 10px; }
