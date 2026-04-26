@@ -11,6 +11,8 @@ python-dotenv>=1.0.0
 # Authentication
 PyJWT>=2.8.0
 Werkzeug>=3.0.0
+# Postgres driver (used when DATABASE_URL is set; SQLite is the local-dev default)
+psycopg2-binary>=2.9.9
 # AI extraction
 anthropic>=0.30.0
 openai>=1.30.0

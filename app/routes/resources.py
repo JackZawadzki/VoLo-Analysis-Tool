@@ -2,10 +2,9 @@
 Displaced-resource CRUD routes (carbon intensity database).
 """
 
-import sqlite3
 from fastapi import APIRouter, Depends, HTTPException
 from ..auth import CurrentUser, get_current_user, require_admin
-from ..database import get_db
+from ..database import get_db, IntegrityError as DBIntegrityError
 
 router = APIRouter(prefix="/api/resources", tags=["resources"])
 
@@ -51,7 +50,7 @@ def create_resource(data: dict, user: CurrentUser = Depends(require_admin)):
             "SELECT * FROM displaced_resources WHERE id=?", (cur.lastrowid,)
         ).fetchone()
         return dict(row)
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
         raise HTTPException(409, "Resource name already exists")
     finally:
         db.close()

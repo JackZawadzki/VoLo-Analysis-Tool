@@ -383,8 +383,156 @@ _BUILTIN_CRITERIA = [
 ]
 
 
-def get_db() -> sqlite3.Connection:
-    """Return a new SQLite connection with row_factory enabled."""
+# ════════════════════════════════════════════════════════════════════════════
+#  BACKEND DETECTION & POSTGRES COMPATIBILITY SHIM
+#  ──────────────────────────────────────────────────────────────────────────
+#  Replit deployments don't persist the local filesystem across redeploys
+#  (their docs explicitly state this for Reserved VM Deployments). For
+#  production we fall back to a managed Postgres database via DATABASE_URL.
+#  Local development continues to use SQLite — no setup change required.
+#
+#  The shim below makes the rest of the codebase work IDENTICALLY against
+#  either backend: every existing `conn.execute("SELECT ... WHERE x=?", ...)`
+#  call, every `cur.lastrowid`, every `row["col"]` keeps working unchanged.
+#  ════════════════════════════════════════════════════════════════════════════
+import re as _re
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    import psycopg2          # noqa: F401  (installed via requirements.txt)
+    import psycopg2.extras
+    IntegrityError = psycopg2.IntegrityError
+    print("[VoLo Engine] DB backend: Postgres (DATABASE_URL set)", flush=True)
+else:
+    IntegrityError = sqlite3.IntegrityError
+    print(f"[VoLo Engine] DB backend: SQLite ({DB_PATH})", flush=True)
+
+
+def _translate_sql_to_pg(sql: str) -> str:
+    """Translate SQLite-flavored SQL into Postgres-flavored SQL.
+
+    Conservative, in-place substitutions. The same SQL strings keep working
+    against SQLite (we only invoke this when USE_POSTGRES is True).
+    """
+    # INSERT OR IGNORE -> INSERT ... ON CONFLICT DO NOTHING
+    if _re.search(r"\bINSERT\s+OR\s+IGNORE\b", sql, _re.IGNORECASE):
+        sql = _re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", sql, flags=_re.IGNORECASE)
+        if "ON CONFLICT" not in sql.upper() and "RETURNING" not in sql.upper():
+            sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
+    # Placeholders
+    sql = sql.replace("?", "%s")
+    # Datetime
+    sql = sql.replace("datetime('now')", "NOW()")
+    # Auto-increment integer pkey  (SERIAL / BIGSERIAL produce IDs)
+    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "BIGSERIAL PRIMARY KEY")
+    # Binary blob column type
+    sql = _re.sub(r"\bBLOB\b", "BYTEA", sql)
+    # Stricter SQLite begin -> standard begin
+    sql = _re.sub(r"\bBEGIN\s+IMMEDIATE\b", "BEGIN", sql, flags=_re.IGNORECASE)
+    return sql
+
+
+class _PgCursor:
+    """Wraps a psycopg2 DictCursor so it behaves like a sqlite3.Cursor for the
+    parts of the API our codebase touches: fetchone/fetchall, rowcount,
+    lastrowid (eagerly resolved via INSERT ... RETURNING id)."""
+
+    __slots__ = ("_cur", "_lastrowid", "_lastrowid_consumed")
+
+    def __init__(self, cur, is_insert_with_returning: bool):
+        self._cur = cur
+        self._lastrowid = None
+        self._lastrowid_consumed = False
+        if is_insert_with_returning and cur.description:
+            try:
+                row = cur.fetchone()
+                if row is not None and "id" in row:
+                    self._lastrowid = row["id"]
+                self._lastrowid_consumed = True
+            except psycopg2.ProgrammingError:
+                pass
+
+    def fetchone(self):
+        if self._lastrowid_consumed:
+            self._lastrowid_consumed = False
+            return None
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    @property
+    def rowcount(self):
+        return self._cur.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._lastrowid
+
+    @property
+    def description(self):
+        return self._cur.description
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+class _PgConnection:
+    """Wraps a psycopg2 connection so the codebase's sqlite3-style usage
+    (`conn.execute(sql, params)`, `conn.commit()`, etc.) works unchanged."""
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        # Fast path: detect insert before translation so we can append
+        # RETURNING id for lastrowid support.
+        is_insert = sql.lstrip().upper().startswith("INSERT")
+        translated = _translate_sql_to_pg(sql)
+        is_insert_with_returning = False
+        if is_insert and "ON CONFLICT DO NOTHING" not in translated.upper() \
+                     and "RETURNING" not in translated.upper():
+            translated = translated.rstrip().rstrip(";") + " RETURNING id"
+            is_insert_with_returning = True
+        cur = self._conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        cur.execute(translated, params or ())
+        return _PgCursor(cur, is_insert_with_returning)
+
+    def executescript(self, sql_script: str):
+        # SQLite's executescript runs multiple statements separated by ';'.
+        # psycopg2 handles multi-statement strings fine; just translate first.
+        translated = _translate_sql_to_pg(sql_script)
+        cur = self._conn.cursor()
+        cur.execute(translated)
+
+    def commit(self): self._conn.commit()
+    def rollback(self): self._conn.rollback()
+    def close(self): self._conn.close()
+
+    # Pass-through for code that does `with conn:` block-commit semantics
+    def __enter__(self): return self
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self._conn.commit()
+        else:
+            self._conn.rollback()
+
+
+def get_db():
+    """Return a new connection with row_factory / dict-cursor enabled.
+
+    Local dev (no DATABASE_URL): a real sqlite3.Connection, identical to
+    historical behavior (bit-for-bit).
+    Production (DATABASE_URL set): a psycopg2 connection wrapped so the
+    sqlite3-style API the codebase relies on continues to work unchanged.
+    """
+    if USE_POSTGRES:
+        conn = psycopg2.connect(DATABASE_URL)
+        return _PgConnection(conn)
     DB_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -393,7 +541,16 @@ def get_db() -> sqlite3.Connection:
 
 
 def init_db():
-    """Create all tables if they don't exist."""
+    """Create all tables if they don't exist (works on both backends)."""
+    if USE_POSTGRES:
+        conn_raw = psycopg2.connect(DATABASE_URL)
+        try:
+            cur = conn_raw.cursor()
+            cur.execute(_translate_sql_to_pg(_SCHEMA_SQL))
+            conn_raw.commit()
+        finally:
+            conn_raw.close()
+        return
     DB_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(_SCHEMA_SQL)
@@ -575,7 +732,10 @@ def migrate_db():
             conn.execute(sql)
             conn.commit()
         except Exception:
-            pass
+            # Postgres aborts the txn on failure (e.g. column already exists);
+            # rollback so subsequent migrations can proceed. Harmless on SQLite.
+            try: conn.rollback()
+            except Exception: pass
     conn.close()
 
 

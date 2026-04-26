@@ -32,7 +32,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from werkzeug.security import check_password_hash, generate_password_hash as _gen_hash
 
-from .database import get_db
+from .database import get_db, IntegrityError as DBIntegrityError
 from . import email_utils
 
 
@@ -363,7 +363,11 @@ def register(req: RegisterRequest, request: Request):
             raise HTTPException(
                 409, "Username already taken. Please choose another."
             )
-        is_first = db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0
+        # Alias the count column so this works under both sqlite3 and the
+        # Postgres compatibility shim (psycopg2 DictCursor doesn't support
+        # numeric column indexing).
+        first_row = db.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+        is_first = (first_row["n"] if first_row else 0) == 0
         role = "admin" if is_first else "user"
         cur = db.execute(
             "INSERT INTO users (username, email, password_hash, role, verified) "
@@ -372,7 +376,7 @@ def register(req: RegisterRequest, request: Request):
         )
         db.commit()
         uid = cur.lastrowid
-    except sqlite3.IntegrityError:
+    except DBIntegrityError:
         raise HTTPException(409, "Username or email already taken.")
     finally:
         db.close()
