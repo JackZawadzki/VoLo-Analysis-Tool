@@ -277,6 +277,43 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
         db.close()
 
 
+@router.delete("/report/{rid}")
+def delete_deal_report(rid: int, user: CurrentUser = Depends(get_current_user)):
+    """Delete a deal report owned by the current user. Returns 404 if the
+    report doesn't exist or belongs to someone else, so non-owners can't even
+    confirm whether the id exists."""
+    db = get_db()
+    try:
+        cur = db.execute(
+            "DELETE FROM deal_reports WHERE id=? AND owner_id=?",
+            (rid, user.id),
+        )
+        db.commit()
+        if (cur.rowcount or 0) == 0:
+            raise HTTPException(404, "Deal report not found or not yours to delete.")
+    finally:
+        db.close()
+    return {"ok": True, "deleted_id": rid}
+
+
+@router.delete("/notes")
+def delete_notes(company: str, user: CurrentUser = Depends(get_current_user)):
+    """Reset/delete the team analyst notes for a company. The history rows
+    survive (audit trail), so a deleted doc can always be reconstructed from
+    deal_notes_history."""
+    key = _company_key(company)
+    if not key:
+        raise HTTPException(status_code=400, detail="company name is required")
+    db = get_db()
+    try:
+        _ensure_notes_tables(db)
+        cur = db.execute("DELETE FROM deal_notes WHERE company_key=?", (key,))
+        db.commit()
+        return {"ok": True, "deleted": cur.rowcount or 0}
+    finally:
+        db.close()
+
+
 @router.get("/report/{rid}/source-data")
 def get_report_source_data(rid: int, user: CurrentUser = Depends(get_current_user)):
     """Return the raw inputs that produced a deal report — deal terms,

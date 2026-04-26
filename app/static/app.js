@@ -1189,6 +1189,7 @@ function wizOpenFolder(idx) {
                         <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong> · ${_libFmtDate(d.created_at)}</div>
                     </div>
                     <button class="lib-art-srcbtn" onclick="event.stopPropagation(); libShowSourceData(${d.id});" title="View raw inputs the model used">Source data</button>
+                    <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDealReport(${d.id});" title="Delete this deal report" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderDeal(${d.id})">&rsaquo;</span>
                 </div>`);
         });
@@ -1201,14 +1202,16 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-list">');
         g.ddrs.forEach(d => {
             const sizeMB = ((d.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
+            const fnAttr = JSON.stringify(d.filename || 'DDR_Report.pdf').replace(/"/g, '&quot;');
             html.push(`
-                <div class="lib-art-item" onclick="wizOpenFolderDdr(${d.id}, ${JSON.stringify(d.filename || 'DDR_Report.pdf').replace(/"/g, '&quot;')})">
-                    <div class="lib-art-icon lib-art-ddr">&#128209;</div>
-                    <div class="lib-art-info">
+                <div class="lib-art-item">
+                    <div class="lib-art-icon lib-art-ddr" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&#128209;</div>
+                    <div class="lib-art-info" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">
                         <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${_libFmtDate(d.generated_at)} · ${sizeMB} MB</div>
                     </div>
-                    <span class="lib-art-arrow">&darr;</span>
+                    <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDdr(${d.id});" title="Delete this DDR" aria-label="Delete">&#128465;</button>
+                    <span class="lib-art-arrow" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&darr;</span>
                 </div>`);
         });
         html.push('</div></div>');
@@ -1220,13 +1223,14 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-list">');
         g.memos.forEach(m => {
             html.push(`
-                <div class="lib-art-item" onclick="wizOpenFolderMemo(${m.id})">
-                    <div class="lib-art-icon lib-art-memo">&#128221;</div>
-                    <div class="lib-art-info">
+                <div class="lib-art-item">
+                    <div class="lib-art-icon lib-art-memo" onclick="wizOpenFolderMemo(${m.id})">&#128221;</div>
+                    <div class="lib-art-info" onclick="wizOpenFolderMemo(${m.id})">
                         <div class="lib-art-title">Investment Memo${m.model_used ? ` · ${_libEscape(m.model_used)}` : ''}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong> · ${_libFmtDate(m.created_at)}</div>
                     </div>
-                    <span class="lib-art-arrow">&rsaquo;</span>
+                    <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteMemo(${m.id});" title="Delete this memo" aria-label="Delete">&#128465;</button>
+                    <span class="lib-art-arrow" onclick="wizOpenFolderMemo(${m.id})">&rsaquo;</span>
                 </div>`);
         });
         html.push('</div></div>');
@@ -1253,6 +1257,86 @@ function wizCloseFolder() {
     document.removeEventListener('keydown', _wizFolderEsc);
     // Reset notes state so reopening a different folder starts clean.
     _libNotes = { company: null, version: 0, exists: false, editing: false, lastEditedBy: '', lastEditedAt: '' };
+}
+
+// ─── Library: artifact deletion (deal report / DDR / memo / notes) ─────────
+// All delete actions go through a single confirm dialog and refresh the
+// library on success so the UI stays consistent.
+
+async function _libDeleteWithConfirm({ url, method = 'DELETE', label, body = null, currentCompanyName = null }) {
+    if (!confirm(`Permanently delete this ${label}?\n\nThis can't be undone.`)) return;
+    try {
+        const opts = { method, headers: _rvmHeaders() };
+        if (body) {
+            opts.headers = { ...opts.headers, 'Content-Type': 'application/json' };
+            opts.body = JSON.stringify(body);
+        }
+        const r = await fetch(url, opts);
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: r.statusText }));
+            throw new Error(err.detail || ('HTTP ' + r.status));
+        }
+        showToast(label.charAt(0).toUpperCase() + label.slice(1) + ' deleted.');
+        // Reload library + reopen the same folder if it still has artifacts.
+        const stayOpenName = currentCompanyName || _libNotes.company;
+        wizCloseFolder();
+        await new Promise(res => setTimeout(res, 100));
+        if (typeof wizLoadReports === 'function') {
+            wizLoadReports();
+            // After the library reload, try to re-open the same folder if it
+            // still exists. Defer slightly to let the fetch complete.
+            if (stayOpenName) {
+                setTimeout(() => {
+                    const idx = (window._libCompanies || []).findIndex(c =>
+                        (c.company_name || '').trim().toLowerCase() === (stayOpenName || '').trim().toLowerCase()
+                    );
+                    if (idx >= 0) wizOpenFolder(idx);
+                }, 600);
+            }
+        }
+    } catch (e) {
+        showToast('Delete failed: ' + e.message);
+    }
+}
+
+function libDeleteDealReport(reportId) {
+    _libDeleteWithConfirm({
+        url: `/api/deal-pipeline/report/${reportId}`,
+        label: 'deal report',
+    });
+}
+
+function libDeleteDdr(ddrId) {
+    _libDeleteWithConfirm({
+        url: `/api/ddr/reports/${ddrId}`,
+        label: 'DDR report',
+    });
+}
+
+function libDeleteMemo(memoId) {
+    _libDeleteWithConfirm({
+        url: `/api/memo/history/${memoId}`,
+        label: 'IC memo',
+    });
+}
+
+async function libNotesReset() {
+    if (!_libNotes.company) return;
+    if (!confirm(`Reset analyst notes for ${_libNotes.company}?\n\nThe current notes will be cleared back to the default template. Past versions stay in History.`)) return;
+    try {
+        const r = await fetch(`/api/deal-pipeline/notes?company=${encodeURIComponent(_libNotes.company)}`, {
+            method: 'DELETE',
+            headers: _rvmHeaders(),
+        });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: r.statusText }));
+            throw new Error(err.detail || ('HTTP ' + r.status));
+        }
+        showToast('Notes reset to template.');
+        await libNotesLoad(_libNotes.company);
+    } catch (e) {
+        showToast('Reset failed: ' + e.message);
+    }
 }
 
 // ─── Source Data viewer (per deal report) ───────────────────────────────────
@@ -1496,6 +1580,7 @@ function libNotesStartEdit() {
     const view = document.getElementById('lib-notes-view');
     const editBtn = document.getElementById('lib-notes-edit-btn');
     const histBtn = document.getElementById('lib-notes-history-btn');
+    const resetBtn = document.getElementById('lib-notes-reset-btn');
     const saveBtn = document.getElementById('lib-notes-save-btn');
     const cancelBtn = document.getElementById('lib-notes-cancel-btn');
     const histPanel = document.getElementById('lib-notes-history-panel');
@@ -1506,6 +1591,7 @@ function libNotesStartEdit() {
     if (histPanel) histPanel.style.display = 'none';
     if (editBtn) editBtn.style.display = 'none';
     if (histBtn) histBtn.style.display = 'none';
+    if (resetBtn) resetBtn.style.display = 'none';
     if (saveBtn) saveBtn.style.display = '';
     if (cancelBtn) cancelBtn.style.display = '';
     _libNotes.editing = true;
@@ -1531,6 +1617,7 @@ function libNotesCancelEdit() {
     const view = document.getElementById('lib-notes-view');
     const editBtn = document.getElementById('lib-notes-edit-btn');
     const histBtn = document.getElementById('lib-notes-history-btn');
+    const resetBtn = document.getElementById('lib-notes-reset-btn');
     const saveBtn = document.getElementById('lib-notes-save-btn');
     const cancelBtn = document.getElementById('lib-notes-cancel-btn');
     const conflict = document.getElementById('lib-notes-conflict');
@@ -1538,6 +1625,7 @@ function libNotesCancelEdit() {
     if (view) view.style.display = 'block';
     if (editBtn) editBtn.style.display = '';
     if (histBtn) histBtn.style.display = '';
+    if (resetBtn) resetBtn.style.display = '';
     if (saveBtn) saveBtn.style.display = 'none';
     if (cancelBtn) cancelBtn.style.display = 'none';
     if (conflict) conflict.style.display = 'none';

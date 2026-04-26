@@ -354,6 +354,22 @@ async def ddr_list_reports(user: CurrentUser = Depends(get_current_user)):
         db.close()
 
 
+@router.delete("/reports/{report_id}")
+async def ddr_delete_report(report_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Delete a saved DDR report. Anyone authenticated can delete since the
+    DDR library is team-shared by design (matches the list endpoint's
+    visibility model). Returns 404 if the row doesn't exist."""
+    db = get_db()
+    try:
+        cur = db.execute("DELETE FROM ddr_reports WHERE id=?", (report_id,))
+        db.commit()
+        if (cur.rowcount or 0) == 0:
+            raise HTTPException(404, "DDR report not found")
+    finally:
+        db.close()
+    return {"ok": True, "deleted_id": report_id}
+
+
 @router.get("/reports/{report_id}/download")
 async def ddr_download_report(report_id: int, user: CurrentUser = Depends(get_current_user)):
     """Download a saved DDR report PDF from the database."""

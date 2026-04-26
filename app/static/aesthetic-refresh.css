@@ -1106,6 +1106,29 @@ a:focus-visible,
     background: var(--vf-mint-bg-soft);
 }
 
+/* Delete button — quiet by default, danger-colored on hover so it's clearly
+   destructive. The unicode 🗑 glyph keeps the row visually compact. */
+.lib-art-delbtn {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--vf-stone-light);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    margin-right: 8px;
+    font-size: 0.95rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+    opacity: 0.55;
+}
+.lib-art-item:hover .lib-art-delbtn { opacity: 1; }
+.lib-art-delbtn:hover {
+    border-color: var(--vf-danger);
+    color: var(--vf-danger);
+    background: #FBEAE7;
+    opacity: 1;
+}
+
 .lib-src-section {
     margin-bottom: 22px;
     padding-bottom: 18px;

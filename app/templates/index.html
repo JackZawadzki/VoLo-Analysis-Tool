@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=9">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -564,6 +564,7 @@
                             <div class="lib-notes-actions" id="lib-notes-actions">
                                 <button class="btn-secondary btn-sm" id="lib-notes-edit-btn" onclick="libNotesStartEdit()">Edit</button>
                                 <button class="btn-secondary btn-sm" id="lib-notes-history-btn" onclick="libNotesShowHistory()">History</button>
+                                <button class="btn-secondary btn-sm" id="lib-notes-reset-btn" onclick="libNotesReset()" title="Reset to default template (history is preserved)">Reset</button>
                                 <button class="btn-primary btn-sm" id="lib-notes-save-btn" onclick="libNotesSave()" style="display:none;">Save</button>
                                 <button class="btn-secondary btn-sm" id="lib-notes-cancel-btn" onclick="libNotesCancelEdit()" style="display:none;">Cancel</button>
                             </div>
