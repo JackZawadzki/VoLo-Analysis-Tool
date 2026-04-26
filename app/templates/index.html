@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=4">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=5">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -553,6 +553,26 @@
                             <div id="lib-modal-meta" class="lib-modal-meta"></div>
                         </div>
                         <div class="lib-modal-body" id="lib-modal-body"></div>
+
+                        <!-- Analyst Notes — team-shared markdown doc per company.
+                             Light optimistic-concurrency: stale saves return 409. -->
+                        <div class="lib-notes-section" id="lib-notes-section">
+                            <div class="lib-notes-header">
+                                <div class="lib-notes-title">Analyst Notes</div>
+                                <div class="lib-notes-meta" id="lib-notes-meta">Loading...</div>
+                            </div>
+                            <div class="lib-notes-actions" id="lib-notes-actions">
+                                <button class="btn-secondary btn-sm" id="lib-notes-edit-btn" onclick="libNotesStartEdit()">Edit</button>
+                                <button class="btn-secondary btn-sm" id="lib-notes-history-btn" onclick="libNotesShowHistory()">History</button>
+                                <button class="btn-primary btn-sm" id="lib-notes-save-btn" onclick="libNotesSave()" style="display:none;">Save</button>
+                                <button class="btn-secondary btn-sm" id="lib-notes-cancel-btn" onclick="libNotesCancelEdit()" style="display:none;">Cancel</button>
+                            </div>
+                            <div id="lib-notes-conflict" class="lib-notes-conflict" style="display:none;"></div>
+                            <div id="lib-notes-status" class="lib-notes-status" style="display:none;"></div>
+                            <div id="lib-notes-view" class="lib-notes-view"></div>
+                            <textarea id="lib-notes-edit" class="lib-notes-edit" style="display:none;" spellcheck="true" placeholder="Write your notes here. Markdown is preserved as-is."></textarea>
+                            <div id="lib-notes-history-panel" class="lib-notes-history-panel" style="display:none;"></div>
+                        </div>
                     </div>
                 </div>
             </div>

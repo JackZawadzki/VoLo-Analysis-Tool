@@ -927,3 +927,151 @@ a:focus-visible,
    22. ROUTING SCROLL OFFSET — keep section anchors below nav
    ────────────────────────────────────────────────────────── */
 .tab-content { scroll-margin-top: 80px; }
+
+
+/* ──────────────────────────────────────────────────────────
+   23. ANALYST NOTES (team-shared per company)
+   ────────────────────────────────────────────────────────── */
+.lib-notes-section {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--vf-hairline);
+}
+.lib-notes-header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px; margin-bottom: 12px;
+}
+.lib-notes-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--vf-ink);
+    letter-spacing: -0.01em;
+}
+.lib-notes-meta {
+    font-size: 0.78rem;
+    color: var(--vf-stone);
+}
+.lib-notes-meta strong { color: var(--vf-ink); font-weight: 600; }
+.lib-notes-meta-empty { color: var(--vf-stone-light); font-style: italic; }
+.lib-notes-actions {
+    display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;
+}
+.lib-notes-view {
+    background: var(--vf-stone-bg);
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    min-height: 80px;
+    font-size: 0.86rem;
+    line-height: 1.55;
+    color: var(--vf-slate);
+}
+.lib-notes-empty {
+    color: var(--vf-stone-light);
+    font-style: italic;
+    text-align: center;
+    padding: 20px 0;
+}
+.lib-notes-pre {
+    font-family: var(--font-sans);
+    font-size: 0.86rem;
+    line-height: 1.6;
+    color: var(--vf-slate);
+    margin: 0;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.lib-notes-edit {
+    width: 100%;
+    min-height: 320px;
+    background: var(--vf-paper);
+    border: 1px solid var(--vf-border);
+    border-radius: var(--radius-md);
+    padding: 14px 16px;
+    font-family: var(--font-sans);
+    font-size: 0.86rem;
+    line-height: 1.6;
+    color: var(--vf-ink);
+    resize: vertical;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.lib-notes-edit:focus {
+    outline: none;
+    border-color: var(--vf-forest-soft);
+    box-shadow: 0 0 0 3px rgba(35, 65, 53, 0.12);
+}
+.lib-notes-conflict {
+    background: #FAF1E0;
+    border: 1px solid #C89B5F;
+    border-left: 3px solid var(--vf-ochre);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
+    color: #5A431F;
+    line-height: 1.55;
+}
+.lib-notes-conflict strong { color: #3D2D14; }
+.lib-notes-conflict details { margin-top: 8px; }
+.lib-notes-conflict summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--vf-forest-deep);
+}
+.lib-notes-status {
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+}
+.lib-notes-status.info {
+    background: var(--vf-stone-bg);
+    color: var(--vf-slate);
+    border-left: 3px solid var(--vf-sage);
+}
+.lib-notes-status.success {
+    background: var(--vf-mint-bg);
+    color: var(--vf-forest-deep);
+    border-left: 3px solid var(--vf-success);
+}
+.lib-notes-status.error {
+    background: #FBEAE7;
+    color: #7A2F2A;
+    border-left: 3px solid var(--vf-danger);
+}
+.lib-notes-history-panel {
+    margin-top: 14px;
+    padding: 12px 14px;
+    background: var(--vf-paper);
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    max-height: 360px;
+    overflow-y: auto;
+}
+.lib-notes-history-empty {
+    color: var(--vf-stone-light);
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 12px 0;
+}
+.lib-notes-history-item {
+    border-bottom: 1px solid var(--vf-hairline-soft);
+    padding: 10px 0;
+}
+.lib-notes-history-item:last-child { border-bottom: none; }
+.lib-notes-history-item summary {
+    cursor: pointer;
+    font-size: 0.83rem;
+    color: var(--vf-slate);
+    list-style: none;
+}
+.lib-notes-history-item summary::-webkit-details-marker { display: none; }
+.lib-notes-history-item summary::before {
+    content: '▸';
+    display: inline-block;
+    margin-right: 6px;
+    color: var(--vf-stone);
+    transition: transform 0.15s ease;
+}
+.lib-notes-history-item[open] summary::before { transform: rotate(90deg); }

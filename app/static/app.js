@@ -1240,6 +1240,9 @@ function wizOpenFolder(idx) {
     document.body.style.overflow = 'hidden';
 
     document.addEventListener('keydown', _wizFolderEsc);
+
+    // Load the team-shared analyst notes for this company.
+    libNotesLoad(g.company_name);
 }
 
 function wizCloseFolder() {
@@ -1247,6 +1250,214 @@ function wizCloseFolder() {
     if (modal) modal.style.display = 'none';
     document.body.style.overflow = '';
     document.removeEventListener('keydown', _wizFolderEsc);
+    // Reset notes state so reopening a different folder starts clean.
+    _libNotes = { company: null, version: 0, exists: false, editing: false, lastEditedBy: '', lastEditedAt: '' };
+}
+
+// ─── Team-shared analyst notes (per company) ────────────────────────────────
+// Loaded by wizOpenFolder(); edited inline in the folder modal. Light
+// optimistic-concurrency: every save sends the version we loaded; if the
+// server has a newer version we show the colleague's text and let the user
+// merge before retrying.
+let _libNotes = { company: null, version: 0, exists: false, editing: false, lastEditedBy: '', lastEditedAt: '' };
+
+function _libNotesEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _libNotesFmtDate(iso) {
+    if (!iso) return '';
+    try {
+        const d = new Date(iso.replace(' ', 'T') + (iso.includes('Z') || iso.includes('+') ? '' : 'Z'));
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+    } catch (_) { return iso; }
+}
+function _libNotesRenderMeta() {
+    const el = document.getElementById('lib-notes-meta');
+    if (!el) return;
+    if (!_libNotes.exists) {
+        el.innerHTML = '<span class="lib-notes-meta-empty">No notes yet — start the working doc</span>';
+    } else {
+        const who = _libNotesEscape(_libNotes.lastEditedBy || 'unknown');
+        const when = _libNotesEscape(_libNotesFmtDate(_libNotes.lastEditedAt));
+        el.innerHTML = `Last edited by <strong>${who}</strong> · ${when} · v${_libNotes.version}`;
+    }
+}
+function _libNotesRenderView(content) {
+    const view = document.getElementById('lib-notes-view');
+    if (!view) return;
+    // Plain-text rendering with preserved whitespace. We deliberately do NOT
+    // run a markdown converter here — the existing one is XSS-unsafe and the
+    // working doc reads fine as preformatted plain text.
+    if (!content || !content.trim()) {
+        view.innerHTML = '<div class="lib-notes-empty">No notes yet. Click <strong>Edit</strong> to start the team working doc.</div>';
+    } else {
+        view.innerHTML = `<pre class="lib-notes-pre">${_libNotesEscape(content)}</pre>`;
+    }
+}
+
+async function libNotesLoad(company) {
+    _libNotes.company = company;
+    const view = document.getElementById('lib-notes-view');
+    const meta = document.getElementById('lib-notes-meta');
+    const conflict = document.getElementById('lib-notes-conflict');
+    if (conflict) conflict.style.display = 'none';
+    if (meta) meta.textContent = 'Loading...';
+    if (view) view.innerHTML = '';
+    try {
+        const r = await fetch('/api/deal-pipeline/notes?company=' + encodeURIComponent(company), { headers: _rvmHeaders() });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        _libNotes.version = data.version || 0;
+        _libNotes.exists = !!data.exists;
+        _libNotes.lastEditedBy = data.last_edited_by_username || '';
+        _libNotes.lastEditedAt = data.last_edited_at || '';
+        _libNotes.editing = false;
+        _libNotesRenderMeta();
+        _libNotesRenderView(data.content || '');
+        // Stash the loaded content for "cancel" reset.
+        _libNotes._loadedContent = data.content || '';
+    } catch (e) {
+        if (meta) meta.textContent = 'Failed to load notes: ' + e.message;
+    }
+}
+
+function libNotesStartEdit() {
+    if (!_libNotes.company) return;
+    const ta = document.getElementById('lib-notes-edit');
+    const view = document.getElementById('lib-notes-view');
+    const editBtn = document.getElementById('lib-notes-edit-btn');
+    const histBtn = document.getElementById('lib-notes-history-btn');
+    const saveBtn = document.getElementById('lib-notes-save-btn');
+    const cancelBtn = document.getElementById('lib-notes-cancel-btn');
+    const histPanel = document.getElementById('lib-notes-history-panel');
+    if (!ta || !view) return;
+    ta.value = _libNotes._loadedContent || '';
+    ta.style.display = 'block';
+    view.style.display = 'none';
+    if (histPanel) histPanel.style.display = 'none';
+    if (editBtn) editBtn.style.display = 'none';
+    if (histBtn) histBtn.style.display = 'none';
+    if (saveBtn) saveBtn.style.display = '';
+    if (cancelBtn) cancelBtn.style.display = '';
+    _libNotes.editing = true;
+    setTimeout(() => ta.focus(), 50);
+}
+
+function libNotesCancelEdit() {
+    const ta = document.getElementById('lib-notes-edit');
+    const view = document.getElementById('lib-notes-view');
+    const editBtn = document.getElementById('lib-notes-edit-btn');
+    const histBtn = document.getElementById('lib-notes-history-btn');
+    const saveBtn = document.getElementById('lib-notes-save-btn');
+    const cancelBtn = document.getElementById('lib-notes-cancel-btn');
+    const conflict = document.getElementById('lib-notes-conflict');
+    if (ta) ta.style.display = 'none';
+    if (view) view.style.display = 'block';
+    if (editBtn) editBtn.style.display = '';
+    if (histBtn) histBtn.style.display = '';
+    if (saveBtn) saveBtn.style.display = 'none';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    if (conflict) conflict.style.display = 'none';
+    _libNotes.editing = false;
+}
+
+async function libNotesSave() {
+    if (!_libNotes.company) return;
+    const ta = document.getElementById('lib-notes-edit');
+    const saveBtn = document.getElementById('lib-notes-save-btn');
+    const status = document.getElementById('lib-notes-status');
+    const conflict = document.getElementById('lib-notes-conflict');
+    if (!ta) return;
+    const content = ta.value;
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
+    if (status) { status.style.display = 'block'; status.textContent = 'Saving...'; status.className = 'lib-notes-status info'; }
+    if (conflict) conflict.style.display = 'none';
+    try {
+        const r = await fetch('/api/deal-pipeline/notes', {
+            method: 'PUT',
+            headers: { ..._rvmHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                company_name: _libNotes.company,
+                content: content,
+                expected_version: _libNotes.version,
+            }),
+        });
+        if (r.status === 409) {
+            // Stale write — show the colleague's version side-by-side and bail.
+            const data = await r.json();
+            const cur = data.current || {};
+            _libNotes.version = cur.version || _libNotes.version;
+            _libNotes.exists = !!cur.exists;
+            _libNotes.lastEditedBy = cur.last_edited_by_username || '';
+            _libNotes.lastEditedAt = cur.last_edited_at || '';
+            _libNotes._loadedContent = cur.content || '';
+            _libNotesRenderMeta();
+            if (conflict) {
+                conflict.style.display = 'block';
+                const who = _libNotesEscape(cur.last_edited_by_username || 'someone');
+                const when = _libNotesEscape(_libNotesFmtDate(cur.last_edited_at));
+                conflict.innerHTML =
+                    `<strong>${who}</strong> saved a newer version (${when}). ` +
+                    `Their text is shown below — copy anything you want to keep, then click <em>Cancel</em> to reload, or <em>Save</em> again to overwrite their version.<br><br>` +
+                    `<details><summary>Show their version</summary><pre class="lib-notes-pre" style="margin-top:8px;background:#FCFAF5;border:1px solid #E5DFCF;padding:10px;border-radius:6px;">${_libNotesEscape(cur.content || '')}</pre></details>`;
+            }
+            // Bump expected_version so a deliberate re-save will go through.
+            _libNotes.version = cur.version || _libNotes.version;
+            if (status) status.style.display = 'none';
+            return;
+        }
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: r.statusText }));
+            throw new Error(err.detail || 'Save failed');
+        }
+        const data = await r.json();
+        _libNotes.version = data.version || 0;
+        _libNotes.exists = !!data.exists;
+        _libNotes.lastEditedBy = data.last_edited_by_username || '';
+        _libNotes.lastEditedAt = data.last_edited_at || '';
+        _libNotes._loadedContent = data.content || '';
+        _libNotesRenderMeta();
+        _libNotesRenderView(data.content || '');
+        libNotesCancelEdit();
+        if (status) { status.style.display = 'block'; status.textContent = 'Saved.'; status.className = 'lib-notes-status success';
+            setTimeout(() => { if (status) status.style.display = 'none'; }, 2000); }
+    } catch (e) {
+        if (status) { status.style.display = 'block'; status.textContent = 'Save failed: ' + e.message; status.className = 'lib-notes-status error'; }
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save'; }
+    }
+}
+
+async function libNotesShowHistory() {
+    if (!_libNotes.company) return;
+    const panel = document.getElementById('lib-notes-history-panel');
+    if (!panel) return;
+    if (panel.style.display === 'block') { panel.style.display = 'none'; return; }
+    panel.style.display = 'block';
+    panel.innerHTML = '<div class="lib-notes-history-empty">Loading history...</div>';
+    try {
+        const r = await fetch('/api/deal-pipeline/notes/history?company=' + encodeURIComponent(_libNotes.company), { headers: _rvmHeaders() });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const rows = data.history || [];
+        if (!rows.length) {
+            panel.innerHTML = '<div class="lib-notes-history-empty">No saved versions yet.</div>';
+            return;
+        }
+        panel.innerHTML = rows.map(h => `
+            <details class="lib-notes-history-item">
+                <summary>
+                    <strong>v${h.version}</strong> · ${_libNotesEscape(h.edited_by_username || 'unknown')} · ${_libNotesEscape(_libNotesFmtDate(h.edited_at))}
+                </summary>
+                <pre class="lib-notes-pre" style="margin-top:8px;">${_libNotesEscape(h.content || '')}</pre>
+            </details>
+        `).join('');
+    } catch (e) {
+        panel.innerHTML = `<div class="lib-notes-history-empty">Failed to load history: ${_libNotesEscape(e.message)}</div>`;
+    }
 }
 
 function _wizFolderEsc(e) {

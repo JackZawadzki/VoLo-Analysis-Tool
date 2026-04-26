@@ -306,6 +306,38 @@ CREATE TABLE IF NOT EXISTS user_activity (
 );
 CREATE INDEX IF NOT EXISTS idx_user_activity_user ON user_activity(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_user_activity_event ON user_activity(event, created_at DESC);
+
+-- Team-shared analyst notes per company. Keyed by a normalized company name
+-- (case-insensitive, whitespace-collapsed) so notes group with library
+-- artifacts ("Mitra Chem", "mitra chem", "  Mitra  Chem ") all share one doc.
+-- Updated optimistically: every save bumps `version`; the client sends the
+-- version it loaded, and a stale write returns 409 so users can refresh
+-- and merge instead of silently overwriting a colleague's work.
+CREATE TABLE IF NOT EXISTS deal_notes (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_key              TEXT    UNIQUE NOT NULL,
+    company_name             TEXT    NOT NULL,
+    content                  TEXT    NOT NULL DEFAULT '',
+    version                  INTEGER NOT NULL DEFAULT 0,
+    last_edited_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    last_edited_by_username  TEXT    NOT NULL DEFAULT '',
+    last_edited_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_at               TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_deal_notes_company ON deal_notes(company_key);
+
+-- Append-only revision log so a careless save never destroys earlier work.
+-- One row per save; the live `deal_notes` row holds the latest snapshot.
+CREATE TABLE IF NOT EXISTS deal_notes_history (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_key       TEXT    NOT NULL,
+    content           TEXT    NOT NULL,
+    version           INTEGER NOT NULL,
+    edited_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    edited_by_username TEXT   NOT NULL DEFAULT '',
+    edited_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_deal_notes_history_company ON deal_notes_history(company_key, version DESC);
 """
 
 _BUILTIN_RESOURCES = [

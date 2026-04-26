@@ -67,8 +67,67 @@ def _prune_old_memo_jobs() -> None:
             _MEMO_JOBS.pop(jid, None)
 
 # ── Upload directory ─────────────────────────────────────────────────────────
-UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "memo_uploads"
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+# Memo document uploads (PDFs, XLSXs, term sheets, screenshots, etc.) live
+# on the local filesystem; the DB stores only the path + metadata.
+#
+# Default lives inside the source tree at <repo>/data/memo_uploads/, fine for
+# local dev. On Replit Reserved-VM deployments the source tree is replaced
+# on every redeploy, which would wipe every previously-uploaded file. Set
+# VOLO_UPLOADS_DIR to a path *outside* the source tree (e.g.
+# /home/runner/.volo/uploads) on the deployment to make uploads persist.
+# The directory is created automatically and any legacy files are migrated
+# on first run with the new path.
+import shutil as _shutil
+
+_LEGACY_UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "memo_uploads"
+_env_uploads = os.environ.get("VOLO_UPLOADS_DIR", "").strip()
+if _env_uploads:
+    UPLOAD_DIR = Path(_env_uploads)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    # One-time migration: copy any existing legacy files over so historical
+    # data-room uploads remain accessible. Skip files that already exist
+    # at the destination so re-runs are safe.
+    if _LEGACY_UPLOAD_DIR.exists() and _LEGACY_UPLOAD_DIR != UPLOAD_DIR:
+        try:
+            n_copied = 0
+            for src in _LEGACY_UPLOAD_DIR.rglob("*"):
+                if not src.is_file():
+                    continue
+                rel = src.relative_to(_LEGACY_UPLOAD_DIR)
+                dst = UPLOAD_DIR / rel
+                if dst.exists():
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                _shutil.copy2(src, dst)
+                n_copied += 1
+            # Rewrite DB rows that still point at the legacy absolute path so
+            # /view, /delete, and memo generation all find the migrated files.
+            try:
+                from ..database import get_db as _get_db
+                _legacy_prefix = str(_LEGACY_UPLOAD_DIR)
+                _new_prefix = str(UPLOAD_DIR)
+                _db = _get_db()
+                try:
+                    cur = _db.execute(
+                        "UPDATE memo_documents "
+                        "SET file_path = ? || substr(file_path, ? + 1) "
+                        "WHERE file_path LIKE ? || '%'",
+                        (_new_prefix, len(_legacy_prefix), _legacy_prefix),
+                    )
+                    _db.commit()
+                    n_rows = cur.rowcount or 0
+                finally:
+                    _db.close()
+            except Exception as _db_err:
+                n_rows = -1
+                print(f"[VoLo Engine] WARN: memo_documents path rewrite failed: {_db_err}", flush=True)
+            print(f"[VoLo Engine] Memo uploads migrated: {n_copied} files copied, "
+                  f"{n_rows} DB rows rewritten -> {UPLOAD_DIR}", flush=True)
+        except OSError as e:
+            print(f"[VoLo Engine] WARN: memo upload migration failed: {e}", flush=True)
+else:
+    UPLOAD_DIR = _LEGACY_UPLOAD_DIR
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Maximum file size: 50 MB
 MAX_FILE_SIZE = 50 * 1024 * 1024

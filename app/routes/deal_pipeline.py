@@ -20,7 +20,7 @@ from typing import Optional, List
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..auth import CurrentUser, get_current_user
@@ -368,6 +368,244 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
     # Newest companies first
     library = sorted(groups.values(), key=lambda g: g["latest_at"] or "", reverse=True)
     return {"companies": library}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  TEAM-SHARED ANALYST NOTES
+#  ───────────────────────────────────────────────────────────────────────────
+#  One markdown-style notes doc per company (keyed by normalized name so it
+#  attaches to the library group, not a specific deal_report row). Any team
+#  member can read or edit. Optimistic concurrency via a `version` integer:
+#  the client sends the version it loaded; a stale write returns 409 so
+#  users can refresh and merge rather than overwrite a colleague's edits.
+#  Every save appends to deal_notes_history — nothing is ever lost.
+# ════════════════════════════════════════════════════════════════════════════
+
+_DEFAULT_NOTES_TEMPLATE = """## Initial Take
+_First read of the materials — gut reaction, where this fits the thesis._
+
+
+
+## Bull Case
+_What has to be true for this to be a 10×+ outcome?_
+-
+
+
+## Bear Case / Concerns
+_What could kill this? What are we skeptical of?_
+-
+
+
+## Key Diligence Questions
+_Open items we need answered before deciding._
+-
+
+
+## Reference Calls & Conversations
+_Who we've talked to, when, and what they said._
+-
+
+
+## Open Action Items
+_To-dos with owners._
+- [ ]
+
+
+## Decision Tracker
+_Current stance and how it's evolved._
+
+"""
+
+
+def _company_key(name: str) -> str:
+    """Normalize company names so 'Mitra Chem', 'mitra chem', 'Mitra  Chem '
+    all collapse to the same notes doc. Matches the library grouping logic."""
+    return " ".join((name or "").strip().split()).lower()
+
+
+class NotesGetResponse(BaseModel):
+    company_key: str
+    company_name: str
+    content: str
+    version: int
+    last_edited_by_username: str
+    last_edited_at: str
+    exists: bool
+
+
+class NotesSaveRequest(BaseModel):
+    company_name: str
+    content: str
+    expected_version: int  # version the client loaded; mismatch => 409
+
+
+@router.get("/notes")
+def get_notes(company: str, user: CurrentUser = Depends(get_current_user)):
+    """Fetch the analyst-notes doc for a company. Returns the default template
+    (with version=0, exists=False) if no doc has been created yet."""
+    key = _company_key(company)
+    if not key:
+        raise HTTPException(status_code=400, detail="company name is required")
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT company_name, content, version, last_edited_by_username, "
+            "last_edited_at FROM deal_notes WHERE company_key=?",
+            (key,),
+        ).fetchone()
+    finally:
+        db.close()
+
+    if row:
+        return {
+            "company_key": key,
+            "company_name": row["company_name"],
+            "content": row["content"] or "",
+            "version": int(row["version"] or 0),
+            "last_edited_by_username": row["last_edited_by_username"] or "",
+            "last_edited_at": row["last_edited_at"] or "",
+            "exists": True,
+        }
+    return {
+        "company_key": key,
+        "company_name": company.strip(),
+        "content": _DEFAULT_NOTES_TEMPLATE,
+        "version": 0,
+        "last_edited_by_username": "",
+        "last_edited_at": "",
+        "exists": False,
+    }
+
+
+# Cap notes at 200 KB so a runaway paste/script can't bloat the DB. Plenty
+# of room for a thoroughly-written multi-section diligence doc.
+_MAX_NOTES_BYTES = 200 * 1024
+
+
+@router.put("/notes")
+def save_notes(req: NotesSaveRequest, user: CurrentUser = Depends(get_current_user)):
+    """Save the notes doc with optimistic-concurrency check.
+
+    Returns 409 with the current state if the client's expected_version is
+    stale (i.e. someone else saved between this client's load and save).
+    """
+    key = _company_key(req.company_name)
+    if not key:
+        raise HTTPException(status_code=400, detail="company name is required")
+    if len(req.content.encode("utf-8")) > _MAX_NOTES_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Notes exceed {_MAX_NOTES_BYTES // 1024} KB. Trim and try again.",
+        )
+
+    db = get_db()
+    try:
+        # Wrap the read-then-write in a single transaction so two concurrent
+        # saves can't both think they're at the same version.
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT version FROM deal_notes WHERE company_key=?", (key,)
+        ).fetchone()
+        current_version = int(row["version"] or 0) if row else 0
+
+        if req.expected_version != current_version:
+            # Someone else got there first. Rollback and return current state.
+            db.execute("ROLLBACK")
+            cur = db.execute(
+                "SELECT company_name, content, version, last_edited_by_username, "
+                "last_edited_at FROM deal_notes WHERE company_key=?",
+                (key,),
+            ).fetchone()
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Someone else edited these notes since you opened them.",
+                    "current": {
+                        "company_key": key,
+                        "company_name": (cur["company_name"] if cur else req.company_name),
+                        "content": (cur["content"] if cur else "") or "",
+                        "version": int((cur["version"] if cur else 0) or 0),
+                        "last_edited_by_username": (cur["last_edited_by_username"] if cur else "") or "",
+                        "last_edited_at": (cur["last_edited_at"] if cur else "") or "",
+                        "exists": cur is not None,
+                    },
+                },
+            )
+
+        new_version = current_version + 1
+        if row:
+            db.execute(
+                "UPDATE deal_notes SET company_name=?, content=?, version=?, "
+                "last_edited_by=?, last_edited_by_username=?, "
+                "last_edited_at=datetime('now') WHERE company_key=?",
+                (req.company_name.strip(), req.content, new_version,
+                 user.id, user.username, key),
+            )
+        else:
+            db.execute(
+                "INSERT INTO deal_notes (company_key, company_name, content, version, "
+                "last_edited_by, last_edited_by_username) VALUES (?,?,?,?,?,?)",
+                (key, req.company_name.strip(), req.content, new_version,
+                 user.id, user.username),
+            )
+
+        # Append to history — every save preserved.
+        db.execute(
+            "INSERT INTO deal_notes_history (company_key, content, version, "
+            "edited_by, edited_by_username) VALUES (?,?,?,?,?)",
+            (key, req.content, new_version, user.id, user.username),
+        )
+        db.commit()
+
+        out = db.execute(
+            "SELECT company_name, content, version, last_edited_by_username, "
+            "last_edited_at FROM deal_notes WHERE company_key=?",
+            (key,),
+        ).fetchone()
+    finally:
+        db.close()
+
+    return {
+        "company_key": key,
+        "company_name": out["company_name"],
+        "content": out["content"] or "",
+        "version": int(out["version"] or 0),
+        "last_edited_by_username": out["last_edited_by_username"] or "",
+        "last_edited_at": out["last_edited_at"] or "",
+        "exists": True,
+    }
+
+
+@router.get("/notes/history")
+def get_notes_history(company: str, user: CurrentUser = Depends(get_current_user)):
+    """List past versions of a company's notes (newest first). Each entry
+    includes who saved it and when, so the team can see the audit trail."""
+    key = _company_key(company)
+    if not key:
+        raise HTTPException(status_code=400, detail="company name is required")
+    db = get_db()
+    try:
+        rows = db.execute(
+            "SELECT id, content, version, edited_by_username, edited_at "
+            "FROM deal_notes_history WHERE company_key=? "
+            "ORDER BY version DESC LIMIT 50",
+            (key,),
+        ).fetchall()
+    finally:
+        db.close()
+    return {
+        "company_key": key,
+        "history": [
+            {
+                "id": r["id"],
+                "version": int(r["version"] or 0),
+                "edited_by_username": r["edited_by_username"] or "",
+                "edited_at": r["edited_at"] or "",
+                "content": r["content"] or "",
+            }
+            for r in rows
+        ],
+    }
 
 
 class QAReviewRequest(BaseModel):
