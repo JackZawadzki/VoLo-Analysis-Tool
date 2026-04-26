@@ -503,6 +503,52 @@ def _company_key(name: str) -> str:
     return " ".join((name or "").strip().split()).lower()
 
 
+# Idempotent CREATE TABLE statements for the deal_notes schema. Used as a
+# self-healing guard at the top of every notes endpoint so the feature
+# works even if the bulk init_db() somehow skipped these tables on first
+# Postgres deploy (e.g. due to a single-statement rollback in a multi-
+# statement execute). Safe to run on every request — IF NOT EXISTS makes
+# both backends no-op when the tables already exist.
+_NOTES_SCHEMA_GUARD = """
+CREATE TABLE IF NOT EXISTS deal_notes (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_key              TEXT    UNIQUE NOT NULL,
+    company_name             TEXT    NOT NULL,
+    content                  TEXT    NOT NULL DEFAULT '',
+    version                  INTEGER NOT NULL DEFAULT 0,
+    last_edited_by           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    last_edited_by_username  TEXT    NOT NULL DEFAULT '',
+    last_edited_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    created_at               TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+""".strip()
+_NOTES_HISTORY_SCHEMA_GUARD = """
+CREATE TABLE IF NOT EXISTS deal_notes_history (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_key       TEXT    NOT NULL,
+    content           TEXT    NOT NULL,
+    version           INTEGER NOT NULL,
+    edited_by         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    edited_by_username TEXT   NOT NULL DEFAULT '',
+    edited_at         TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+""".strip()
+
+
+def _ensure_notes_tables(db) -> None:
+    """Belt-and-suspenders: create deal_notes / deal_notes_history if missing.
+    Cheap enough to run on every notes request — IF NOT EXISTS short-circuits
+    once the tables are in place. Never raises into the caller."""
+    for sql in (_NOTES_SCHEMA_GUARD, _NOTES_HISTORY_SCHEMA_GUARD):
+        try:
+            db.execute(sql)
+            db.commit()
+        except Exception as e:
+            try: db.rollback()
+            except Exception: pass
+            logger.warning(f"[notes] ensure-table failed (continuing): {type(e).__name__}: {e}")
+
+
 class NotesGetResponse(BaseModel):
     company_key: str
     company_name: str
@@ -528,11 +574,17 @@ def get_notes(company: str, user: CurrentUser = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="company name is required")
     db = get_db()
     try:
-        row = db.execute(
-            "SELECT company_name, content, version, last_edited_by_username, "
-            "last_edited_at FROM deal_notes WHERE company_key=?",
-            (key,),
-        ).fetchone()
+        _ensure_notes_tables(db)
+        try:
+            row = db.execute(
+                "SELECT company_name, content, version, last_edited_by_username, "
+                "last_edited_at FROM deal_notes WHERE company_key=?",
+                (key,),
+            ).fetchone()
+        except Exception as e:
+            import traceback
+            logger.error(f"[notes GET] query failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            raise HTTPException(500, f"Notes query failed: {type(e).__name__}: {e}")
     finally:
         db.close()
 
@@ -581,6 +633,7 @@ def save_notes(req: NotesSaveRequest, user: CurrentUser = Depends(get_current_us
 
     db = get_db()
     try:
+        _ensure_notes_tables(db)
         # Wrap the read-then-write in a single transaction so two concurrent
         # saves can't both think they're at the same version.
         db.execute("BEGIN IMMEDIATE")
@@ -666,12 +719,18 @@ def get_notes_history(company: str, user: CurrentUser = Depends(get_current_user
         raise HTTPException(status_code=400, detail="company name is required")
     db = get_db()
     try:
-        rows = db.execute(
-            "SELECT id, content, version, edited_by_username, edited_at "
-            "FROM deal_notes_history WHERE company_key=? "
-            "ORDER BY version DESC LIMIT 50",
-            (key,),
-        ).fetchall()
+        _ensure_notes_tables(db)
+        try:
+            rows = db.execute(
+                "SELECT id, content, version, edited_by_username, edited_at "
+                "FROM deal_notes_history WHERE company_key=? "
+                "ORDER BY version DESC LIMIT 50",
+                (key,),
+            ).fetchall()
+        except Exception as e:
+            import traceback
+            logger.error(f"[notes-history GET] query failed: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            raise HTTPException(500, f"Notes history query failed: {type(e).__name__}: {e}")
     finally:
         db.close()
     return {

@@ -368,8 +368,15 @@ async def ddr_download_report(report_id: int, user: CurrentUser = Depends(get_cu
     if not row:
         raise HTTPException(404, "Report not found")
 
+    # Postgres BYTEA columns come back as `memoryview` via psycopg2, while
+    # SQLite BLOB columns return `bytes`. Normalize to bytes so FastAPI's
+    # Response handles Content-Length correctly on both backends.
+    pdf_bytes = bytes(row["pdf_data"]) if row["pdf_data"] is not None else b""
+    if not pdf_bytes:
+        raise HTTPException(404, "PDF file is empty — re-generate the DDR.")
+
     return Response(
-        content=row["pdf_data"],
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{row["filename"]}"'},
     )
