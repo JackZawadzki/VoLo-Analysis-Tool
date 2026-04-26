@@ -257,8 +257,11 @@ def generate_deal_report(
     _sim_founder_rev_m = None
     if financial_model and isinstance(financial_model, dict):
         fm_fin = financial_model.get("financials", {})
-        fm_years = financial_model.get("fiscal_years", [])
+        if not isinstance(fm_fin, dict): fm_fin = {}
+        fm_years = financial_model.get("fiscal_years", []) or []
+        if not isinstance(fm_years, list): fm_years = []
         fm_rev = fm_fin.get("revenue", {})
+        if not isinstance(fm_rev, dict): fm_rev = {}
         if fm_rev and fm_years:
             # Only include fiscal years at or after entry_year
             future_years = [int(y) for y in fm_years if int(y) >= entry_year]
@@ -327,35 +330,56 @@ def generate_deal_report(
     fm_future_years = []  # calendar years used for projection display
     if financial_model and isinstance(financial_model, dict):
         fm_fin = financial_model.get("financials", {})
-        fm_years_all = financial_model.get("fiscal_years", [])
+        if not isinstance(fm_fin, dict): fm_fin = {}
+        fm_years_all = financial_model.get("fiscal_years", []) or []
+        if not isinstance(fm_years_all, list): fm_years_all = []
         # Separate historical years (< entry_year) from forward-looking years
-        fm_future_years = sorted([int(y) for y in fm_years_all if int(y) >= entry_year])
+        try:
+            fm_future_years = sorted([int(y) for y in fm_years_all if str(y).strip().lstrip('-').isdigit() and int(y) >= entry_year])
+        except (TypeError, ValueError):
+            fm_future_years = []
 
         if (not founder_revenue_projections or all(v == 0 for v in founder_revenue_projections)):
             fm_rev = fm_fin.get("revenue", {})
+            if not isinstance(fm_rev, dict): fm_rev = {}
             if fm_rev and fm_future_years:
                 founder_revenue_projections = [
                     (fm_rev.get(str(y), fm_rev.get(y, 0)) or 0) / 1_000_000
                     for y in fm_future_years
                 ]
         if (not founder_volume_projections or all(v == 0 for v in founder_volume_projections)):
+            # `units` is {metric_name: unit_label} — labels, not time series.
+            # The actual volume time series live in `financials`. Pick the
+            # first metric whose unit label is non-monetary (e.g. "people",
+            # "units", "MWh") and read its year-keyed series from financials.
             fm_units = financial_model.get("units", {})
-            if fm_units and fm_future_years:
-                first_unit_key = next(iter(fm_units), None)
-                if first_unit_key:
-                    series = fm_units[first_unit_key]
-                    founder_volume_projections = []
-                    for y in fm_future_years:
-                        entry_val = series.get(str(y), series.get(y, 0))
-                        val = entry_val.get("value", 0) if isinstance(entry_val, dict) else (entry_val or 0)
-                        founder_volume_projections.append(val)
+            if not isinstance(fm_units, dict): fm_units = {}
+            volume_metric = None
+            for metric_name, unit_label in fm_units.items():
+                if not isinstance(unit_label, str):
+                    continue
+                if unit_label.upper().startswith("USD"):
+                    continue  # monetary, not a volume
+                volume_metric = metric_name
+                break
+            series = fm_fin.get(volume_metric, {}) if volume_metric else {}
+            if isinstance(series, dict) and series and fm_future_years:
+                founder_volume_projections = []
+                for y in fm_future_years:
+                    entry_val = series.get(str(y), series.get(y, 0))
+                    val = entry_val.get("value", 0) if isinstance(entry_val, dict) else (entry_val or 0)
+                    founder_volume_projections.append(val)
 
         # Extract bear/bull scenario revenue for cone overlay (entry_year aligned)
         fm_scenarios = financial_model.get("scenarios")
         if fm_scenarios and isinstance(fm_scenarios, dict):
             for sc_name in ("bear", "bull"):
                 sc_data = fm_scenarios.get(sc_name, {})
-                sc_rev = sc_data.get("financials", {}).get("revenue", {})
+                if not isinstance(sc_data, dict): continue
+                sc_fin = sc_data.get("financials", {})
+                if not isinstance(sc_fin, dict): continue
+                sc_rev = sc_fin.get("revenue", {})
+                if not isinstance(sc_rev, dict): sc_rev = {}
                 if sc_rev and fm_future_years:
                     scenario_revenue[sc_name] = [
                         (sc_rev.get(str(y), sc_rev.get(y, 0)) or 0) / 1_000_000
@@ -662,7 +686,10 @@ def generate_deal_report(
 
     if financial_model and isinstance(financial_model, dict):
         fm_provenance = []
-        for metric_name, metric_data in financial_model.get("financials", {}).items():
+        _fm_fin = financial_model.get("financials", {})
+        if not isinstance(_fm_fin, dict):
+            _fm_fin = {}
+        for metric_name, metric_data in _fm_fin.items():
             if isinstance(metric_data, dict):
                 for yr, val in metric_data.items():
                     fm_provenance.append({
