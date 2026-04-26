@@ -186,7 +186,14 @@ def run_pipeline(req: DealPipelineRequest, user: CurrentUser = Depends(get_curre
             fund_vintage_year=req.fund_vintage_year,
         )
     except Exception as e:
-        raise HTTPException(500, f"Pipeline failed: {e}")
+        # Log full traceback to the deployment console so we can diagnose
+        # exactly which line failed; surface a one-line summary to the
+        # client (with the error type so 'str has no attribute get' style
+        # messages are at least classifiable from the UI).
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"[deal-pipeline /run] Pipeline failed: {type(e).__name__}: {e}\n{tb}")
+        raise HTTPException(500, f"Pipeline failed: {type(e).__name__}: {e}")
 
     cleaned = _numpy_clean(report)
     response = {k: v for k, v in cleaned.items() if not k.startswith("_raw")}
