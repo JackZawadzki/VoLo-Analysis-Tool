@@ -1444,11 +1444,24 @@ function _libNotesRenderView(content) {
     // Plain-text rendering with preserved whitespace. We deliberately do NOT
     // run a markdown converter here — the existing one is XSS-unsafe and the
     // working doc reads fine as preformatted plain text.
+    // Click anywhere in the view to jump straight into edit mode — fewer
+    // clicks for the common case of "I want to add a note."
+    view.style.cursor = 'text';
+    view.title = 'Click to edit';
+    view.onclick = () => libNotesStartEdit();
     if (!content || !content.trim()) {
-        view.innerHTML = '<div class="lib-notes-empty">No notes yet. Click <strong>Edit</strong> to start the team working doc.</div>';
+        view.innerHTML = '<div class="lib-notes-empty">No notes yet. Click anywhere here or hit <strong>Edit</strong> to start the team working doc.</div>';
     } else {
         view.innerHTML = `<pre class="lib-notes-pre">${_libNotesEscape(content)}</pre>`;
     }
+}
+
+function _libNotesAutosize(ta) {
+    if (!ta) return;
+    // Reset and grow to content; cap at viewport-ish so it doesn't run wild.
+    ta.style.height = 'auto';
+    const target = Math.min(ta.scrollHeight + 4, Math.max(window.innerHeight - 220, 360));
+    ta.style.height = target + 'px';
 }
 
 async function libNotesLoad(company) {
@@ -1496,7 +1509,21 @@ function libNotesStartEdit() {
     if (saveBtn) saveBtn.style.display = '';
     if (cancelBtn) cancelBtn.style.display = '';
     _libNotes.editing = true;
-    setTimeout(() => ta.focus(), 50);
+    // Bind grow-as-you-type + Cmd/Ctrl+Enter / Cmd/Ctrl+S to save. Idempotent
+    // — re-binding overwrites the previous handler so no listener leaks.
+    ta.oninput = () => _libNotesAutosize(ta);
+    ta.onkeydown = (e) => {
+        const meta = e.metaKey || e.ctrlKey;
+        if (meta && (e.key === 'Enter' || e.key === 's' || e.key === 'S')) {
+            e.preventDefault();
+            libNotesSave();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            libNotesCancelEdit();
+        }
+    };
+    _libNotesAutosize(ta);
+    setTimeout(() => { ta.focus(); _libNotesAutosize(ta); }, 50);
 }
 
 function libNotesCancelEdit() {

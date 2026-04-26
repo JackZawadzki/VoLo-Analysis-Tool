@@ -557,9 +557,10 @@ def get_notes(company: str, user: CurrentUser = Depends(get_current_user)):
     }
 
 
-# Cap notes at 200 KB so a runaway paste/script can't bloat the DB. Plenty
-# of room for a thoroughly-written multi-section diligence doc.
-_MAX_NOTES_BYTES = 200 * 1024
+# Cap notes at 1 MB. Analysts paste in long quotes, transcripts, and full
+# email threads — a 200KB cap was too tight. 1 MB is still safely bounded
+# (well under any DB row limit) but practically unlimited for a working doc.
+_MAX_NOTES_BYTES = 1 * 1024 * 1024
 
 
 @router.put("/notes")

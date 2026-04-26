@@ -540,14 +540,58 @@ def get_db():
     return conn
 
 
+def _split_sql_statements(script: str) -> list:
+    """Naive split of a multi-statement SQL script on top-level semicolons.
+
+    Skips semicolons inside SQL string literals. Good enough for the
+    DDL-only _SCHEMA_SQL we feed it (no string literals contain `;`).
+    """
+    out, buf, in_str = [], [], False
+    for ch in script:
+        if ch == "'":
+            in_str = not in_str
+        if ch == ";" and not in_str:
+            stmt = "".join(buf).strip()
+            if stmt:
+                out.append(stmt)
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
 def init_db():
-    """Create all tables if they don't exist (works on both backends)."""
+    """Create all tables if they don't exist (works on both backends).
+
+    On Postgres we run statements one-at-a-time so a single failure (e.g.
+    a constraint that doesn't apply cleanly to existing data, or a type
+    mismatch in a FK reference) doesn't roll back the entire schema and
+    leave later tables (like deal_notes) un-created.
+    """
     if USE_POSTGRES:
         conn_raw = psycopg2.connect(DATABASE_URL)
         try:
-            cur = conn_raw.cursor()
-            cur.execute(_translate_sql_to_pg(_SCHEMA_SQL))
-            conn_raw.commit()
+            statements = _split_sql_statements(_translate_sql_to_pg(_SCHEMA_SQL))
+            n_ok, n_skip = 0, 0
+            for stmt in statements:
+                cur = conn_raw.cursor()
+                try:
+                    cur.execute(stmt)
+                    conn_raw.commit()
+                    n_ok += 1
+                except Exception as e:
+                    conn_raw.rollback()
+                    n_skip += 1
+                    # Log the first 90 chars of the failing statement so
+                    # we can see in the deployment logs which CREATE failed.
+                    head = stmt.replace("\n", " ").strip()[:90]
+                    print(f"[VoLo Engine] schema stmt skipped ({type(e).__name__}: {e}): {head}...", flush=True)
+                finally:
+                    cur.close()
+            print(f"[VoLo Engine] init_db (Postgres): {n_ok} statements ran, {n_skip} skipped", flush=True)
         finally:
             conn_raw.close()
         return

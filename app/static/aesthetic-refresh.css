@@ -960,11 +960,16 @@ a:focus-visible,
     background: var(--vf-stone-bg);
     border: 1px solid var(--vf-hairline);
     border-radius: var(--radius-md);
-    padding: 14px 16px;
-    min-height: 80px;
-    font-size: 0.86rem;
-    line-height: 1.55;
+    padding: 16px 18px;
+    min-height: 120px;
+    font-size: 0.92rem;
+    line-height: 1.6;
     color: var(--vf-slate);
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.lib-notes-view:hover {
+    background: #F2EEE3;
+    border-color: var(--vf-border);
 }
 .lib-notes-empty {
     color: var(--vf-stone-light);
@@ -974,7 +979,7 @@ a:focus-visible,
 }
 .lib-notes-pre {
     font-family: var(--font-sans);
-    font-size: 0.86rem;
+    font-size: 0.92rem;
     line-height: 1.6;
     color: var(--vf-slate);
     margin: 0;
@@ -983,16 +988,18 @@ a:focus-visible,
 }
 .lib-notes-edit {
     width: 100%;
-    min-height: 320px;
+    min-height: 480px;          /* roomy by default */
+    max-height: 75vh;            /* but never bigger than the viewport */
     background: var(--vf-paper);
     border: 1px solid var(--vf-border);
     border-radius: var(--radius-md);
-    padding: 14px 16px;
+    padding: 16px 18px;
     font-family: var(--font-sans);
-    font-size: 0.86rem;
-    line-height: 1.6;
+    font-size: 0.93rem;
+    line-height: 1.65;
     color: var(--vf-ink);
     resize: vertical;
+    overflow-y: auto;
     transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .lib-notes-edit:focus {
