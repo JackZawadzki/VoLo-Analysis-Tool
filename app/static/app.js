@@ -1201,14 +1201,21 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-grouptitle">Due Diligence Reports</div>');
         html.push('<div class="lib-art-list">');
         g.ddrs.forEach(d => {
-            const sizeMB = ((d.file_size_bytes || 0) / (1024 * 1024)).toFixed(1);
+            // Show KB for files under 1 MB and MB otherwise — "0.0 MB" for a
+            // 50 KB PDF was misleading.
+            const _bytes = d.file_size_bytes || 0;
+            const sizeStr = (_bytes <= 0)
+                ? '— size unknown'
+                : (_bytes < 1024 * 1024
+                    ? (_bytes / 1024).toFixed(0) + ' KB'
+                    : (_bytes / (1024 * 1024)).toFixed(1) + ' MB');
             const fnAttr = JSON.stringify(d.filename || 'DDR_Report.pdf').replace(/"/g, '&quot;');
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-ddr" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&#128209;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">
                         <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${_libFmtDate(d.generated_at)} · ${sizeMB} MB</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${_libFmtDate(d.generated_at)} · ${sizeStr}</div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDdr(${d.id});" title="Delete this DDR" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&darr;</span>
