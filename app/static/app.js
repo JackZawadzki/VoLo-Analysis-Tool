@@ -1182,13 +1182,14 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-list">');
         g.deal_reports.forEach(d => {
             html.push(`
-                <div class="lib-art-item" onclick="wizOpenFolderDeal(${d.id})">
-                    <div class="lib-art-icon lib-art-deal">&#9974;</div>
-                    <div class="lib-art-info">
+                <div class="lib-art-item">
+                    <div class="lib-art-icon lib-art-deal" onclick="wizOpenFolderDeal(${d.id})">&#9974;</div>
+                    <div class="lib-art-info" onclick="wizOpenFolderDeal(${d.id})">
                         <div class="lib-art-title">Deal Report${d.archetype ? ` · ${_libEscape(d.archetype)}` : ''}${d.entry_stage ? ` · ${_libEscape(d.entry_stage)}` : ''}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong> · ${_libFmtDate(d.created_at)}</div>
                     </div>
-                    <span class="lib-art-arrow">&rsaquo;</span>
+                    <button class="lib-art-srcbtn" onclick="event.stopPropagation(); libShowSourceData(${d.id});" title="View raw inputs the model used">Source data</button>
+                    <span class="lib-art-arrow" onclick="wizOpenFolderDeal(${d.id})">&rsaquo;</span>
                 </div>`);
         });
         html.push('</div></div>');
@@ -1253,6 +1254,158 @@ function wizCloseFolder() {
     // Reset notes state so reopening a different folder starts clean.
     _libNotes = { company: null, version: 0, exists: false, editing: false, lastEditedBy: '', lastEditedAt: '' };
 }
+
+// ─── Source Data viewer (per deal report) ───────────────────────────────────
+// Surfaces the raw inputs + extraction stored alongside a deal report so any
+// team member can audit "what did the model actually consume?" without
+// loading the whole report.
+
+function _libSrcEscape(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function _libSrcFmtVal(v) {
+    if (v == null) return '<span class="lib-src-null">—</span>';
+    if (typeof v === 'number') {
+        // Render numbers with reasonable precision; preserve integers as-is.
+        if (Number.isInteger(v)) return String(v);
+        return v.toFixed(Math.abs(v) < 1 ? 4 : 2);
+    }
+    if (typeof v === 'boolean') return v ? 'true' : 'false';
+    if (Array.isArray(v)) {
+        if (!v.length) return '<span class="lib-src-null">—</span>';
+        // Array of strings/numbers: comma-separated.
+        if (v.every(x => x === null || typeof x !== 'object')) {
+            return _libSrcEscape(v.map(x => x == null ? '—' : String(x)).join(', '));
+        }
+        // Array of objects: render each as a chip with a sensible label.
+        // Common schemas: {name, role/title}, {name, ...}, {label, ...}.
+        const items = v.map(o => {
+            if (o == null) return '<li class="lib-src-listitem">—</li>';
+            if (typeof o !== 'object') return `<li class="lib-src-listitem">${_libSrcEscape(o)}</li>`;
+            const primary = o.name || o.label || o.title || o.text;
+            const secondary = o.role || o.title || o.position;
+            if (primary && secondary && primary !== secondary) {
+                return `<li class="lib-src-listitem"><strong>${_libSrcEscape(primary)}</strong> · ${_libSrcEscape(secondary)}</li>`;
+            }
+            if (primary) return `<li class="lib-src-listitem">${_libSrcEscape(primary)}</li>`;
+            // Fallback for un-named objects: tiny JSON blob.
+            return `<li class="lib-src-listitem"><code class="lib-src-inline-json">${_libSrcEscape(JSON.stringify(o))}</code></li>`;
+        }).join('');
+        return `<ul class="lib-src-list">${items}</ul>`;
+    }
+    if (typeof v === 'object') return `<pre class="lib-src-pre">${_libSrcEscape(JSON.stringify(v, null, 2))}</pre>`;
+    return _libSrcEscape(v);
+}
+
+function _libSrcKvTable(obj, emptyMsg) {
+    if (!obj || !Object.keys(obj).length) {
+        return `<div class="lib-src-empty">${_libSrcEscape(emptyMsg)}</div>`;
+    }
+    const rows = Object.entries(obj)
+        .filter(([_, v]) => v !== null && v !== undefined && v !== '' &&
+                            !(Array.isArray(v) && v.length === 0))
+        .map(([k, v]) => `
+            <tr>
+                <th class="lib-src-key">${_libSrcEscape(k)}</th>
+                <td class="lib-src-val">${_libSrcFmtVal(v)}</td>
+            </tr>`).join('');
+    if (!rows) return `<div class="lib-src-empty">${_libSrcEscape(emptyMsg)}</div>`;
+    return `<table class="lib-src-table">${rows}</table>`;
+}
+
+function _libSrcFinancialsTable(financials, units, fiscalYears, scaleInfo) {
+    const metrics = financials ? Object.keys(financials) : [];
+    if (!metrics.length) {
+        return '<div class="lib-src-empty">No financial model extracted for this deal.</div>';
+    }
+    // Collect the union of years across all metrics, then sort.
+    const yearSet = new Set();
+    metrics.forEach(m => {
+        const vals = financials[m] || {};
+        Object.keys(vals).forEach(y => yearSet.add(y));
+    });
+    let years = Array.from(yearSet).sort((a, b) => Number(a) - Number(b));
+    if (fiscalYears && fiscalYears.length && years.length === 0) years = fiscalYears.map(String);
+    const fmtCell = v => {
+        if (v == null) return '<span class="lib-src-null">—</span>';
+        if (typeof v === 'number') return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        return _libSrcEscape(v);
+    };
+    const head = `<tr><th class="lib-src-key">Metric</th><th class="lib-src-key">Unit</th>${years.map(y => `<th class="lib-src-yearcol">${_libSrcEscape(y)}</th>`).join('')}</tr>`;
+    const body = metrics.map(m => {
+        const vals = financials[m] || {};
+        const u = (units && units[m]) || '';
+        const cells = years.map(y => `<td class="lib-src-numcell">${fmtCell(vals[y])}</td>`).join('');
+        return `<tr><th class="lib-src-key">${_libSrcEscape(m)}</th><td class="lib-src-unit">${_libSrcEscape(u)}</td>${cells}</tr>`;
+    }).join('');
+    const scale = scaleInfo ? `<div class="lib-src-scaleinfo">Scale: ${_libSrcEscape(scaleInfo)}</div>` : '';
+    return scale + `<div class="lib-src-tablewrap"><table class="lib-src-table lib-src-fin-table">${head}${body}</table></div>`;
+}
+
+async function libShowSourceData(reportId) {
+    const modal  = document.getElementById('lib-source-data-modal');
+    const title  = document.getElementById('lib-srcdata-title');
+    const meta   = document.getElementById('lib-srcdata-meta');
+    const body   = document.getElementById('lib-srcdata-body');
+    if (!modal || !title || !body) return;
+    title.textContent = 'Loading...';
+    meta.textContent = '';
+    body.innerHTML = '<div class="lib-src-empty">Loading source data...</div>';
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', _libSrcEsc);
+
+    try {
+        const r = await fetch(`/api/deal-pipeline/report/${reportId}/source-data`, { headers: _rvmHeaders() });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: r.statusText }));
+            throw new Error(err.detail || 'HTTP ' + r.status);
+        }
+        const d = await r.json();
+        title.textContent = d.company_name || 'Deal Report';
+        meta.innerHTML = `Generated by <strong>${_libSrcEscape(d.owner_username || 'unknown')}</strong> · ${_libSrcEscape(_libNotesFmtDate(d.created_at))}`;
+
+        const fm = d.financial_model || {};
+        const sections = [];
+        sections.push(`
+            <div class="lib-src-section">
+                <div class="lib-src-section-title">Deal Terms</div>
+                ${_libSrcKvTable(d.deal_terms, 'No deal terms recorded.')}
+            </div>`);
+        sections.push(`
+            <div class="lib-src-section">
+                <div class="lib-src-section-title">Simulation Parameters</div>
+                ${_libSrcKvTable(d.simulation_params, 'No simulation parameters recorded.')}
+            </div>`);
+        sections.push(`
+            <div class="lib-src-section">
+                <div class="lib-src-section-title">Financial Model${fm.file_name ? ` <span class="lib-src-fileinfo">· ${_libSrcEscape(fm.file_name)}</span>` : ''}</div>
+                ${_libSrcFinancialsTable(fm.financials, fm.units, fm.fiscal_years, fm.scale_info)}
+            </div>`);
+        sections.push(`
+            <div class="lib-src-section">
+                <div class="lib-src-section-title">Pitch Deck Extraction</div>
+                ${_libSrcKvTable(d.deck_extraction, 'No pitch deck extraction recorded.')}
+            </div>`);
+        body.innerHTML = sections.join('');
+    } catch (e) {
+        title.textContent = 'Source Data';
+        meta.textContent = '';
+        body.innerHTML = `<div class="lib-src-empty">Failed to load: ${_libSrcEscape(e.message)}</div>`;
+    }
+}
+
+function libCloseSourceData() {
+    const modal = document.getElementById('lib-source-data-modal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = 'hidden'; // folder modal still open underneath
+    document.removeEventListener('keydown', _libSrcEsc);
+}
+
+function _libSrcEsc(e) { if (e.key === 'Escape') libCloseSourceData(); }
 
 // ─── Team-shared analyst notes (per company) ────────────────────────────────
 // Loaded by wizOpenFolder(); edited inline in the folder modal. Light

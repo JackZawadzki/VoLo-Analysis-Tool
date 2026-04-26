@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=5">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=7">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -573,6 +573,20 @@
                             <textarea id="lib-notes-edit" class="lib-notes-edit" style="display:none;" spellcheck="true" placeholder="Write your notes here. Markdown is preserved as-is."></textarea>
                             <div id="lib-notes-history-panel" class="lib-notes-history-panel" style="display:none;"></div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Source Data modal — shows the raw inputs that fed a deal report. -->
+                <div id="lib-source-data-modal" class="lib-modal" style="display:none;">
+                    <div class="lib-modal-backdrop" onclick="libCloseSourceData()"></div>
+                    <div class="lib-modal-card">
+                        <button class="lib-modal-close" onclick="libCloseSourceData()" aria-label="Close">&times;</button>
+                        <div class="lib-modal-header">
+                            <div class="lib-modal-eyebrow">Source Data</div>
+                            <h2 id="lib-srcdata-title" class="lib-modal-company"></h2>
+                            <div id="lib-srcdata-meta" class="lib-modal-meta"></div>
+                        </div>
+                        <div id="lib-srcdata-body" class="lib-modal-body"></div>
                     </div>
                 </div>
             </div>

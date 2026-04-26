@@ -270,6 +270,79 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
         db.close()
 
 
+@router.get("/report/{rid}/source-data")
+def get_report_source_data(rid: int, user: CurrentUser = Depends(get_current_user)):
+    """Return the raw inputs that produced a deal report — deal terms,
+    simulation parameters, pitch-deck extraction, and the extracted financial
+    model. Used by the library folder modal so any team member can audit
+    what the simulation actually consumed."""
+    db = get_db()
+    try:
+        row = db.execute(
+            "SELECT r.*, u.username AS owner_username "
+            "FROM deal_reports r LEFT JOIN users u ON u.id = r.owner_id "
+            "WHERE r.id=?",
+            (rid,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Report not found")
+    finally:
+        db.close()
+
+    def _safe_json(s, fallback):
+        try:
+            return json.loads(s) if s else fallback
+        except (json.JSONDecodeError, TypeError):
+            return fallback
+
+    inputs = _safe_json(row["inputs_json"], {}) or {}
+    extraction = _safe_json(row["extraction_json"], {}) or {}
+
+    # Carve the inputs into "deal terms" (the core deal shape) and "simulation
+    # params" (the Monte Carlo knobs) so the UI can render them as two
+    # readable groups instead of one giant blob.
+    DEAL_TERM_KEYS = {
+        "archetype", "entry_stage", "company_name",
+        "tam_millions", "trl", "check_size_millions", "pre_money_millions",
+        "ownership_pct", "sector_profile",
+    }
+    deal_terms = {k: v for k, v in inputs.items() if k in DEAL_TERM_KEYS and v not in (None, "")}
+    simulation_params = {k: v for k, v in inputs.items() if k not in DEAL_TERM_KEYS and v not in (None, "")}
+
+    # Extract financial-model-specific fields from extraction_json. The
+    # banker/extractor stores them under various keys depending on path
+    # (banker-agent vs legacy); pull what's there without assuming presence.
+    financial_model = {
+        "financials":     extraction.get("financials") or {},
+        "units":          extraction.get("units") or {},
+        "fiscal_years":   extraction.get("fiscal_years") or [],
+        "scale_info":     extraction.get("scale_info") or "",
+        "model_summary":  extraction.get("model_summary") or {},
+        "file_name":      extraction.get("file_name") or "",
+    }
+
+    # Everything else in extraction_json is treated as deck-level extraction
+    # (company description, market claims, team, etc.). Strip out the
+    # financial-model keys and a couple of internal diagnostics so the UI
+    # doesn't show noise.
+    _STRIP = {"financials", "units", "fiscal_years", "scale_info", "model_summary",
+              "file_name", "_diagnostics", "scenarios", "detected_scenarios",
+              "primary_scenario", "records_count", "failures_count", "status"}
+    deck_extraction = {k: v for k, v in extraction.items()
+                       if k not in _STRIP and v not in (None, "", [], {})}
+
+    return {
+        "id": row["id"],
+        "company_name": row["company_name"],
+        "owner_username": row["owner_username"],
+        "created_at": row["created_at"],
+        "deal_terms": deal_terms,
+        "simulation_params": simulation_params,
+        "deck_extraction": deck_extraction,
+        "financial_model": financial_model,
+    }
+
+
 @router.get("/library")
 def list_library(user: CurrentUser = Depends(get_current_user)):
     """Shared team library — every deal report, DDR, and IC memo across all
