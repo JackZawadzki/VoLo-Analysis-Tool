@@ -1243,3 +1243,14 @@ a:focus-visible,
     border-radius: 4px;
     color: var(--vf-slate);
 }
+
+/* Library search input — restore the left padding that was killed by the
+   generic input[type="text"] override in section 6, so the magnifying-glass
+   icon doesn't sit on top of the placeholder text. */
+.lib-search-input {
+    padding: 9px 12px 9px 38px !important;
+}
+.lib-search-icon {
+    opacity: 0.5;
+    color: var(--vf-stone);
+}
