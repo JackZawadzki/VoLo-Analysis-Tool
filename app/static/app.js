@@ -7023,6 +7023,58 @@ function memoSwitchOutputTab(tab) {
     if (tab === 'history') memoLoadHistory();
 }
 
+// ── Memo page mode switching (setup / focus / history) ──────────────────────
+// The IC Memo tab has three modes driven by the data-memo-mode attribute on
+// #tab-memo. CSS handles all the layout swapping; this function just sets the
+// attribute, syncs the modeswitch tab active states, mirrors the company
+// title into the focus header, and triggers history load on demand.
+function memoSetMode(mode) {
+    const tab = document.getElementById('tab-memo');
+    if (!tab) return;
+    const allowed = new Set(['setup', 'focus', 'history']);
+    if (!allowed.has(mode)) mode = 'setup';
+    tab.dataset.memoMode = mode;
+
+    document.querySelectorAll('.memo-modeswitch-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.modeTarget === mode);
+    });
+
+    if (mode === 'focus') {
+        // Mirror the company name into the focus bar header.
+        const titleEl = document.getElementById('memo-focus-title');
+        if (titleEl) {
+            const meta = document.getElementById('memo-output-meta');
+            const fromMeta = (meta?.textContent || '').split('·')[0].trim();
+            titleEl.textContent = (window._memo?.currentMemoCompany) || fromMeta || 'Investment Memo';
+        }
+        // Always hide the empty state in focus mode — if the user got here,
+        // there's a memo loaded (or about to load).
+        const empty = document.getElementById('memo-output-empty');
+        if (empty) empty.style.display = 'none';
+        // Clone the action buttons (Export, Lock, etc.) into the focus header
+        // so they sit next to the Back button instead of below the title.
+        const src = document.getElementById('memo-output-actions');
+        const dst = document.getElementById('memo-focus-actions');
+        if (src && dst) {
+            dst.innerHTML = '';
+            // Show the source actions inline-ish for the focus bar — clone
+            // each button so handlers stay wired up via the `onclick` attribute.
+            Array.from(src.children).forEach(child => {
+                const clone = child.cloneNode(true);
+                // Keep span wrappers but flatten styling
+                if (clone.tagName === 'SPAN') clone.style.borderLeft = '1px solid var(--vf-hairline)';
+                dst.appendChild(clone);
+            });
+        }
+        // Scroll to top of the memo so the focus bar is visible.
+        window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+
+    if (mode === 'history') {
+        if (typeof memoLoadHistory === 'function') memoLoadHistory();
+    }
+}
+
 // ── Load reports into dropdown ──────────────────────────────────────────────
 async function memoLoadReports() {
     try {
@@ -7441,6 +7493,7 @@ async function memoGenerate() {
 
         _memo.currentMemoId = data.id;
         _memo.currentMemoMd = data.memo_markdown;
+        _memo.currentMemoCompany = data.company_name || _memo.currentMemoCompany || '';
 
         // Render the memo
         const rendered = document.getElementById('memo-rendered');
@@ -7491,6 +7544,10 @@ async function memoGenerate() {
                 <div class="memo-progress-text">Memo generated — ${pl.documents_processed || 0} docs processed, ${pl.sections_written || 0} sections written, ${pl.total_llm_calls || 0} LLM calls in ${data.generation_time_s}s</div>`;
             statusEl.className = 'memo-generate-status success';
         }
+
+        // Switch to focus mode so the memo takes the full screen and the
+        // setup form gets out of the way. User can return via "Back to Setup".
+        if (typeof memoSetMode === 'function') memoSetMode('focus');
 
     } catch (e) {
         console.error('Memo generation error:', e);
@@ -8112,6 +8169,7 @@ async function memoLoadHistoryItem(id) {
 
         _memo.currentMemoId = data.id;
         _memo.currentMemoMd = data.memo_markdown;
+        _memo.currentMemoCompany = data.company_name || _memo.currentMemoCompany || '';
         _memo.sections = data.sections || {};
         _memo.reportData = data.report_data || null;
 
@@ -8137,6 +8195,9 @@ async function memoLoadHistoryItem(id) {
 
         // Cover page, legal disclaimer, and TOC
         _memoInjectFrontMatter(rendered, data);
+
+        // Click on a history item -> open the memo full-screen.
+        if (typeof memoSetMode === 'function') memoSetMode('focus');
     } catch (e) {
         console.error('memoLoadHistoryItem error:', e);
         if (rendered) rendered.innerHTML = `<p style="padding:24px;color:#dc2626">Unexpected error: ${e.message}</p>`;

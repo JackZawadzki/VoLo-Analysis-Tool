@@ -1379,3 +1379,214 @@ a:focus-visible,
     opacity: 0.5;
     color: var(--vf-stone);
 }
+
+
+/* ==========================================================
+   25. IC MEMO PAGE — full-screen redesign with mode switching
+   ─────────────────────────────────────────────────────────
+   Three modes driven by [data-memo-mode] on #tab-memo:
+     "setup"   — single centered column with the form (default landing)
+     "focus"   — input panel hidden, memo takes full width with sticky
+                 action bar at top; "← Back to Setup" returns
+     "history" — input panel hidden, history list takes full width
+   ========================================================== */
+
+/* Mode switcher tabs (top of page, visible in setup + history) */
+.memo-tab .memo-modeswitch {
+    display: flex; gap: 4px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--vf-hairline);
+    padding: 4px 4px 0;
+}
+.memo-tab .memo-modeswitch-btn {
+    padding: 9px 18px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font: 600 0.84rem var(--font-sans);
+    color: var(--vf-stone);
+    cursor: pointer;
+    letter-spacing: 0.005em;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.memo-tab .memo-modeswitch-btn:hover { color: var(--vf-ink); }
+.memo-tab .memo-modeswitch-btn.active {
+    color: var(--vf-forest-deep);
+    border-bottom-color: var(--vf-forest);
+}
+
+/* Focus header bar — hidden by default, shown when viewing a memo */
+.memo-tab .memo-focus-bar {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 18px;
+    padding: 12px 16px;
+    background: var(--vf-paper);
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    position: sticky; top: 8px; z-index: 30;
+    box-shadow: var(--shadow-sm);
+}
+.memo-tab .memo-back-btn { white-space: nowrap; }
+.memo-tab .memo-focus-title {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--vf-ink);
+    letter-spacing: -0.005em;
+}
+.memo-tab .memo-focus-spacer { flex: 1; }
+.memo-tab .memo-focus-actions {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    align-items: center;
+}
+
+/* ── Mode-driven visibility ───────────────────────────── */
+
+/* Default (setup mode): show input panel centered, hide output panel */
+.memo-tab .memo-layout {
+    display: block !important;          /* override the default 2-col grid */
+    grid-template-columns: unset;
+    min-height: 0;
+}
+.memo-tab[data-memo-mode="setup"] .memo-output-panel { display: none; }
+.memo-tab[data-memo-mode="setup"] .memo-input-panel {
+    max-width: 720px;
+    margin: 0 auto;
+    gap: 16px;
+}
+
+/* Focus mode: hide modeswitch + input panel; show memo full-width */
+.memo-tab[data-memo-mode="focus"] .memo-modeswitch { display: none; }
+.memo-tab[data-memo-mode="focus"] .memo-focus-bar { display: flex; }
+.memo-tab[data-memo-mode="focus"] .memo-input-panel { display: none; }
+.memo-tab[data-memo-mode="focus"] .memo-output-panel {
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    background: var(--vf-paper);
+    min-height: calc(100vh - 220px);
+}
+/* In focus mode, only show preview content; history hidden */
+.memo-tab[data-memo-mode="focus"] #memo-output-history { display: none !important; }
+.memo-tab[data-memo-mode="focus"] #memo-output-preview { display: flex !important; }
+/* Hide the legacy in-panel tabs and in-panel actions in focus mode —
+   we use the new top focus-bar instead. */
+.memo-tab[data-memo-mode="focus"] .memo-output-tabs { display: none; }
+.memo-tab[data-memo-mode="focus"] #memo-output-actions { display: none !important; }
+/* Memo body widens nicely; readable max width in focus mode */
+.memo-tab[data-memo-mode="focus"] .memo-rendered {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 36px 56px 64px;
+}
+
+/* History mode: hide modeswitch is wrong — history is selected via modeswitch
+   so keep it visible. Hide input panel; show only history content. */
+.memo-tab[data-memo-mode="history"] .memo-input-panel { display: none; }
+.memo-tab[data-memo-mode="history"] .memo-output-panel {
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    background: var(--vf-paper);
+}
+.memo-tab[data-memo-mode="history"] .memo-output-tabs { display: none; }   /* legacy tabs not needed */
+.memo-tab[data-memo-mode="history"] #memo-output-preview { display: none !important; }
+.memo-tab[data-memo-mode="history"] #memo-output-history { display: flex !important; }
+.memo-tab[data-memo-mode="history"] .memo-history-list { padding: 18px 22px; }
+
+/* ── Setup mode polish: more breathing room ────────────── */
+
+.memo-tab[data-memo-mode="setup"] .memo-section-card {
+    border: 1px solid var(--vf-hairline);
+    border-radius: var(--radius-md);
+    background: var(--vf-paper);
+    box-shadow: none;
+}
+.memo-tab[data-memo-mode="setup"] .memo-section-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid transparent;
+}
+.memo-tab[data-memo-mode="setup"] .memo-section-card.expanded .memo-section-header {
+    border-bottom-color: var(--vf-hairline-soft);
+}
+.memo-tab[data-memo-mode="setup"] .memo-section-header h3 {
+    font-size: 0.96rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+    letter-spacing: -0.005em;
+    margin: 0;
+}
+.memo-tab[data-memo-mode="setup"] .memo-section-body {
+    padding: 18px 20px 20px;
+}
+.memo-tab[data-memo-mode="setup"] .memo-helper-text {
+    font-size: 0.84rem;
+    color: var(--vf-stone);
+    line-height: 1.55;
+    margin: 0 0 12px;
+}
+.memo-tab[data-memo-mode="setup"] .memo-generate-btn {
+    width: 100%;
+    padding: 14px 22px !important;
+    font-size: 0.96rem !important;
+    font-weight: 600 !important;
+    margin-top: 6px;
+}
+.memo-tab[data-memo-mode="setup"] .memo-generate-status {
+    margin-top: 14px;
+}
+
+/* Setup empty-state: subtle reminder shown if no report selected etc.
+   (the form's existing inline helper text already covers this) */
+
+/* ── Memo focus body styling ────────────────────────────── */
+
+.memo-tab[data-memo-mode="focus"] .memo-rendered h1 {
+    font-size: 1.6rem;
+    margin-top: 0;
+    margin-bottom: 14px;
+    color: var(--vf-ink);
+    letter-spacing: -0.012em;
+}
+.memo-tab[data-memo-mode="focus"] .memo-rendered h2 {
+    font-size: 1.05rem;
+    color: var(--vf-forest-deep);
+    margin-top: 28px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--vf-hairline);
+}
+
+/* ── History view polish ───────────────────────────────── */
+
+.memo-tab[data-memo-mode="history"] .memo-history-item {
+    border: 1px solid var(--vf-hairline);
+    background: var(--vf-paper);
+    border-radius: var(--radius-md);
+    padding: 14px 18px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    display: flex; align-items: center; gap: 14px;
+}
+.memo-tab[data-memo-mode="history"] .memo-history-item:hover {
+    border-color: var(--vf-forest-soft);
+    background: var(--vf-mint-bg-soft);
+    box-shadow: var(--shadow-sm);
+}
+.memo-tab[data-memo-mode="history"] .memo-history-name {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+    flex-shrink: 0;
+}
+.memo-tab[data-memo-mode="history"] .memo-history-meta {
+    font-size: 0.78rem;
+    color: var(--vf-stone);
+    flex: 1;
+}
+
+/* Mobile: keep the same single-column flow; modeswitch tabs stack OK */
+@media (max-width: 720px) {
+    .memo-tab[data-memo-mode="focus"] .memo-rendered { padding: 24px 18px 48px; }
+    .memo-tab .memo-focus-bar { flex-wrap: wrap; }
+}

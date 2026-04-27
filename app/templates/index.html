@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=12">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=13">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -979,10 +979,26 @@
         <!-- ══════════════════════════════════════════════════════════════ -->
         <!-- INVESTMENT MEMO TAB                                           -->
         <!-- ══════════════════════════════════════════════════════════════ -->
-        <div id="tab-memo" class="tab-content">
+        <div id="tab-memo" class="tab-content memo-tab" data-memo-mode="setup">
             <div class="page-header">
                 <h1>Investment Memo Generator</h1>
                 <p class="page-subtitle">Assemble data room documents, select a deal report, and generate a comprehensive investment memorandum using AI.</p>
+            </div>
+
+            <!-- Top mode switcher (visible in setup + history modes) -->
+            <div class="memo-modeswitch" id="memo-modeswitch">
+                <button class="memo-modeswitch-btn active" data-mode-target="setup" onclick="memoSetMode('setup')">New Memo</button>
+                <button class="memo-modeswitch-btn" data-mode-target="history" onclick="memoSetMode('history')">History</button>
+            </div>
+
+            <!-- Focus-mode header bar (visible only when viewing a memo) -->
+            <div class="memo-focus-bar" id="memo-focus-bar">
+                <button class="btn-secondary btn-sm memo-back-btn" onclick="memoSetMode('setup')">&larr; Back to Setup</button>
+                <div class="memo-focus-title" id="memo-focus-title"></div>
+                <div class="memo-focus-spacer"></div>
+                <div class="memo-focus-actions" id="memo-focus-actions">
+                    <!-- Action buttons get cloned here from the legacy memo-output-actions when a memo loads -->
+                </div>
             </div>
 
             <div class="memo-layout">
@@ -2314,7 +2330,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=164"></script>
+    <script src="/static/app.js?v=165"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {
