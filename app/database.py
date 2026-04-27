@@ -198,6 +198,8 @@ CREATE TABLE IF NOT EXISTS generated_memos (
     input_token_count INTEGER NOT NULL DEFAULT 0,
     output_token_count INTEGER NOT NULL DEFAULT 0,
     generation_time_s REAL  NOT NULL DEFAULT 0,
+    sections_json   TEXT    NOT NULL DEFAULT '{}',
+    memo_session_id TEXT    NOT NULL DEFAULT '',
     status          TEXT    NOT NULL DEFAULT 'completed',
     created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -722,6 +724,11 @@ def migrate_db():
     ]
     # Add sections_json column to generated_memos for per-section editing
     migrations.append("ALTER TABLE generated_memos ADD COLUMN sections_json TEXT NOT NULL DEFAULT '{}'")
+    # Add memo_session_id column so generated memos can be re-linked to the
+    # data-room upload session that produced them (used for image embed +
+    # docx export). Older DBs (and a fresh Postgres deploy) don't have this
+    # because it was never in the base schema until now.
+    migrations.append("ALTER TABLE generated_memos ADD COLUMN memo_session_id TEXT NOT NULL DEFAULT ''")
     # Auth: verified flag and verification code for email verification
     migrations.append("ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 1")
     migrations.append("ALTER TABLE users ADD COLUMN verification_code TEXT")

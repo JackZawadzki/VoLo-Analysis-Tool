@@ -7422,6 +7422,12 @@ async function memoGenerate() {
             await new Promise(res => setTimeout(res, POLL_INTERVAL_MS));
             if (!_memo.generating) break;  // user navigated away / aborted
             const sr = await fetch(`/api/memo/generate/status/${jobId}`, { headers: _rvmHeaders() });
+            // Special-case 404: the server lost the job (deploy/restart, or
+            // 1h TTL expired). Tell the user clearly to retry instead of
+            // confusing them with "not found or expired".
+            if (sr.status === 404) {
+                throw new Error('Memo generation was interrupted (server restarted). Click Generate to retry — your inputs are still selected.');
+            }
             if (!sr.ok) {
                 const err = await sr.json().catch(() => ({ detail: sr.statusText }));
                 throw new Error(err.detail || 'Status poll failed');
