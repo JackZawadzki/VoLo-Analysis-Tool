@@ -986,6 +986,89 @@ a:focus-visible,
     white-space: pre-wrap;
     word-wrap: break-word;
 }
+
+/* Rendered notes — clean, professional document styling. ## headings get
+   subtle hierarchy, italic dim, bullets tight, generous spacing between
+   sections so the doc scans like a real working doc, not a textarea. */
+.lib-notes-rendered {
+    font-family: var(--font-sans);
+    font-size: 0.93rem;
+    line-height: 1.65;
+    color: var(--vf-ink);
+}
+.lib-notes-rendered .lib-notes-h2 {
+    font-size: 0.92rem;
+    font-weight: 700;
+    color: var(--vf-forest-deep);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin: 22px 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--vf-hairline);
+}
+.lib-notes-rendered .lib-notes-h2:first-child { margin-top: 4px; }
+.lib-notes-rendered .lib-notes-h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--vf-ink);
+    margin: 16px 0 6px;
+}
+.lib-notes-rendered .lib-notes-h4,
+.lib-notes-rendered .lib-notes-h5,
+.lib-notes-rendered .lib-notes-h6 {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+    margin: 12px 0 4px;
+}
+.lib-notes-rendered p {
+    margin: 0 0 10px;
+    color: var(--vf-slate);
+}
+.lib-notes-rendered em {
+    color: var(--vf-stone);
+    font-style: italic;
+}
+.lib-notes-rendered strong {
+    color: var(--vf-ink);
+    font-weight: 600;
+}
+.lib-notes-rendered code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.85em;
+    background: var(--vf-stone-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    color: var(--vf-slate);
+}
+.lib-notes-rendered .lib-notes-ul {
+    margin: 4px 0 12px;
+    padding-left: 22px;
+    list-style-type: none;
+}
+.lib-notes-rendered .lib-notes-ul li {
+    position: relative;
+    padding: 2px 0;
+    color: var(--vf-slate);
+}
+.lib-notes-rendered .lib-notes-ul li::before {
+    content: '';
+    position: absolute;
+    left: -14px;
+    top: 12px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--vf-sage);
+}
+.lib-notes-rendered .lib-notes-checkbox {
+    color: var(--vf-stone);
+    margin-right: 4px;
+    font-size: 1em;
+}
+.lib-notes-rendered .lib-notes-checkbox.checked {
+    color: var(--vf-forest);
+}
 .lib-notes-edit {
     width: 100%;
     min-height: 480px;          /* roomy by default */

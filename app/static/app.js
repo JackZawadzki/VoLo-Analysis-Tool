@@ -1529,12 +1529,82 @@ function _libNotesRenderMeta() {
         el.innerHTML = `Last edited by <strong>${who}</strong> · ${when} · v${_libNotes.version}`;
     }
 }
+// Render a small, safe subset of markdown: ##/###/####, **bold**, *bold*,
+// _italic_/*italic*, - bullets, blank-line paragraph breaks. ALL content is
+// HTML-escaped FIRST, before any markdown tag substitution, so nothing the
+// user (or LLM, or a teammate) types can inject HTML/JS. Inline code with
+// `backticks` is also rendered as <code>.
+function _libNotesMarkdownToHtml(src) {
+    if (!src) return '';
+    const escape = (s) => String(s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+    // Apply inline transforms (bold/italic/code) AFTER escaping. Order
+    // matters: code first so its contents aren't re-interpreted; then bold
+    // (longer markers) before italic (shorter markers) to avoid swallowing.
+    const inline = (line) => {
+        let s = escape(line);
+        // Inline code: `...`
+        s = s.replace(/`([^`]+?)`/g, '<code>$1</code>');
+        // Bold: **...** or __...__
+        s = s.replace(/\*\*([^*]+?)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/__([^_]+?)__/g, '<strong>$1</strong>');
+        // Italic: *...* or _..._  (single-char markers, after bold so they
+        // don't eat ** pairs)
+        s = s.replace(/(^|[^*])\*([^*\n]+?)\*(?!\*)/g, '$1<em>$2</em>');
+        s = s.replace(/(^|[^_])_([^_\n]+?)_(?!_)/g, '$1<em>$2</em>');
+        // Checkboxes: - [ ] / - [x] inside a bullet line
+        s = s.replace(/\[ \]/g, '<span class="lib-notes-checkbox">☐</span>');
+        s = s.replace(/\[(?:x|X)\]/g, '<span class="lib-notes-checkbox checked">☑</span>');
+        return s;
+    };
+
+    const lines = src.split('\n');
+    const out = [];
+    let inList = false;
+    let para = [];
+    const flushPara = () => {
+        if (!para.length) return;
+        out.push('<p>' + para.map(inline).join('<br>') + '</p>');
+        para = [];
+    };
+    const closeList = () => {
+        if (inList) { out.push('</ul>'); inList = false; }
+    };
+
+    for (const raw of lines) {
+        const line = raw.replace(/\s+$/, '');
+        if (!line.trim()) {
+            flushPara(); closeList(); continue;
+        }
+        // Headings
+        const h = /^(#{2,6})\s+(.+)$/.exec(line);
+        if (h) {
+            flushPara(); closeList();
+            const level = Math.min(h[1].length, 6);  // ## → h2, etc. up to h6
+            out.push(`<h${level} class="lib-notes-h${level}">${inline(h[2])}</h${level}>`);
+            continue;
+        }
+        // Bullet
+        const b = /^\s*[-*]\s+(.+)$/.exec(line);
+        if (b) {
+            flushPara();
+            if (!inList) { out.push('<ul class="lib-notes-ul">'); inList = true; }
+            out.push(`<li>${inline(b[1])}</li>`);
+            continue;
+        }
+        // Plain paragraph line
+        closeList();
+        para.push(line);
+    }
+    flushPara(); closeList();
+    return out.join('\n');
+}
+
 function _libNotesRenderView(content) {
     const view = document.getElementById('lib-notes-view');
     if (!view) return;
-    // Plain-text rendering with preserved whitespace. We deliberately do NOT
-    // run a markdown converter here — the existing one is XSS-unsafe and the
-    // working doc reads fine as preformatted plain text.
     // Click anywhere in the view to jump straight into edit mode — fewer
     // clicks for the common case of "I want to add a note."
     view.style.cursor = 'text';
@@ -1543,7 +1613,7 @@ function _libNotesRenderView(content) {
     if (!content || !content.trim()) {
         view.innerHTML = '<div class="lib-notes-empty">No notes yet. Click anywhere here or hit <strong>Edit</strong> to start the team working doc.</div>';
     } else {
-        view.innerHTML = `<pre class="lib-notes-pre">${_libNotesEscape(content)}</pre>`;
+        view.innerHTML = `<div class="lib-notes-rendered">${_libNotesMarkdownToHtml(content)}</div>`;
     }
 }
 

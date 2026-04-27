@@ -499,37 +499,24 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
 # ════════════════════════════════════════════════════════════════════════════
 
 _DEFAULT_NOTES_TEMPLATE = """## Initial Take
-_First read of the materials — gut reaction, where this fits the thesis._
-
 
 
 ## Bull Case
-_What has to be true for this to be a 10×+ outcome?_
 -
-
 
 ## Bear Case / Concerns
-_What could kill this? What are we skeptical of?_
 -
-
 
 ## Key Diligence Questions
-_Open items we need answered before deciding._
 -
-
 
 ## Reference Calls & Conversations
-_Who we've talked to, when, and what they said._
 -
 
-
 ## Open Action Items
-_To-dos with owners._
 - [ ]
 
-
 ## Decision Tracker
-_Current stance and how it's evolved._
 
 """
 
