@@ -123,6 +123,77 @@ body {
 .nav-link:hover { background: var(--bg-subtle); color: var(--text-primary); }
 .nav-link.active { color: var(--accent); background: var(--accent-light); font-weight: 600; }
 
+/* ── BETA / In-Development cluster ───────────────────────────────────── */
+.nav-beta-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    padding: 3px 6px 3px 4px;
+    background: #fff5ec;
+    border: 1.5px solid #ea7d2a;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(234, 125, 42, 0.08) inset;
+}
+.nav-beta-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #fff;
+    background: #ea7d2a;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    cursor: help;
+}
+.nav-beta-group .nav-link-beta {
+    color: #b85a17 !important;
+    background: transparent;
+    font-weight: 500;
+    padding: 6px 10px;
+}
+.nav-beta-group .nav-link-beta:hover {
+    background: #ffe5cf !important;
+    color: #8a4310 !important;
+}
+.nav-beta-group .nav-link-beta.active {
+    background: #ea7d2a !important;
+    color: #fff !important;
+    font-weight: 600;
+}
+
+/* In-tab banner shown at the top of beta tabs */
+.beta-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 18px 0;
+    padding: 10px 16px;
+    background: #fff5ec;
+    border: 1px solid #f0b07a;
+    border-left: 4px solid #ea7d2a;
+    border-radius: 6px;
+    color: #6b3a0e;
+    font-size: 0.85rem;
+    line-height: 1.45;
+}
+.beta-banner-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #fff;
+    background: #ea7d2a;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+.beta-banner-text { flex: 1; }
+
 .nav-dropdown { position: relative; }
 .nav-dropdown-trigger::after { content: ' \25BE'; font-size: 0.65em; }
 .nav-dropdown-menu {

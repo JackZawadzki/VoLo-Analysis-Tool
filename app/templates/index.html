@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=13">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=15">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -92,14 +92,19 @@
             </div>
             <div class="nav-links">
                 <a href="#" class="nav-link active" data-tab="pipeline">Deal Pipeline</a>
-                <a href="#" class="nav-link" data-tab="scurves">S-Curve Atlas</a>
                 <a href="#" class="nav-link" data-tab="memo">Investment Memo</a>
-                <a href="#" class="nav-link" data-tab="ddanalysis">DD Financial Analysis</a>
-                <a href="#" class="nav-link" data-tab="funddeployment">Fund II Deployment</a>
                 <a href="#" class="nav-link" data-tab="ddr">Due Diligence Report</a>
+                <a href="#" class="nav-link" data-tab="scurves">S-Curve Atlas</a>
                 <a href="#" class="nav-link" data-tab="references">References</a>
                 <a href="#" class="nav-link" data-tab="models">Models</a>
+                <!-- Developer tab hidden from UI (admin/internal use only). To restore: uncomment the line below.
                 <a href="#" class="nav-link" data-tab="developer" id="nav-dev-link">Developer</a>
+                -->
+                <div class="nav-beta-group" title="These tabs are still in development. Outputs may be incomplete or change without notice.">
+                    <span class="nav-beta-tag">BETA · In Development</span>
+                    <a href="#" class="nav-link nav-link-beta" data-tab="ddanalysis">DD Financial Analysis</a>
+                    <a href="#" class="nav-link nav-link-beta" data-tab="funddeployment">Fund II Deployment</a>
+                </div>
             </div>
             <div class="nav-user">
                 <span id="user-badge" class="nav-user-badge"></span>
@@ -1272,6 +1277,10 @@
 <!-- DD FINANCIAL ANALYSIS TAB — Scenario-Based P&L Modeling      -->
 <!-- ══════════════════════════════════════════════════════════════ -->
 <div id="tab-ddanalysis" class="tab-content">
+    <div class="beta-banner" role="note">
+        <span class="beta-banner-tag">BETA</span>
+        <span class="beta-banner-text"><strong>This module is still in development.</strong> Outputs may be incomplete, change without notice, or contain bugs. Do not rely on it for final investment decisions.</span>
+    </div>
     <div class="dd-header">
         <div class="dd-header-content">
             <h2 class="dd-title">DD Financial Analysis</h2>
@@ -2155,6 +2164,10 @@
      FUND II DEPLOYMENT TAB
      ════════════════════════════════════════════════════════════════════ -->
 <div id="tab-funddeployment" class="tab-content">
+  <div class="beta-banner" role="note">
+      <span class="beta-banner-tag">BETA</span>
+      <span class="beta-banner-text"><strong>This module is still in development.</strong> Outputs may be incomplete, change without notice, or contain bugs. Do not rely on it for final investment decisions.</span>
+  </div>
   <div class="fd-header">
     <div class="fd-header-left">
       <h2 class="fd-title">Fund II Deployment Tracker</h2>

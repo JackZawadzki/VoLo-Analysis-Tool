@@ -80,7 +80,7 @@
     --danger:           var(--vf-danger);
     --warning:          var(--vf-warning);
     --success:          var(--vf-success);
-    --info:             var(--vf-info);
+    --info:             var(--vf-warning);
 
     /* Tighter, more confident radii */
     --radius-sm: 4px;
@@ -216,6 +216,84 @@ table th {
     font-weight: 600 !important;
     border-bottom: none !important;
 }
+
+/* ──────────────────────────────────────────────────────────
+   BETA / In-Development cluster — pushed to the right edge
+   of the nav, clearly bordered so the team sees these tabs
+   as a separate, in-progress section. Uses --vf-info (slate
+   blue) as a neutral informational color, not a warning.
+   ────────────────────────────────────────────────────────── */
+.nav-beta-group {
+    display: flex !important;
+    align-items: center !important;
+    gap: 2px !important;
+    margin-left: auto !important;
+    margin-right: 8px !important;
+    padding: 4px 6px 4px 5px !important;
+    background: rgba(182, 136, 66, 0.07) !important;
+    border: 1.5px solid var(--vf-warning) !important;
+    border-radius: 999px !important;
+    flex-shrink: 0 !important;
+}
+.nav-beta-tag {
+    display: inline-flex !important;
+    align-items: center !important;
+    font-size: 0.62rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    color: #fff !important;
+    background: var(--vf-warning) !important;
+    padding: 5px 11px !important;
+    border-radius: 999px !important;
+    white-space: nowrap !important;
+    cursor: help !important;
+    line-height: 1.2 !important;
+}
+.nav-beta-group .nav-link-beta {
+    color: var(--vf-warning) !important;
+    background: transparent !important;
+    font-weight: 500 !important;
+    padding: 6px 12px !important;
+    border-radius: 999px !important;
+}
+.nav-beta-group .nav-link-beta:hover:not(.active) {
+    background: rgba(182, 136, 66, 0.14) !important;
+    color: #6b4f1a !important;
+}
+.nav-beta-group .nav-link-beta.active {
+    background: var(--vf-warning) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+}
+
+/* In-tab informational banner shown at the top of beta tabs */
+.beta-banner {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    margin: 0 0 18px 0 !important;
+    padding: 12px 16px !important;
+    background: rgba(182, 136, 66, 0.07) !important;
+    border: 1px solid rgba(182, 136, 66, 0.32) !important;
+    border-left: 4px solid var(--vf-warning) !important;
+    border-radius: 6px !important;
+    color: #5e4515 !important;
+    font-size: 0.85rem !important;
+    line-height: 1.45 !important;
+}
+.beta-banner-tag {
+    display: inline-block !important;
+    padding: 3px 10px !important;
+    font-size: 0.62rem !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.08em !important;
+    color: #fff !important;
+    background: var(--vf-warning) !important;
+    border-radius: 999px !important;
+    flex-shrink: 0 !important;
+}
+.beta-banner-text { flex: 1 !important; }
 
 /* User badge + logout — refined to match */
 .nav-user-badge {
