@@ -8702,6 +8702,12 @@ async function _memoShowHistory(sectionKey) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const _memoChartInstances = [];
+// Charts queued by inline memo section renderers (funnel, outcome, etc.).
+// Producer pushes here; consumer drains and renders when the memo DOM is
+// stable. Must be declared before either side runs — otherwise the
+// `_pendingCharts = _pendingCharts || []` shorthand throws ReferenceError
+// because reading an undeclared variable is fatal in strict mode.
+let _pendingCharts = [];
 
 
 function _memoInjectDealCard(container, report) {
