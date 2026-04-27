@@ -1063,11 +1063,23 @@ a:focus-visible,
 }
 .lib-notes-rendered .lib-notes-checkbox {
     color: var(--vf-stone);
-    margin-right: 4px;
+    margin-right: 6px;
     font-size: 1em;
 }
 .lib-notes-rendered .lib-notes-checkbox.checked {
     color: var(--vf-forest);
+}
+/* Task lines (- [ ] or - [x]): show only the checkbox, suppress the
+   regular bullet dot so we don't render ● ☐ redundantly. */
+.lib-notes-rendered .lib-notes-ul li.lib-notes-task::before { display: none; }
+.lib-notes-rendered .lib-notes-ul li.lib-notes-task {
+    padding-left: 0;
+    margin-left: -22px;       /* unindent so the checkbox aligns left with prose */
+    list-style: none;
+}
+.lib-notes-rendered .lib-notes-ul li.lib-notes-task.done .lib-notes-task-text {
+    color: var(--vf-stone-light);
+    text-decoration: line-through;
 }
 .lib-notes-edit {
     width: 100%;

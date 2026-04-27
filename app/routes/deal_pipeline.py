@@ -502,19 +502,19 @@ _DEFAULT_NOTES_TEMPLATE = """## Initial Take
 
 
 ## Bull Case
--
+
 
 ## Bear Case / Concerns
--
+
 
 ## Key Diligence Questions
--
+
 
 ## Reference Calls & Conversations
--
+
 
 ## Open Action Items
-- [ ]
+
 
 ## Decision Tracker
 

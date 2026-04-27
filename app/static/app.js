@@ -1586,12 +1586,26 @@ function _libNotesMarkdownToHtml(src) {
             out.push(`<h${level} class="lib-notes-h${level}">${inline(h[2])}</h${level}>`);
             continue;
         }
-        // Bullet
+        // Bullet (with optional checkbox)
         const b = /^\s*[-*]\s+(.+)$/.exec(line);
         if (b) {
             flushPara();
             if (!inList) { out.push('<ul class="lib-notes-ul">'); inList = true; }
-            out.push(`<li>${inline(b[1])}</li>`);
+            // Detect checkbox-style task lines so we can drop the bullet dot
+            // and just show the checkbox (otherwise it renders as ●  ☐ which
+            // looks redundant).
+            const cb = /^\[( |x|X)\]\s*(.*)$/.exec(b[1]);
+            if (cb) {
+                const checked = cb[1].toLowerCase() === 'x';
+                const text = inline(cb[2]);
+                out.push(
+                    `<li class="lib-notes-task${checked ? ' done' : ''}">` +
+                    `<span class="lib-notes-checkbox${checked ? ' checked' : ''}">${checked ? '☑' : '☐'}</span>` +
+                    `<span class="lib-notes-task-text">${text}</span></li>`
+                );
+            } else {
+                out.push(`<li>${inline(b[1])}</li>`);
+            }
             continue;
         }
         // Plain paragraph line
