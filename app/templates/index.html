@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=16">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=17">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -1244,6 +1244,25 @@
                                     <option value="qwen-rfnt">Refiant qwen-rfnt</option>
                                 </select>
                             </div>
+                            <div class="memo-engine-select">
+                                <label>Memo engine:</label>
+                                <div class="memo-engine-options">
+                                    <label class="memo-engine-radio">
+                                        <input type="radio" name="memo-engine-version" value="v1" checked>
+                                        <div class="memo-engine-radio-body">
+                                            <div class="memo-engine-radio-title">Standard</div>
+                                            <div class="memo-engine-radio-sub">Per-doc extraction. Fast, proven on prior memos.</div>
+                                        </div>
+                                    </label>
+                                    <label class="memo-engine-radio">
+                                        <input type="radio" name="memo-engine-version" value="v2">
+                                        <div class="memo-engine-radio-body">
+                                            <div class="memo-engine-radio-title">Manifest <span class="memo-engine-beta">BETA</span></div>
+                                            <div class="memo-engine-radio-sub">Reads the whole data room before writing. Slower, more thorough.</div>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
                             <button onclick="memoGenerate()" class="btn-primary memo-generate-btn" id="memo-generate-btn">
                                 Generate Investment Memo
                             </button>
@@ -2361,7 +2380,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=166"></script>
+    <script src="/static/app.js?v=167"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

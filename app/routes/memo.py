@@ -832,6 +832,18 @@ class MemoGenerateRequest(BaseModel):
     model_override: Optional[str] = None         # Force a specific model
     investment_type: str = "first"               # "first" or "followon"
     locked_sections: dict = {}                   # {section_key: markdown_text} — skips LLM, uses text as-is
+    # ── Memo engine version ─────────────────────────────────────────────────
+    # "v1" — legacy: per-doc Pass 1 extraction → per-section Pass 2 stitched
+    #        from buckets → Pass 3 synthesis. Each file processed in isolation;
+    #        folder structure ignored; long PDFs truncated; Excel limited to
+    #        first 5 sheets.
+    # "v2" — manifest-aware: single Pass 1 reads the whole data room (folder
+    #        tree + previews + Excel sheet samples) and outputs a JSON manifest
+    #        classifying every file. Stage 2 does targeted deep reads of
+    #        primary docs (no truncation, agent-picked Excel sheets, OCR
+    #        fallback). Stage 3 writes each section with the FULL data-room
+    #        corpus in context, using prompt caching to keep costs bounded.
+    engine_version: str = "v1"
 
 
 def _build_report_context(report_row) -> str:
@@ -2274,52 +2286,84 @@ def _build_memo_payload(
         _total_out = 0
         _pass_log = []
         _step = 0
-
-        # PASS 1: Extract facts from each document
-        all_extractions = []
-        if raw_docs:
-            for i, doc in enumerate(raw_docs):
-                _emit_step_progress(_step, f"Extracting facts from {doc['file_name']} ({i+1}/{_n_docs})")
-                extraction = _pass1_extract_document(client, model, doc)
-                all_extractions.append(extraction)
-                _total_in += extraction.get("_tokens_in", 0)
-                _total_out += extraction.get("_tokens_out", 0)
-                _pass_log.append({"pass": 1, "doc": doc["file_name"],
-                                  "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
-                _step += 1
-
-        # PASS 2: Write each data section
-        # Locked sections are passed in verbatim — LLM is never called for them.
         _locked = req.locked_sections or {}
         section_texts = {}
-        _data_total = len([s for s in active_data if s["key"] not in _locked])
-        _data_done = 0
-        for section in active_data:
-            sk = section["key"]
-            if sk in _locked:
-                # Preserve the user's saved edits exactly — skip LLM
-                section_texts[sk] = _locked[sk]
-                _pass_log.append({"pass": 2, "section": sk, "tokens": 0, "locked": True})
-                continue
-            _data_done += 1
-            _emit_step_progress(_step, f"Writing section: {section['title']} ({_data_done}/{_data_total})")
-            brief = _aggregate_section_briefs(all_extractions, sk, citation_index)
-            report_slice = _get_report_fields_for_section(report_context, section)
-            tpl_guidance = template_sections.get(sk, "")
 
-            result = _pass2_write_section(
-                client, model, section, brief, report_slice,
-                tpl_guidance, company_name, links,
-                citation_legend=citation_index["legend"]
+        # ── ENGINE DISPATCH ──────────────────────────────────────────────
+        # v2: manifest pass + targeted deep reads + cached section writing
+        # v1: legacy per-doc Pass 1 → per-section Pass 2
+        # In both cases, Pass 3 (synthesis) runs the same way after.
+        engine = (req.engine_version or "v1").lower()
+
+        if engine == "v2":
+            from ..engine.memo_v2 import run_memo_v2_pipeline
+            _emit_step_progress(0, "Cataloging the data room (manifest pass)...")
+            v2_section_texts, v2_in, v2_out, v2_log, manifest_meta = run_memo_v2_pipeline(
+                client=client,
+                model=model,
+                raw_docs=raw_docs,
+                report_context=report_context,
+                memo_sections=active_data,
+                template_sections=template_sections,
+                company_name=company_name,
+                links=links,
+                locked_sections=_locked,
+                additional_instructions=req.additional_instructions,
+                progress_cb=_progress,
             )
-            section_texts[sk] = _strip_leading_heading(result["text"], section["title"])
-            _total_in += result["tokens_in"]
-            _total_out += result["tokens_out"]
-            _pass_log.append({"pass": 2, "section": sk,
-                              "tokens": result["tokens_in"] + result["tokens_out"]})
-            _step += 1
+            # Strip any leading heading the model added despite instructions
+            for sk, txt in v2_section_texts.items():
+                section_def = next((s for s in active_data if s["key"] == sk), None)
+                if section_def:
+                    v2_section_texts[sk] = _strip_leading_heading(txt, section_def["title"])
+            section_texts.update(v2_section_texts)
+            _total_in += v2_in
+            _total_out += v2_out
+            _pass_log.extend(v2_log)
+            _pass_log.append({"stage": "manifest_meta", "meta": manifest_meta})
+        else:
+            # ── v1 PASS 1: Extract facts from each document ──────────────
+            all_extractions = []
+            if raw_docs:
+                for i, doc in enumerate(raw_docs):
+                    _emit_step_progress(_step, f"Extracting facts from {doc['file_name']} ({i+1}/{_n_docs})")
+                    extraction = _pass1_extract_document(client, model, doc)
+                    all_extractions.append(extraction)
+                    _total_in += extraction.get("_tokens_in", 0)
+                    _total_out += extraction.get("_tokens_out", 0)
+                    _pass_log.append({"pass": 1, "doc": doc["file_name"],
+                                      "tokens": extraction.get("_tokens_in", 0) + extraction.get("_tokens_out", 0)})
+                    _step += 1
 
-        # PASS 3: Synthesize cross-cutting sections
+            # ── v1 PASS 2: Write each data section ───────────────────────
+            _data_total = len([s for s in active_data if s["key"] not in _locked])
+            _data_done = 0
+            for section in active_data:
+                sk = section["key"]
+                if sk in _locked:
+                    # Preserve the user's saved edits exactly — skip LLM
+                    section_texts[sk] = _locked[sk]
+                    _pass_log.append({"pass": 2, "section": sk, "tokens": 0, "locked": True})
+                    continue
+                _data_done += 1
+                _emit_step_progress(_step, f"Writing section: {section['title']} ({_data_done}/{_data_total})")
+                brief = _aggregate_section_briefs(all_extractions, sk, citation_index)
+                report_slice = _get_report_fields_for_section(report_context, section)
+                tpl_guidance = template_sections.get(sk, "")
+
+                result = _pass2_write_section(
+                    client, model, section, brief, report_slice,
+                    tpl_guidance, company_name, links,
+                    citation_legend=citation_index["legend"]
+                )
+                section_texts[sk] = _strip_leading_heading(result["text"], section["title"])
+                _total_in += result["tokens_in"]
+                _total_out += result["tokens_out"]
+                _pass_log.append({"pass": 2, "section": sk,
+                                  "tokens": result["tokens_in"] + result["tokens_out"]})
+                _step += 1
+
+        # ── PASS 3 (shared): Synthesize cross-cutting sections ───────────
         _synth_total = len([s for s in active_synth if s["key"] not in _locked])
         _synth_done = 0
         for section in active_synth:

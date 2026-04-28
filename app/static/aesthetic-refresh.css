@@ -357,6 +357,73 @@ table th {
 .memo-drive-status.is-disconnected { color: var(--vf-stone); }
 .drive-disconnect-btn { font-size: 0.72rem !important; padding: 3px 10px !important; }
 
+/* ──────────────────────────────────────────────────────────
+   Memo engine toggle (Standard vs. Manifest BETA)
+   ────────────────────────────────────────────────────────── */
+.memo-engine-select {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+.memo-engine-select > label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--vf-slate);
+}
+.memo-engine-options {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.memo-engine-radio {
+    flex: 1;
+    min-width: 240px;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--vf-hairline);
+    border-radius: 8px;
+    background: var(--vf-paper);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+.memo-engine-radio:hover { border-color: var(--vf-moss); }
+.memo-engine-radio input[type="radio"] {
+    margin-top: 3px;
+    accent-color: var(--vf-forest);
+}
+.memo-engine-radio:has(input:checked) {
+    border-color: var(--vf-forest);
+    background: var(--vf-mint-bg-soft);
+}
+.memo-engine-radio-body { flex: 1; min-width: 0; }
+.memo-engine-radio-title {
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.memo-engine-radio-sub {
+    font-size: 0.76rem;
+    color: var(--vf-stone);
+    margin-top: 2px;
+    line-height: 1.4;
+}
+.memo-engine-beta {
+    display: inline-block;
+    padding: 1px 7px;
+    font-size: 0.55rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #fff;
+    background: var(--vf-warning);
+    border-radius: 3px;
+}
+
 /* User badge + logout — refined to match */
 .nav-user-badge {
     background: var(--vf-stone-bg) !important;

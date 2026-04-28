@@ -7421,6 +7421,12 @@ async function memoGenerate() {
     };
     renderProgress(0, 'Queued...');
 
+    // Engine version toggle. v2 = manifest pass + cached section writing
+    // (sees the whole data room when writing each section). v1 = legacy
+    // per-doc extraction → per-section bucket stitching. Defaults to v1
+    // until v2 is proven on real deals.
+    const engineVersion = document.querySelector('input[name="memo-engine-version"]:checked')?.value || 'v1';
+
     const body = {
         report_id: reportId ? parseInt(reportId) : null,
         template_id: (templateId && templateId !== '__upload__') ? parseInt(templateId) : null,
@@ -7432,6 +7438,7 @@ async function memoGenerate() {
         links: _memo.links,
         model_override: model,
         investment_type: invType,
+        engine_version: engineVersion,
         // Pass locked sections verbatim — LLM will not regenerate them
         locked_sections: Object.keys(_memo.lockedSections).length > 0
             ? { ..._memo.lockedSections }
