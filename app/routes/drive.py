@@ -443,40 +443,79 @@ def _get_drive_service(user_id: int):
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> list:
+def _detect_drive_list_params(service, folder_id: str) -> dict:
+    """Inspect a folder's metadata once and return the right files.list
+    parameters for whatever flavor of folder it turns out to be.
+
+    Folders come in three flavors and each needs a different param set:
+
+      1. My Drive folder (yours or shared with you): default corpora is fine,
+         but supportsAllDrives + includeItemsFromAllDrives don't hurt.
+      2. Shared Drive folder (Team Drive content): MUST set corpora="drive"
+         and driveId, otherwise list returns 0 even though you can see the
+         folder in the UI.
+      3. Folder of unknown type / probe failed: fall back to corpora="allDrives"
+         which is broader and handles both #1 and #2 (just less efficient).
+
+    Calling this once at the top of a sync, then threading the result through
+    the recursion, is much cheaper than getting it wrong and having to retry."""
+    base = {
+        "supportsAllDrives": True,
+        "includeItemsFromAllDrives": True,
+    }
+    try:
+        meta = service.files().get(
+            fileId=folder_id,
+            fields="id,name,mimeType,driveId",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as e:
+        logger.warning(f"Drive metadata probe failed for folder {folder_id}: {e}. "
+                       f"Falling back to corpora=allDrives.")
+        return {**base, "corpora": "allDrives"}
+
+    drive_id = meta.get("driveId")
+    if drive_id:
+        # Folder lives in a Shared Drive — query that specific drive
+        logger.info(f"Drive folder {folder_id} is in Shared Drive {drive_id}; using corpora=drive")
+        return {**base, "corpora": "drive", "driveId": drive_id}
+
+    # My Drive or shared-with-me — default corpora handles it; no override needed
+    logger.info(f"Drive folder {folder_id} is in My Drive / shared-with-me; using default corpora")
+    return base
+
+
+def _list_files_recursive(service, folder_id: str, path_prefix: str = "",
+                          _list_params: dict = None) -> list:
     """Recursively list all files in a Drive folder and subfolders.
 
-    Important: by default the Drive API silently returns 0 results for files
-    that live inside a Shared Drive (formerly Team Drive) or for some
-    Workspace-shared folders. We explicitly enable shared-drive support on
-    every list call so the same code works for personal folders, "Shared
-    with me" items, and Shared Drive content. This is the standard fix
-    for the "I see files in Drive but the app shows 0 docs" issue."""
+    On the first call we probe the folder's metadata to figure out which
+    files.list params to use (see _detect_drive_list_params). Those params
+    are threaded through the recursion so we don't re-probe at every level
+    — the children of a Shared Drive folder are guaranteed to be in the
+    same Shared Drive."""
+    if _list_params is None:
+        _list_params = _detect_drive_list_params(service, folder_id)
+
     all_files = []
     page_token = None
 
     while True:
-        # NOTE: do NOT pass corpora="allDrives" here. That parameter is for
-        # cross-drive SEARCH queries; combined with `'folderId' in parents` it
-        # over-restricts and filters out "Shared with me" content (which is
-        # technically owned by another user's My Drive, not a Shared Drive
-        # workspace). The correct combination for a folder-children query is
-        # supportsAllDrives + includeItemsFromAllDrives WITHOUT a corpora
-        # override — Drive auto-detects where the folder lives.
         resp = service.files().list(
             q=f"'{folder_id}' in parents and trashed=false",
             fields="nextPageToken, files(id, name, mimeType, size, modifiedTime)",
             pageSize=200,
             pageToken=page_token,
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
+            **_list_params,
         ).execute()
 
         for f in resp.get("files", []):
             if f["mimeType"] == "application/vnd.google-apps.folder":
-                # Recurse into subfolder
+                # Recurse into subfolder, reusing the same query params
                 subfolder_path = f"{path_prefix}{f['name']}/"
-                all_files.extend(_list_files_recursive(service, f["id"], subfolder_path))
+                all_files.extend(_list_files_recursive(
+                    service, f["id"], subfolder_path, _list_params,
+                ))
             else:
                 f["subfolder_path"] = path_prefix
                 all_files.append(f)
@@ -484,6 +523,16 @@ def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> lis
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
+
+    if not all_files and not path_prefix:
+        # Top-level call returned nothing — log a diagnostic so server logs
+        # show what params we tried. The /debug-list endpoint is the user-
+        # facing way to investigate further.
+        logger.warning(
+            f"Drive list returned 0 files for folder {folder_id} "
+            f"with params {_list_params}. Use /api/drive/debug-list?folder={folder_id} "
+            f"to test all query variants."
+        )
 
     return all_files
 
