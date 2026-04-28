@@ -1088,14 +1088,37 @@ function _libEscape(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Parse a backend timestamp into a JS Date. Handles every shape we've
+// actually seen in the DB:
+//   "2026-04-28 04:32:08"               (SQLite datetime('now'), no tz)
+//   "2026-04-28T04:32:08"                (ISO, no tz)
+//   "2026-04-28 04:32:08.909743+00"      (Postgres timestamptz with +00 only)
+//   "2026-04-28T04:32:08.909743+00:00"   (full +HH:MM offset)
+//   "2026-04-28T04:32:08Z"               (Z suffix)
+// The bug we're fixing here: the previous regex required `+HH:MM` so it
+// missed `+00` and wrongly appended `Z`, producing an invalid date that
+// parsed as NaN and rendered as the raw string.
+function _libParseDate(iso) {
+    if (!iso) return null;
+    let s = String(iso).replace(' ', 'T');
+    // Already ends in Z → parse as UTC.
+    if (/[zZ]$/.test(s)) return new Date(s);
+    // Has a zone offset like "+00", "+0000", "+00:00", "-05:30" → normalize.
+    const tzMatch = s.match(/([+-]\d{2})(:?\d{2})?$/);
+    if (tzMatch) {
+        const sign = tzMatch[1];
+        const mins = tzMatch[2] ? tzMatch[2].replace(':', '') : '00';
+        s = s.slice(0, s.length - tzMatch[0].length) + `${sign}:${mins.padStart(2, '0')}`;
+        return new Date(s);
+    }
+    // No zone info at all → backend uses UTC datetime('now'), so append Z.
+    return new Date(s + 'Z');
+}
+
 function _libFmtDate(iso) {
     if (!iso) return '';
-    // Backend stores UTC timestamps via SQLite datetime('now'). Append 'Z' so
-    // the browser parses it as UTC instead of local time (which would give
-    // negative diffs for timestamps within the last few hours).
-    const isoStr = String(iso).replace(' ', 'T');
-    const d = new Date(/[zZ]|[+-]\d{2}:?\d{2}$/.test(isoStr) ? isoStr : isoStr + 'Z');
-    if (isNaN(d.getTime())) return String(iso).split('T')[0] || String(iso);
+    const d = _libParseDate(iso);
+    if (!d || isNaN(d.getTime())) return String(iso).split('T')[0] || String(iso);
     const diffMs = Date.now() - d.getTime();
     const diff = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     if (diff <= 0) return 'today';
@@ -1103,6 +1126,20 @@ function _libFmtDate(iso) {
     if (diff < 7)   return `${diff}d ago`;
     if (diff < 30)  return `${Math.floor(diff/7)}w ago`;
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: diff > 365 ? 'numeric' : undefined });
+}
+
+// Absolute date+time, used on artifact rows where the user needs to compare
+// multiple items that are all "today" — the relative format becomes useless
+// for that case (all three say "today"). Renders as "Apr 27, 2026, 6:32 PM"
+// in the user's local timezone.
+function _libFmtDateTime(iso) {
+    if (!iso) return '';
+    const d = _libParseDate(iso);
+    if (!d || isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit',
+    });
 }
 
 function _libCollectAuthors(group) {
@@ -1233,7 +1270,8 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-icon lib-art-deal" onclick="wizOpenFolderDeal(${d.id})">&#9974;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderDeal(${d.id})">
                         <div class="lib-art-title">Deal Report${d.archetype ? ` · ${_libEscape(d.archetype)}` : ''}${d.entry_stage ? ` · ${_libEscape(d.entry_stage)}` : ''}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong> · ${_libFmtDate(d.created_at)}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong></div>
+                        <div class="lib-art-when">${_libFmtDateTime(d.created_at)} <span class="lib-art-when-rel">(${_libFmtDate(d.created_at)})</span></div>
                     </div>
                     <button class="lib-art-srcbtn" onclick="event.stopPropagation(); libShowSourceData(${d.id});" title="View raw inputs the model used">Source data</button>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDealReport(${d.id});" title="Delete this deal report" aria-label="Delete">&#128465;</button>
@@ -1262,7 +1300,8 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-icon lib-art-ddr" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&#128209;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">
                         <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${_libFmtDate(d.generated_at)} · ${sizeStr}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${sizeStr}</div>
+                        <div class="lib-art-when">${_libFmtDateTime(d.generated_at)} <span class="lib-art-when-rel">(${_libFmtDate(d.generated_at)})</span></div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDdr(${d.id});" title="Delete this DDR" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&darr;</span>
@@ -1281,7 +1320,8 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-icon lib-art-memo" onclick="wizOpenFolderMemo(${m.id})">&#128221;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderMemo(${m.id})">
                         <div class="lib-art-title">Investment Memo${m.model_used ? ` · ${_libEscape(m.model_used)}` : ''}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong> · ${_libFmtDate(m.created_at)}</div>
+                        <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong></div>
+                        <div class="lib-art-when">${_libFmtDateTime(m.created_at)} <span class="lib-art-when-rel">(${_libFmtDate(m.created_at)})</span></div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteMemo(${m.id});" title="Delete this memo" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderMemo(${m.id})">&rsaquo;</span>

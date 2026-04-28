@@ -588,6 +588,19 @@ table th {
     white-space: nowrap;
 }
 
+/* Folder modal: per-artifact timestamp on its own line */
+.lib-art-when {
+    margin-top: 3px;
+    font-size: 0.78rem;
+    color: var(--vf-slate);
+    font-variant-numeric: tabular-nums;
+}
+.lib-art-when-rel {
+    margin-left: 6px;
+    color: var(--vf-stone);
+    font-size: 0.74rem;
+}
+
 /* IC Memo header — title + Start New Memo button on one row */
 .memo-page-header {
     display: flex;
