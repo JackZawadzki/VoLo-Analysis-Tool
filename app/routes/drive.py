@@ -843,6 +843,125 @@ async def oauth_debug(request: Request, user: CurrentUser = Depends(get_current_
     }
 
 
+@router.get("/debug-list")
+async def debug_list_folder(
+    folder: str = Query(..., description="Drive folder URL or ID"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Diagnostic endpoint that lists a Drive folder's children using EVERY
+    relevant query-parameter combination, so we can definitively see which
+    one returns results. Use this to debug "0 docs" issues without trial-
+    and-error redeploys.
+
+    Returns the folder's own metadata (so we can see if it's a Shared Drive
+    folder, a regular folder, or shared-with-me) plus the result counts and
+    file lists for four query variants. Whichever variant returns non-empty
+    is the right combo for THIS folder.
+
+    No secrets are exposed. The OAuth user must already be connected.
+    """
+    try:
+        from googleapiclient.discovery import build
+    except ImportError:
+        raise HTTPException(status_code=500, detail="google-api-python-client not installed")
+
+    folder_id = _parse_drive_folder_id(folder)
+
+    creds = _load_user_oauth_credentials(user.id)
+    if creds is None:
+        raise HTTPException(status_code=401, detail="Drive not connected. Visit /api/drive/oauth/authorize first.")
+
+    try:
+        from google.auth.transport.requests import Request as GoogleAuthRequest
+        creds.refresh(GoogleAuthRequest())
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Token refresh failed: {e}")
+
+    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    # 1. Folder metadata — tells us what kind of folder this is
+    folder_meta = {}
+    try:
+        folder_meta = service.files().get(
+            fileId=folder_id,
+            fields="id,name,mimeType,driveId,parents,owners,shared,sharedWithMeTime,capabilities",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception as e:
+        folder_meta = {"_error": str(e)[:500]}
+
+    # 2. Four query variants — see which one returns results
+    base_q = f"'{folder_id}' in parents and trashed=false"
+    base_fields = "files(id,name,mimeType,size,modifiedTime),nextPageToken"
+    variants = []
+
+    def _try(label: str, **kwargs):
+        try:
+            resp = service.files().list(q=base_q, fields=base_fields, pageSize=50, **kwargs).execute()
+            files = resp.get("files", [])
+            return {
+                "variant": label,
+                "params": {k: v for k, v in kwargs.items() if k != "pageToken"},
+                "ok": True,
+                "count": len(files),
+                "files": [
+                    {"name": f.get("name"), "mime": f.get("mimeType"), "size": f.get("size", 0)}
+                    for f in files[:25]
+                ],
+                "truncated": len(files) > 25,
+            }
+        except Exception as e:
+            return {
+                "variant": label,
+                "params": {k: v for k, v in kwargs.items() if k != "pageToken"},
+                "ok": False,
+                "error": str(e)[:500],
+            }
+
+    variants.append(_try("default (no shared-drive flags)"))
+    variants.append(_try(
+        "supportsAllDrives + includeItemsFromAllDrives (production code)",
+        supportsAllDrives=True, includeItemsFromAllDrives=True,
+    ))
+    variants.append(_try(
+        "with corpora=allDrives",
+        supportsAllDrives=True, includeItemsFromAllDrives=True, corpora="allDrives",
+    ))
+    if folder_meta.get("driveId"):
+        variants.append(_try(
+            "with corpora=drive + driveId",
+            supportsAllDrives=True, includeItemsFromAllDrives=True,
+            corpora="drive", driveId=folder_meta["driveId"],
+        ))
+
+    # 3. Quick sanity: list the user's own root to confirm OAuth works at all
+    sanity = {}
+    try:
+        resp = service.files().list(
+            q="'root' in parents and trashed=false",
+            fields="files(id,name)", pageSize=5,
+        ).execute()
+        sanity = {"ok": True, "my_drive_root_count_sample": len(resp.get("files", []))}
+    except Exception as e:
+        sanity = {"ok": False, "error": str(e)[:300]}
+
+    return {
+        "folder_id": folder_id,
+        "folder_metadata": folder_meta,
+        "is_shared_drive_content": bool(folder_meta.get("driveId")),
+        "is_shared_with_me": bool(folder_meta.get("sharedWithMeTime")),
+        "query_variants": variants,
+        "oauth_sanity": sanity,
+        "interpretation": (
+            "Look at query_variants[].count. Whichever variant returns a non-zero "
+            "count is the correct query for this folder. If 'production code' returns "
+            "0 but another variant returns >0, send me the variant label and I'll "
+            "update the production code to match. If ALL variants return 0, the "
+            "folder may genuinely be empty or you may not have read access."
+        ),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LIBRARY CRUD
 # ═══════════════════════════════════════════════════════════════════════════════
