@@ -8321,7 +8321,15 @@ function _driveHandleOAuthRedirect() {
         setTimeout(() => { try { driveCheckStatus(); } catch (e) {} }, 100);
     } else if (result === 'error') {
         const reason = (params.get('reason') || 'unknown_error').replace(/_/g, ' ');
-        alert('Could not connect Google Drive: ' + reason);
+        const detail = params.get('detail');
+        const redirectUriUsed = params.get('redirect_uri_used');
+        let msg = 'Could not connect Google Drive: ' + reason;
+        if (detail) msg += '\n\nDetails: ' + detail;
+        if (redirectUriUsed) {
+            msg += '\n\nRedirect URI the app sent to Google:\n' + redirectUriUsed;
+            msg += '\n\nMake sure this exact URL is in your Google Cloud OAuth Client → Authorized redirect URIs list.';
+        }
+        alert(msg);
     }
     // Strip the query param so refreshes don't re-trigger
     const cleanUrl = window.location.pathname + window.location.hash;

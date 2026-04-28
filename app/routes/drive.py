@@ -625,9 +625,27 @@ async def oauth_callback(
         # Pass the full callback URL so the library can extract the code itself
         flow.fetch_token(code=code)
     except Exception as e:
-        logger.error(f"OAuth token exchange failed for user {user_id}: {e}")
+        # Most token-exchange failures come from a redirect_uri mismatch
+        # between what we sent on /authorize and what we send on /callback,
+        # or from an authorized-redirect-URI list in Google Cloud that
+        # doesn't include the URL we constructed from forwarded headers.
+        # Log everything we can, and surface a short error message so the
+        # user can pass it back without having to scrape Replit logs.
+        from urllib.parse import quote
+        err_text = str(e)[:300]
+        logger.error(
+            "OAuth token exchange failed for user %s. "
+            "redirect_uri sent=%s, error=%s",
+            user_id, redirect_uri, err_text,
+        )
         return RedirectResponse(
-            url=f"/?drive_oauth=error&reason=token_exchange_failed#memo",
+            url=(
+                "/?drive_oauth=error"
+                f"&reason=token_exchange_failed"
+                f"&detail={quote(err_text)}"
+                f"&redirect_uri_used={quote(redirect_uri)}"
+                "#memo"
+            ),
             status_code=302,
         )
 
