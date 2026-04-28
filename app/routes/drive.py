@@ -38,8 +38,10 @@ from typing import Optional
 # Google's OAuth library can return scopes in a different order than requested
 # (e.g. it normalizes "openid" / "email"), which causes oauthlib to raise
 # "Scope has changed" on token exchange. This env flag tells oauthlib to
-# accept the normalized scopes. Must be set BEFORE oauthlib is imported.
-os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+# accept the normalized scopes. Must be set BEFORE oauthlib is imported, and
+# we use direct assignment (not setdefault) so it can't be silently overridden
+# by an incomplete env config.
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -71,16 +73,28 @@ _OAUTH_STATE_TTL_SECONDS = 600
 
 
 def _oauth_redirect_uri(request: Optional[Request] = None) -> str:
-    """The OAuth redirect URI must exactly match what's registered in Google
+    """The OAuth redirect URI must EXACTLY match what's registered in Google
     Cloud Console. We prefer the explicit env var; if it's not set we build
-    one from the incoming request, which works for both Replit and localhost."""
+    one from the incoming request.
+
+    Reverse proxies (Replit, Cloudflare, etc.) sometimes chain x-forwarded-*
+    headers, producing values like "https,https" or hosts with ":443" port
+    suffixes. We normalize aggressively so the URL we send on /authorize is
+    byte-identical to the URL we send on /callback's token exchange."""
     explicit = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
     if explicit:
         return explicit
     if request is not None:
-        # Use forwarded scheme/host if available (Replit's reverse proxy)
-        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
-        host = request.headers.get("x-forwarded-host") or request.url.netloc
+        proto_raw = request.headers.get("x-forwarded-proto") or request.url.scheme
+        # Chained proxies can produce "https,https"; first value is canonical
+        scheme = proto_raw.split(",")[0].strip().lower() or "https"
+        host_raw = request.headers.get("x-forwarded-host") or request.url.netloc
+        host = host_raw.split(",")[0].strip()
+        # Strip default ports — Google compares strings, ":443" vs none differs
+        if scheme == "https" and host.endswith(":443"):
+            host = host[:-4]
+        if scheme == "http" and host.endswith(":80"):
+            host = host[:-3]
         return f"{scheme}://{host}/api/drive/oauth/callback"
     raise HTTPException(
         status_code=500,
@@ -700,6 +714,82 @@ async def oauth_disconnect(user: CurrentUser = Depends(get_current_user)):
 async def oauth_connection_status(user: CurrentUser = Depends(get_current_user)):
     """Report whether this user has connected Google Drive."""
     return _get_user_drive_status(user.id)
+
+
+@router.get("/oauth/debug")
+async def oauth_debug(request: Request, user: CurrentUser = Depends(get_current_user)):
+    """Diagnostic — shows what redirect URI the app would send to Google,
+    which secrets are configured, and which forwarded headers Replit is
+    sending. Use this to verify config WITHOUT triggering an OAuth flow.
+
+    Returns no secret values — just whether each secret is set and looks
+    well-formed. Safe to share output with anyone debugging."""
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+    enc_key = os.environ.get("GOOGLE_TOKEN_ENCRYPTION_KEY", "")
+    explicit_redirect = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "")
+
+    # Compute the redirect URI the app would actually send
+    try:
+        computed_redirect = _oauth_redirect_uri(request)
+    except Exception as e:
+        computed_redirect = f"(could not compute: {e})"
+
+    # Check Fernet key looks valid without revealing it
+    fernet_ok = False
+    fernet_error = ""
+    if enc_key:
+        try:
+            from cryptography.fernet import Fernet
+            Fernet(enc_key.encode() if isinstance(enc_key, str) else enc_key)
+            fernet_ok = True
+        except Exception as e:
+            fernet_error = str(e)[:200]
+
+    # Check Google libs are importable
+    google_libs = {}
+    for name in ("google.oauth2.credentials", "google_auth_oauthlib.flow",
+                 "googleapiclient.discovery", "cryptography.fernet"):
+        try:
+            __import__(name)
+            google_libs[name] = "ok"
+        except ImportError as e:
+            google_libs[name] = f"NOT INSTALLED: {e}"
+
+    return {
+        "redirect_uri_computed": computed_redirect,
+        "redirect_uri_env_override": explicit_redirect or "(not set — using computed)",
+        "redirect_uri_match_check": (
+            "explicit env var matches computed" if explicit_redirect == computed_redirect
+            else "explicit env var differs from computed (explicit wins)" if explicit_redirect
+            else "(no explicit override; computed is used)"
+        ),
+        "client_id_set": bool(client_id),
+        "client_id_length": len(client_id),
+        "client_id_looks_valid": client_id.endswith(".apps.googleusercontent.com") if client_id else False,
+        "client_secret_set": bool(client_secret),
+        "client_secret_length": len(client_secret),
+        "encryption_key_set": bool(enc_key),
+        "encryption_key_valid": fernet_ok,
+        "encryption_key_error": fernet_error,
+        "scopes_requested": _OAUTH_SCOPES,
+        "google_libraries": google_libs,
+        "forwarded_headers": {
+            "x-forwarded-proto": request.headers.get("x-forwarded-proto"),
+            "x-forwarded-host": request.headers.get("x-forwarded-host"),
+            "host": request.headers.get("host"),
+            "url_scheme": request.url.scheme,
+            "url_netloc": request.url.netloc,
+        },
+        "current_user_email": user.username,
+        "instructions": (
+            "Compare 'redirect_uri_computed' against the Authorized redirect URIs "
+            "in your Google Cloud OAuth Client. They must match BYTE-FOR-BYTE — "
+            "trailing slash, scheme, port, case all matter. If they differ, either "
+            "(a) update the Google Cloud entry to match, or (b) set the "
+            "GOOGLE_OAUTH_REDIRECT_URI Replit Secret to lock it down."
+        ),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
