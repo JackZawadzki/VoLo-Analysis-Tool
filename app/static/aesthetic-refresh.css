@@ -435,20 +435,43 @@ table th {
 .memo-page-header-text { flex: 1; min-width: 0; }
 .memo-start-fresh-btn {
     flex-shrink: 0;
-    padding: 8px 16px !important;
-    font-size: 0.82rem !important;
-    font-weight: 500 !important;
-    border: 1px solid var(--vf-hairline) !important;
-    background: var(--vf-paper) !important;
-    color: var(--vf-slate) !important;
-    border-radius: 6px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 12px 22px !important;
+    font-size: 0.95rem !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.005em !important;
+    border: none !important;
+    background: var(--vf-forest) !important;
+    color: var(--vf-paper) !important;
+    border-radius: 999px !important;
     cursor: pointer;
-    transition: border-color 0.15s, color 0.15s, background 0.15s;
+    box-shadow: 0 1px 2px rgba(24, 46, 38, 0.18), 0 4px 12px rgba(24, 46, 38, 0.10) !important;
+    transition: background 0.15s, box-shadow 0.15s, transform 0.05s !important;
 }
 .memo-start-fresh-btn:hover {
-    border-color: var(--vf-forest) !important;
-    color: var(--vf-forest) !important;
-    background: var(--vf-mint-bg-soft) !important;
+    background: var(--vf-forest-deep) !important;
+    box-shadow: 0 2px 4px rgba(24, 46, 38, 0.22), 0 6px 18px rgba(24, 46, 38, 0.16) !important;
+}
+.memo-start-fresh-btn:active {
+    transform: translateY(1px);
+    box-shadow: 0 1px 2px rgba(24, 46, 38, 0.18) !important;
+}
+.memo-start-fresh-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.18);
+    font-size: 1.1rem;
+    line-height: 1;
+    font-weight: 600;
+}
+.memo-start-fresh-label {
+    display: inline-block;
 }
 
 /* User badge + logout — refined to match */

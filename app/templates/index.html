@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=18">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=19">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -120,13 +120,13 @@
         <div id="tab-pipeline" class="tab-content active">
             <!-- Wizard Step Indicator -->
             <div class="wizard-steps">
-                <div class="wizard-step active" data-step="1" onclick="wizNavBack(1)" title="Go back to Upload"><span class="wizard-step-num">1</span><span class="wizard-step-label">Upload</span></div>
+                <div class="wizard-step active" data-step="1" onclick="wizNavBack(1)" title="Jump to Upload"><span class="wizard-step-num">1</span><span class="wizard-step-label">Upload</span></div>
                 <div class="wizard-step-line"></div>
-                <div class="wizard-step" data-step="2" onclick="wizNavBack(2)" title="Go back to Review"><span class="wizard-step-num">2</span><span class="wizard-step-label">Review</span></div>
+                <div class="wizard-step" data-step="2" onclick="wizNavBack(2)" title="Jump to Review"><span class="wizard-step-num">2</span><span class="wizard-step-label">Review</span></div>
                 <div class="wizard-step-line"></div>
-                <div class="wizard-step" data-step="3" onclick="wizNavBack(3)" title="Go back to Configure"><span class="wizard-step-num">3</span><span class="wizard-step-label">Configure</span></div>
+                <div class="wizard-step" data-step="3" onclick="wizNavBack(3)" title="Jump to Configure"><span class="wizard-step-num">3</span><span class="wizard-step-label">Configure</span></div>
                 <div class="wizard-step-line"></div>
-                <div class="wizard-step" data-step="4"><span class="wizard-step-num">4</span><span class="wizard-step-label">Report</span></div>
+                <div class="wizard-step" data-step="4" onclick="wizNavBack(4)" title="Jump to Report"><span class="wizard-step-num">4</span><span class="wizard-step-label">Report</span></div>
             </div>
 
             <!-- Step 1: Upload -->
@@ -990,8 +990,9 @@
                     <h1>Investment Memo Generator</h1>
                     <p class="page-subtitle">Assemble data room documents, select a deal report, and generate a comprehensive investment memorandum using AI.</p>
                 </div>
-                <button class="btn-outline memo-start-fresh-btn" onclick="memoStartFresh()" title="Clear all uploaded files and reset this memo session">
-                    Start New Memo
+                <button class="btn-primary memo-start-fresh-btn" onclick="memoStartFresh()" title="Clear everything and start a fresh memo from scratch">
+                    <span class="memo-start-fresh-icon" aria-hidden="true">+</span>
+                    <span class="memo-start-fresh-label">Start New Memo</span>
                 </button>
             </div>
 
@@ -2385,7 +2386,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=170"></script>
+    <script src="/static/app.js?v=171"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

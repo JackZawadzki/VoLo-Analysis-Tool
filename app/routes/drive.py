@@ -1099,7 +1099,9 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
             conn.commit()
         finally:
             conn.close()
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)[:300]}")
+        # Use a longer truncation so Google's "Drive API not enabled" error
+        # — which includes the activation URL — is visible to the user.
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)[:1200]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

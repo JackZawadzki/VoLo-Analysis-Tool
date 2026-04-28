@@ -934,6 +934,11 @@ _checkAuth();
    ========================================================== */
 
 let _wizStep = 1;
+let _wizMaxStep = 1;          // Highest step the user has ever reached. Used by
+                              // wizNavBack to allow free navigation among
+                              // already-visited steps (e.g. swap freely between
+                              // Review / Configure / Report after a report is
+                              // loaded from history).
 let _wizExtraction = null;
 let _wizFmData = null;
 let _wizReport = null;
@@ -943,6 +948,7 @@ let _wizSavedInputs = null;   // Persisted inputs from a loaded report
 
 function wizGoStep(n) {
     _wizStep = n;
+    if (n > _wizMaxStep) _wizMaxStep = n;
     for (let i = 1; i <= 4; i++) {
         const panel = document.getElementById(`wiz-step-${i}`);
         if (panel) panel.style.display = i === n ? '' : 'none';
@@ -950,7 +956,7 @@ function wizGoStep(n) {
     document.querySelectorAll('.wizard-step').forEach(s => {
         const sn = parseInt(s.dataset.step);
         s.classList.toggle('active', sn === n);
-        s.classList.toggle('completed', sn < n);
+        s.classList.toggle('completed', sn !== n && sn <= _wizMaxStep);
     });
     // Scroll the pipeline tab back to the top so the new step is visible
     const _pipelineTab = document.getElementById('tab-pipeline');
@@ -973,24 +979,32 @@ function wizGoStep(n) {
     }
 }
 
-// Navigate backward to a step already visited, WITHOUT clearing any state.
-// Called by clicking completed step indicators. Only allows going back (n < _wizStep).
+// Navigate to a previously-visited step WITHOUT clearing any state.
+// Called by clicking the step indicators at the top of the wizard. The user
+// can freely jump between any step they've already reached — this is what
+// makes the bar feel like real tab navigation when reviewing an old report
+// (e.g. jump from Report back to Configure and then forward to Report again).
+// We allow forward navigation only up to _wizMaxStep so unvisited / stale
+// steps can't be skipped to.
 function wizNavBack(n) {
-    if (n >= _wizStep || n < 1) return; // can only go back, not forward
+    if (n < 1 || n > _wizMaxStep || n === _wizStep) return;
     _wizStep = n;
     for (let i = 1; i <= 4; i++) {
         const panel = document.getElementById(`wiz-step-${i}`);
         if (panel) panel.style.display = i === n ? '' : 'none';
     }
+    // Step indicator state: any step at or below _wizMaxStep is clickable
+    // and visually "completed" (visited). Only the current step is "active".
+    // This lets the user freely jump back and forth among visited steps.
     document.querySelectorAll('.wizard-step').forEach(s => {
         const sn = parseInt(s.dataset.step);
         s.classList.toggle('active', sn === n);
-        s.classList.toggle('completed', sn < n);
+        s.classList.toggle('completed', sn !== n && sn <= _wizMaxStep);
     });
     const _pipelineTab = document.getElementById('tab-pipeline');
     if (_pipelineTab) _pipelineTab.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    // Re-apply config if navigating back to step 3
+    // Re-apply config if navigating to step 3
     if (n === 3) {
         _wizPopulateVolumes();
         if (_wizSavedInputs) wizRestoreConfig(_wizSavedInputs);
@@ -8579,7 +8593,31 @@ async function driveSyncLibrary() {
             return;
         }
         const data = await r.json();
-        if (status) { status.textContent = `Synced (${data.stats.new} new, ${data.stats.updated} updated, ${data.total_docs} total)`; status.className = 'memo-drive-status synced'; }
+        const s = data.stats || {};
+        const total = data.total_docs || 0;
+        const summary = `${s.new || 0} new, ${s.updated || 0} updated, ${s.unchanged || 0} unchanged, ${s.skipped || 0} skipped, ${total} total`;
+        if (status) { status.textContent = `Synced — ${summary}`; status.className = 'memo-drive-status synced'; }
+        // If nothing usable was pulled, explain why so the user isn't left guessing.
+        if (total === 0) {
+            const skipped = s.skipped || 0;
+            if (skipped > 0) {
+                alert(
+                    `Sync completed but no documents were imported.\n\n` +
+                    `${skipped} file(s) in the folder were skipped because their format isn't supported. ` +
+                    `Supported types: PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, HTML, and Google Docs/Sheets/Slides.\n\n` +
+                    `Common causes:\n` +
+                    `• ZIP / archive files (we don't auto-extract — please unzip in Drive first)\n` +
+                    `• Images, videos, audio, or other binaries\n` +
+                    `• Files in deeply nested folders that aren't deal documents\n\n` +
+                    `Tip: open the folder in Drive and confirm it contains supported document types.`
+                );
+            } else {
+                alert(
+                    `Sync completed but the folder appears to be empty (or contains only subfolders with no supported documents).\n\n` +
+                    `Make sure the folder you linked is the one with the actual deal docs, not just a parent folder.`
+                );
+            }
+        }
         // Refresh the library view
         await driveLibraryChanged();
         await driveLoadLibraries();
