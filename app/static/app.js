@@ -2284,13 +2284,40 @@ function wizPopulateReview() {
 
     const fmYears = d._fm_fiscal_years || [];
     if (d.revenue_projections && Array.isArray(d.revenue_projections) && d.revenue_projections.some(v => v !== 0)) {
-        const src = d._fm_revenue_source ? ' (from financial model)' : '';
-        html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue Projections, $M${src}</h4><div class="form-group"><div class="volume-row">`;
-        for (let i = 0; i < d.revenue_projections.length && i < 10; i++) {
-            const label = fmYears[i] ? fmYears[i] : `Y${i+1}`;
-            html += `<div style="text-align:center;"><small style="font-size:0.65rem; color:var(--text-secondary);">${label}</small><br><input type="number" id="wiz-rev-rev-${i}" value="${d.revenue_projections[i] || 0}" style="width:80px;"></div>`;
+        if (d._fm_revenue_source) {
+            // Financial model is the authoritative source. Show a read-only
+            // summary so the analyst can see what's being fed to the simulation
+            // but can't accidentally diverge it from the actual extracted model.
+            html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue Projections (from financial model)</h4>`;
+            html += `<p style="font-size:0.78rem; color:var(--text-secondary); margin:4px 0 8px;">These values come directly from the uploaded Excel financial model and cannot be edited here. Edit the model itself to change them.</p>`;
+            html += `<div class="form-group"><div class="volume-row">`;
+            for (let i = 0; i < d.revenue_projections.length && i < 10; i++) {
+                const label = fmYears[i] ? fmYears[i] : `Y${i+1}`;
+                const v = d.revenue_projections[i] || 0;
+                html += `<div style="text-align:center;"><small style="font-size:0.65rem; color:var(--text-secondary);">${label}</small><br><input type="number" id="wiz-rev-rev-${i}" value="${v}" data-rev-unit-mult="1" style="width:80px; background:var(--bg-subtle); color:var(--text-secondary); cursor:not-allowed;" readonly tabindex="-1"></div>`;
+            }
+            html += `</div><div style="font-size:0.7rem; color:var(--text-tertiary); margin-top:6px;">Unit: $M (millions of US dollars)</div></div></div>`;
+        } else {
+            // Manual / deck-extracted values — editable, with a unit selector
+            // so analysts whose data isn't in millions can pick the right scale.
+            html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue Projections</h4>`;
+            html += `<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:0.78rem; color:var(--text-secondary);">`;
+            html += `<label for="wiz-rev-unit" style="font-weight:500;">Unit:</label>`;
+            html += `<select id="wiz-rev-unit" style="font-size:0.78rem; padding:3px 6px;">`;
+            html += `  <option value="$M" selected>$M (millions)</option>`;
+            html += `  <option value="$">$ (raw dollars)</option>`;
+            html += `  <option value="$K">$K (thousands)</option>`;
+            html += `  <option value="$B">$B (billions)</option>`;
+            html += `</select>`;
+            html += `<span style="color:var(--text-tertiary); font-size:0.72rem;">Backend stores in $M; values are converted on submit.</span>`;
+            html += `</div>`;
+            html += `<div class="form-group"><div class="volume-row">`;
+            for (let i = 0; i < d.revenue_projections.length && i < 10; i++) {
+                const label = fmYears[i] ? fmYears[i] : `Y${i+1}`;
+                html += `<div style="text-align:center;"><small style="font-size:0.65rem; color:var(--text-secondary);">${label}</small><br><input type="number" id="wiz-rev-rev-${i}" value="${d.revenue_projections[i] || 0}" style="width:80px;"></div>`;
+            }
+            html += '</div></div></div>';
         }
-        html += '</div></div></div>';
     }
 
     if (d.unit_volumes_projected && Array.isArray(d.unit_volumes_projected) && d.unit_volumes_projected.some(v => v !== 0)) {
@@ -2366,14 +2393,23 @@ function _wizMergeFmIntoExtraction() {
         }
     }
 
-    if ((!d.revenue_projections || !d.revenue_projections.length) && fin.revenue && years.length) {
+    // PRECEDENCE: when a financial model has revenue data, it is authoritative.
+    // It overwrites whatever pitch-deck LLM extraction may have produced.
+    // Previously this only filled if revenue_projections was empty, which let
+    // hallucinated deck values override real Excel data.
+    if (fin.revenue && typeof fin.revenue === 'object' && years.length && Object.keys(fin.revenue).length > 0) {
         d.revenue_projections = years.map(y => {
             const raw = fin.revenue[String(y)] ?? fin.revenue[y] ?? 0;
             return Math.round((raw / 1_000_000) * 100) / 100;
         });
-        d.revenue_units = d.revenue_units || '$M (from model)';
+        d.revenue_units = '$M (from model)';
         d._fm_revenue_source = true;
         d._fm_fiscal_years = years;
+    } else {
+        // No FM revenue — make sure the source flag isn't lingering from a
+        // previous extraction so the UI renders the editable form, not the
+        // read-only FM summary.
+        d._fm_revenue_source = false;
     }
 
     if ((!d.unit_volumes_projected || !d.unit_volumes_projected.length) && _wizFmData.units) {
@@ -2915,10 +2951,26 @@ async function wizRunPipeline() {
     const vols = [];
     for (let i = 0; i < 10; i++) vols.push(parseFloat(document.getElementById(`wiz-vol-${i}`)?.value || 0));
 
+    // Revenue projections: backend canonical unit is $M. The UI now shows a
+    // unit selector for the manual-entry case (when the values aren't from a
+    // financial model). Convert what the analyst typed into $M based on the
+    // selected unit. When the source IS the financial model, the inputs are
+    // read-only and already in $M (multiplier = 1).
+    const revUnitEl = document.getElementById('wiz-rev-unit');
+    const revUnit = revUnitEl ? revUnitEl.value : '$M';
+    const _toMillions = {
+        '$':  v => v / 1_000_000,
+        '$K': v => v / 1_000,
+        '$M': v => v,
+        '$B': v => v * 1_000,
+    };
+    const _convert = _toMillions[revUnit] || _toMillions['$M'];
     const founderRevs = [];
     for (let i = 0; i < 10; i++) {
         const el = document.getElementById(`wiz-rev-rev-${i}`);
-        if (el) founderRevs.push(parseFloat(el.value || 0));
+        if (!el) continue;
+        const raw = parseFloat(el.value || 0) || 0;
+        founderRevs.push(_convert(raw));
     }
 
     const founderVols = [];

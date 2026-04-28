@@ -250,11 +250,21 @@ def generate_deal_report(
         portfolio["volo_investment"] = check_size_millions * 1_000_000
 
     # ── Pre-compute founder revenue in $M for the simulation ────────────────
-    # If a financial model was uploaded, extract revenue by fiscal year and
-    # convert to $M, ALIGNED to entry_year so T=0 = entry_year.
-    # FM years before entry_year are historical and are EXCLUDED.
-    # FM years >= entry_year map to T = fiscal_year - entry_year.
+    # PRECEDENCE (changed 2026-04: previously the wizard form value won, which
+    # let pitch-deck LLM hallucinations override real Excel data when both
+    # were uploaded — see VoLo bug "Founder Projection +51,956%"):
+    #
+    #   1. If a financial model was uploaded AND it has revenue data, use it.
+    #      Aligned so T=0 = entry_year; fiscal years < entry_year are historical
+    #      and excluded.
+    #   2. Otherwise, fall back to the wizard's manual `founder_revenue_projections`
+    #      (already in $M, T=0). This path is for deck-only / no-model deals.
+    #
+    # The financial model is the deterministic, cell-evidenced source. The
+    # wizard inputs come from LLM extraction of decks which can hallucinate.
+    # When both exist, the financial model is authoritative.
     _sim_founder_rev_m = None
+    _sim_founder_rev_source = None  # "financial_model" | "manual" | None
     if financial_model and isinstance(financial_model, dict):
         fm_fin = financial_model.get("financials", {})
         if not isinstance(fm_fin, dict): fm_fin = {}
@@ -263,8 +273,17 @@ def generate_deal_report(
         fm_rev = fm_fin.get("revenue", {})
         if not isinstance(fm_rev, dict): fm_rev = {}
         if fm_rev and fm_years:
-            # Only include fiscal years at or after entry_year
-            future_years = [int(y) for y in fm_years if int(y) >= entry_year]
+            # Only include fiscal years at or after entry_year. Guard against
+            # malformed entries (None, "", non-numeric strings) so a noisy FM
+            # can't 500 the whole pipeline — we just skip the bad rows.
+            future_years = []
+            for y in fm_years:
+                try:
+                    iy = int(str(y).strip())
+                    if iy >= entry_year:
+                        future_years.append(iy)
+                except (TypeError, ValueError, AttributeError):
+                    continue
             if future_years:
                 rev_list = [0.0] * (max(future_years) - entry_year + 1)
                 for y in future_years:
@@ -276,10 +295,20 @@ def generate_deal_report(
                     rev_list[t] = float(val or 0) / 1_000_000
                 if any(v > 0 for v in rev_list):
                     _sim_founder_rev_m = rev_list
-    # Fallback: use wizard-provided founder projections (already in $M, start at T=0)
+                    _sim_founder_rev_source = "financial_model"
+
+    # Only fall back to manual wizard inputs if no financial model revenue
+    # was usable. This is the deck-only path.
     if (not _sim_founder_rev_m) and founder_revenue_projections:
         if any(float(v or 0) > 0 for v in founder_revenue_projections):
             _sim_founder_rev_m = [float(v) for v in founder_revenue_projections]
+            _sim_founder_rev_source = "manual"
+
+    # If FM is the source, force the founder_comparison to be built from FM
+    # values too (otherwise the divergence table would still be comparing the
+    # stale form values against the FM-anchored simulation).
+    if _sim_founder_rev_source == "financial_model":
+        founder_revenue_projections = list(_sim_founder_rev_m)
 
     # ── Section 1: Monte Carlo simulation ─────────────────────────────────────
     sim = run_simulation(
