@@ -1271,7 +1271,7 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-info" onclick="wizOpenFolderDeal(${d.id})">
                         <div class="lib-art-title">Deal Report${d.archetype ? ` · ${_libEscape(d.archetype)}` : ''}${d.entry_stage ? ` · ${_libEscape(d.entry_stage)}` : ''}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong></div>
-                        <div class="lib-art-when">${_libFmtDateTime(d.created_at)} <span class="lib-art-when-rel">(${_libFmtDate(d.created_at)})</span></div>
+                        <div class="lib-art-when">${_libFmtDateTime(d.created_at)}</div>
                     </div>
                     <button class="lib-art-srcbtn" onclick="event.stopPropagation(); libShowSourceData(${d.id});" title="View raw inputs the model used">Source data</button>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDealReport(${d.id});" title="Delete this deal report" aria-label="Delete">&#128465;</button>
@@ -1301,7 +1301,7 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-info" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">
                         <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${sizeStr}</div>
-                        <div class="lib-art-when">${_libFmtDateTime(d.generated_at)} <span class="lib-art-when-rel">(${_libFmtDate(d.generated_at)})</span></div>
+                        <div class="lib-art-when">${_libFmtDateTime(d.generated_at)}</div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDdr(${d.id});" title="Delete this DDR" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&darr;</span>
@@ -1321,7 +1321,7 @@ function wizOpenFolder(idx) {
                     <div class="lib-art-info" onclick="wizOpenFolderMemo(${m.id})">
                         <div class="lib-art-title">Investment Memo${m.model_used ? ` · ${_libEscape(m.model_used)}` : ''}</div>
                         <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong></div>
-                        <div class="lib-art-when">${_libFmtDateTime(m.created_at)} <span class="lib-art-when-rel">(${_libFmtDate(m.created_at)})</span></div>
+                        <div class="lib-art-when">${_libFmtDateTime(m.created_at)}</div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteMemo(${m.id});" title="Delete this memo" aria-label="Delete">&#128465;</button>
                     <span class="lib-art-arrow" onclick="wizOpenFolderMemo(${m.id})">&rsaquo;</span>
