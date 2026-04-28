@@ -1235,7 +1235,6 @@ function _wizRenderLibrary() {
                 </div>
                 <div class="lib-chips">${chips.join('')}</div>
                 <div class="lib-card-meta">
-                    <span class="lib-card-date">Updated ${_libFmtDate(g.latest_at)}</span>
                     <span class="lib-card-arrow">&rsaquo;</span>
                 </div>
             </div>`;
@@ -1598,12 +1597,11 @@ function _libNotesEscape(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function _libNotesFmtDate(iso) {
-    if (!iso) return '';
-    try {
-        const d = new Date(iso.replace(' ', 'T') + (iso.includes('Z') || iso.includes('+') ? '' : 'Z'));
-        if (isNaN(d.getTime())) return iso;
-        return d.toLocaleString();
-    } catch (_) { return iso; }
+    // Reuse the library's tolerant parser so analyst-notes timestamps render
+    // in the same readable "Apr 27, 2026, 6:32 PM" format the artifact rows
+    // use — instead of the locale's numeric "4/27/2026, 6:32:08 PM" which
+    // included confusing seconds and didn't handle Postgres "+00" offsets.
+    return _libFmtDateTime(iso);
 }
 function _libNotesRenderMeta() {
     const el = document.getElementById('lib-notes-meta');
