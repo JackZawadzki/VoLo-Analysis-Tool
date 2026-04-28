@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=15">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=16">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -1098,9 +1098,27 @@
                                         <svg width="18" height="18" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg"><path d="M6.6 66.85L17.2 78l29.2-50.7L35.8 13z" fill="#0066DA"/><path d="M57.3 78h20.9L49 27.3H28.1z" fill="#00AC47"/><path d="M23.2 78h34.1L86.3 27.3 57.3 0 28.1 27.3z" fill="#EA4335" opacity=".0"/><path d="M57.3 0L28.1 27.3h58.2z" fill="#00832D" opacity=".0"/><path d="M86.3 27.3H28.1L57.3 0l29 27.3z" fill="#2684FC"/><path d="M57.3 78L86.3 27.3H28.1z" fill="#FFBA00"/></svg>
                                     </span>
                                     <strong>Google Drive</strong>
-                                    <span class="memo-drive-status" id="memo-drive-status"></span>
+                                    <span class="memo-drive-status" id="memo-drive-status">Checking…</span>
+                                    <button class="btn-sm btn-outline drive-disconnect-btn" id="memo-drive-disconnect" onclick="driveDisconnect()" style="display:none;margin-left:auto;">Disconnect</button>
                                 </div>
-                                <div class="memo-drive-connect" id="memo-drive-connect">
+
+                                <!-- Shown when the user has not connected their Google account -->
+                                <div class="memo-drive-connect-panel" id="memo-drive-connect-panel" style="display:none;">
+                                    <p class="memo-drive-connect-explainer">
+                                        Sign in with your Google account to read deal-room folders directly from Drive.
+                                        The app only sees folders <em>you</em> already have access to — same as
+                                        if you opened them in Drive yourself.
+                                    </p>
+                                    <button class="btn-primary memo-drive-connect-btn" onclick="driveConnect()">
+                                        <span class="memo-drive-connect-icon" aria-hidden="true">
+                                            <svg width="16" height="16" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg"><path fill="#FFC107" d="M43.6 20.5H42V20.4H24v7.2h11.2c-1.5 4.2-5.5 7.2-10.2 7.2-6 0-10.8-4.8-10.8-10.8s4.8-10.8 10.8-10.8c2.7 0 5.2 1 7.1 2.7l5.1-5.1C33.7 7.7 29.1 6 24 6 14.1 6 6 14.1 6 24s8.1 18 18 18c9.9 0 18-8.1 18-18 0-1.2-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M8.3 14.7l5.9 4.3c1.6-3.9 5.4-6.7 9.8-6.7 2.7 0 5.2 1 7.1 2.7l5.1-5.1C33.7 7.7 29.1 6 24 6 16.6 6 10.2 10.4 8.3 14.7z"/><path fill="#4CAF50" d="M24 42c5 0 9.6-1.6 13.1-4.5l-6-5.1c-2 1.4-4.5 2.4-7.1 2.4-4.7 0-8.6-3-10.1-7.2l-5.9 4.5C9.7 37.5 16.3 42 24 42z"/><path fill="#1976D2" d="M43.6 20.5H42V20.4H24v7.2h11.2c-.7 2-2 3.7-3.7 5l6 5.1c-.4.3 6.5-4.7 6.5-13.7 0-1.2-.1-2.4-.4-3.5z"/></svg>
+                                        </span>
+                                        Connect Google Drive
+                                    </button>
+                                </div>
+
+                                <!-- Shown only once the user is connected -->
+                                <div class="memo-drive-connect" id="memo-drive-connect" style="display:none;">
                                     <div class="memo-drive-row">
                                         <select id="memo-library-select" class="memo-select" onchange="driveLibraryChanged()">
                                             <option value="">Select a deal library...</option>
@@ -2343,7 +2361,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=165"></script>
+    <script src="/static/app.js?v=166"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

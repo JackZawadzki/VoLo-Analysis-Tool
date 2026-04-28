@@ -295,6 +295,68 @@ table th {
 }
 .beta-banner-text { flex: 1 !important; }
 
+/* ──────────────────────────────────────────────────────────
+   Google Drive connection panel — shown in IC Memo when the
+   user has not yet connected their Google account.
+   ────────────────────────────────────────────────────────── */
+.memo-drive-connect-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+    margin-top: 10px;
+    background: var(--vf-mint-bg-soft);
+    border: 1px solid var(--vf-hairline);
+    border-radius: 8px;
+}
+.memo-drive-connect-explainer {
+    margin: 0;
+    font-size: 0.83rem;
+    color: var(--vf-slate);
+    line-height: 1.5;
+    max-width: 560px;
+}
+.memo-drive-connect-explainer em {
+    font-style: italic;
+    color: var(--vf-forest);
+}
+.memo-drive-connect-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    background: #fff !important;
+    color: #3c4043 !important;
+    border: 1px solid #dadce0 !important;
+    border-radius: 4px !important;
+    padding: 8px 14px !important;
+    font-weight: 500 !important;
+    font-size: 0.86rem !important;
+    box-shadow: 0 1px 2px rgba(60,64,67,0.08) !important;
+    transition: box-shadow 0.15s, background 0.15s !important;
+}
+.memo-drive-connect-btn:hover {
+    background: #f8f9fa !important;
+    box-shadow: 0 1px 3px rgba(60,64,67,0.16) !important;
+}
+.memo-drive-connect-icon {
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Status line next to "Google Drive" header */
+.memo-drive-status {
+    font-size: 0.78rem;
+    color: var(--vf-stone);
+    margin-left: 6px;
+}
+.memo-drive-status.is-connected {
+    color: var(--vf-success);
+    font-weight: 500;
+}
+.memo-drive-status.is-disconnected { color: var(--vf-stone); }
+.drive-disconnect-btn { font-size: 0.72rem !important; padding: 3px 10px !important; }
+
 /* User badge + logout — refined to match */
 .nav-user-badge {
     background: var(--vf-stone-bg) !important;

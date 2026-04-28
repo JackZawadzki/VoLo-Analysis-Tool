@@ -263,6 +263,20 @@ CREATE TABLE IF NOT EXISTS ddr_reports (
     file_size_bytes INTEGER NOT NULL DEFAULT 0
 );
 
+-- Per-user Google Drive OAuth credentials. The refresh_token is encrypted at
+-- rest with a Fernet key from GOOGLE_TOKEN_ENCRYPTION_KEY (env). Each user
+-- connects their own Drive account; the app reads files using their tokens
+-- so existing per-folder Drive permissions are inherited automatically.
+CREATE TABLE IF NOT EXISTS user_drive_credentials (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id           INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+    google_email      TEXT    NOT NULL DEFAULT '',
+    refresh_token_enc TEXT    NOT NULL,
+    scopes            TEXT    NOT NULL DEFAULT '',
+    connected_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_used_at      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS dd_scenarios (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -711,6 +725,16 @@ def migrate_db():
             created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
             UNIQUE(library_id, drive_file_id)
+        )""",
+        # Per-user Google Drive OAuth credentials (refresh_token_enc is Fernet-encrypted)
+        """CREATE TABLE IF NOT EXISTS user_drive_credentials (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id           INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            google_email      TEXT    NOT NULL DEFAULT '',
+            refresh_token_enc TEXT    NOT NULL,
+            scopes            TEXT    NOT NULL DEFAULT '',
+            connected_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+            last_used_at      TEXT
         )""",
         # model_preferences table
         """CREATE TABLE IF NOT EXISTS model_preferences (

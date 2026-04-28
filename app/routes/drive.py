@@ -1,15 +1,28 @@
 """
-Google Drive integration — sync deal data room folders into the document library.
+Google Drive integration — per-user OAuth.
 
-POST   /api/drive/libraries              — create / link a deal library to a Drive folder
-GET    /api/drive/libraries              — list all libraries
-GET    /api/drive/libraries/{id}         — get library details + documents
-DELETE /api/drive/libraries/{id}         — remove a library
-POST   /api/drive/libraries/{id}/sync    — sync from Google Drive (pull new/changed files)
-GET    /api/drive/libraries/{id}/documents — list documents in a library
-PUT    /api/drive/documents/{id}/category — update document category
+Each user connects their own Google account once via the OAuth flow; the app
+then reads Drive on their behalf, inheriting whatever per-folder permissions
+they already have. Refresh tokens are encrypted at rest with a Fernet key
+from GOOGLE_TOKEN_ENCRYPTION_KEY.
+
+OAuth flow:
+  GET  /api/drive/oauth/authorize        — redirects user to Google consent screen
+  GET  /api/drive/oauth/callback         — Google redirects back here with a code
+  POST /api/drive/disconnect             — revoke + delete this user's credentials
+  GET  /api/drive/connection-status      — { connected, google_email, connected_at }
+
+Library / sync:
+  POST   /api/drive/libraries              — create / link a deal library to a Drive folder
+  GET    /api/drive/libraries              — list all libraries
+  GET    /api/drive/libraries/{id}         — get library details + documents
+  DELETE /api/drive/libraries/{id}         — remove a library
+  POST   /api/drive/libraries/{id}/sync    — sync from Google Drive (pull new/changed files)
+  GET    /api/drive/libraries/{id}/documents — list documents in a library
+  PUT    /api/drive/documents/{id}/category — update document category
 """
 
+import base64
 import hashlib
 import io
 import json
@@ -18,19 +31,282 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
+# Google's OAuth library can return scopes in a different order than requested
+# (e.g. it normalizes "openid" / "email"), which causes oauthlib to raise
+# "Scope has changed" on token exchange. This env flag tells oauthlib to
+# accept the normalized scopes. Must be set BEFORE oauthlib is imported.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+import jwt
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from ..auth import CurrentUser, get_current_user
+from ..auth import CurrentUser, SECRET_KEY, decode_token, get_current_user, get_optional_user
 from ..database import get_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/drive", tags=["drive"])
+
+# ── OAuth configuration ───────────────────────────────────────────────────────
+# Scopes requested at consent time. drive.readonly + email + openid lets us
+# (a) read files the user can see, (b) record which Google account connected.
+_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "openid",
+]
+
+# Google OAuth requires returned scopes to match exactly. The userinfo and
+# openid scopes can come back with full URL prefixes; we accept both forms.
+_REQUIRED_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+
+# State token TTL — covers the round-trip to Google + user clicking through
+_OAUTH_STATE_TTL_SECONDS = 600
+
+
+def _oauth_redirect_uri(request: Optional[Request] = None) -> str:
+    """The OAuth redirect URI must exactly match what's registered in Google
+    Cloud Console. We prefer the explicit env var; if it's not set we build
+    one from the incoming request, which works for both Replit and localhost."""
+    explicit = os.environ.get("GOOGLE_OAUTH_REDIRECT_URI", "").strip()
+    if explicit:
+        return explicit
+    if request is not None:
+        # Use forwarded scheme/host if available (Replit's reverse proxy)
+        scheme = request.headers.get("x-forwarded-proto") or request.url.scheme
+        host = request.headers.get("x-forwarded-host") or request.url.netloc
+        return f"{scheme}://{host}/api/drive/oauth/callback"
+    raise HTTPException(
+        status_code=500,
+        detail="GOOGLE_OAUTH_REDIRECT_URI not configured and no request context.",
+    )
+
+
+def _oauth_client_config(request: Optional[Request] = None) -> dict:
+    """Build the client_config dict that google-auth-oauthlib's Flow expects."""
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Google Drive integration is not configured. "
+                "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in Replit Secrets."
+            ),
+        )
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [_oauth_redirect_uri(request)],
+        }
+    }
+
+
+# ── Refresh-token encryption (Fernet, key from env) ───────────────────────────
+_FERNET_INSTANCE = None
+
+
+def _get_fernet():
+    """Lazily build a Fernet cipher from GOOGLE_TOKEN_ENCRYPTION_KEY.
+    The key must be a 32-byte url-safe base64 string (Fernet.generate_key())."""
+    global _FERNET_INSTANCE
+    if _FERNET_INSTANCE is not None:
+        return _FERNET_INSTANCE
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="cryptography package not installed. Run: pip install cryptography",
+        )
+    key = os.environ.get("GOOGLE_TOKEN_ENCRYPTION_KEY", "").strip()
+    if not key:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "GOOGLE_TOKEN_ENCRYPTION_KEY is not set. Generate one with: "
+                "python -c \"from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())\" — then add it to Replit Secrets."
+            ),
+        )
+    try:
+        _FERNET_INSTANCE = Fernet(key.encode() if isinstance(key, str) else key)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GOOGLE_TOKEN_ENCRYPTION_KEY is invalid: {e}",
+        )
+    return _FERNET_INSTANCE
+
+
+def _encrypt_token(plaintext: str) -> str:
+    """Encrypt a refresh token for at-rest storage in the DB."""
+    f = _get_fernet()
+    return f.encrypt(plaintext.encode("utf-8")).decode("ascii")
+
+
+def _decrypt_token(ciphertext: str) -> str:
+    """Reverse of _encrypt_token."""
+    f = _get_fernet()
+    return f.decrypt(ciphertext.encode("ascii")).decode("utf-8")
+
+
+# ── Per-user credential storage ───────────────────────────────────────────────
+
+def _save_user_credentials(user_id: int, refresh_token: str,
+                           google_email: str, scopes: list) -> None:
+    """Upsert encrypted refresh token + metadata for a user."""
+    enc = _encrypt_token(refresh_token)
+    scopes_str = " ".join(scopes) if scopes else ""
+    conn = get_db()
+    try:
+        existing = conn.execute(
+            "SELECT id FROM user_drive_credentials WHERE user_id=?", (user_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE user_drive_credentials
+                   SET google_email=?, refresh_token_enc=?, scopes=?,
+                       connected_at=datetime('now')
+                   WHERE user_id=?""",
+                (google_email, enc, scopes_str, user_id),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO user_drive_credentials
+                   (user_id, google_email, refresh_token_enc, scopes)
+                   VALUES (?, ?, ?, ?)""",
+                (user_id, google_email, enc, scopes_str),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _delete_user_credentials(user_id: int) -> bool:
+    """Remove a user's stored Drive credentials. Returns True if a row was deleted."""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "DELETE FROM user_drive_credentials WHERE user_id=?", (user_id,)
+        )
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def _get_user_drive_status(user_id: int) -> dict:
+    """Return connection status for a user (no secrets)."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT google_email, connected_at, last_used_at, scopes
+               FROM user_drive_credentials WHERE user_id=?""",
+            (user_id,),
+        ).fetchone()
+        if not row:
+            return {"connected": False}
+        return {
+            "connected": True,
+            "google_email": row["google_email"],
+            "connected_at": row["connected_at"],
+            "last_used_at": row["last_used_at"],
+            "scopes": row["scopes"],
+        }
+    finally:
+        conn.close()
+
+
+def _load_user_oauth_credentials(user_id: int):
+    """Build a google.oauth2.credentials.Credentials object for this user.
+    Returns None if the user has not connected Drive."""
+    try:
+        from google.oauth2.credentials import Credentials
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="google-auth not installed. Run: pip install google-auth google-auth-oauthlib google-api-python-client",
+        )
+
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT refresh_token_enc, scopes FROM user_drive_credentials WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+
+    try:
+        refresh_token = _decrypt_token(row["refresh_token_enc"])
+    except Exception as e:
+        logger.error(f"Failed to decrypt refresh token for user {user_id}: {e}")
+        return None
+
+    scopes = (row["scopes"] or "").split() or _OAUTH_SCOPES
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+
+    return Credentials(
+        token=None,                       # no current access token; will refresh
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=scopes,
+    )
+
+
+def _touch_last_used(user_id: int) -> None:
+    """Update last_used_at after a successful Drive call."""
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE user_drive_credentials SET last_used_at=datetime('now') WHERE user_id=?",
+            (user_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Signed state parameter (CSRF protection on OAuth callback) ────────────────
+
+def _make_oauth_state(user_id: int) -> str:
+    """Sign a short-lived JWT carrying the user_id so the OAuth callback knows
+    which logged-in user is authorizing. Uses the app's existing SECRET_KEY."""
+    payload = {
+        "uid": user_id,
+        "kind": "drive_oauth",
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_STATE_TTL_SECONDS),
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+
+
+def _verify_oauth_state(state: str) -> int:
+    """Validate the state token and return the user_id it was issued for.
+    Raises HTTPException on invalid/expired state."""
+    try:
+        payload = jwt.decode(state, SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=400, detail="OAuth flow expired. Please try again.")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+    if payload.get("kind") != "drive_oauth":
+        raise HTTPException(status_code=400, detail="Invalid OAuth state.")
+    return int(payload["uid"])
 
 # ── Temp directory for downloaded files during extraction ─────────────────────
 _DRIVE_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "drive_cache"
@@ -97,37 +373,46 @@ def _parse_drive_folder_id(url_or_id: str) -> str:
     raise ValueError(f"Could not parse Drive folder ID from: {url_or_id[:100]}")
 
 
-def _get_drive_service():
-    """Build a Google Drive API service using service account credentials."""
+def _get_drive_service(user_id: int):
+    """Build an authenticated Drive v3 service for a specific user.
+    Reads the user's stored refresh token, exchanges it for a fresh access
+    token, and returns a service. Raises 401 with `code=drive_not_connected`
+    if the user has never connected, or if the token has been revoked."""
     try:
-        from google.oauth2 import service_account
         from googleapiclient.discovery import build
+        from google.auth.transport.requests import Request as GoogleAuthRequest
     except ImportError:
         raise HTTPException(
             status_code=500,
-            detail="Google API libraries not installed. Run: pip install google-api-python-client google-auth"
+            detail="Google API libraries not installed. Run: pip install google-api-python-client google-auth google-auth-oauthlib",
         )
 
-    creds_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    if not creds_path:
-        # Also check for inline JSON in env
-        creds_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_CREDS", "")
-        if creds_json:
-            import json as _json
-            info = _json.loads(creds_json)
-            creds = service_account.Credentials.from_service_account_info(
-                info, scopes=["https://www.googleapis.com/auth/drive.readonly"]
-            )
-        else:
-            raise HTTPException(
-                status_code=500,
-                detail="Google Drive credentials not configured. Set GOOGLE_SERVICE_ACCOUNT_JSON (path) or GOOGLE_SERVICE_ACCOUNT_CREDS (JSON string) in .env"
-            )
-    else:
-        creds = service_account.Credentials.from_service_account_file(
-            creds_path, scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    creds = _load_user_oauth_credentials(user_id)
+    if creds is None:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "drive_not_connected",
+                "message": "Google Drive is not connected for this user. Connect it from the IC Memo tab.",
+            },
         )
 
+    # Refresh the access token. If the refresh itself fails (revoked / expired),
+    # purge the stored credentials and tell the user to reconnect.
+    try:
+        creds.refresh(GoogleAuthRequest())
+    except Exception as e:
+        logger.warning(f"Drive token refresh failed for user {user_id}: {e}")
+        _delete_user_credentials(user_id)
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "drive_token_revoked",
+                "message": "Your Google Drive connection has expired or been revoked. Please reconnect.",
+            },
+        )
+
+    _touch_last_used(user_id)
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
@@ -252,6 +537,151 @@ def _extract_text(file_bytes: bytes, file_name: str, mime_type: str) -> str:
         text = f"[Extraction error: {str(e)[:200]}]"
 
     return text
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  OAUTH FLOW — per-user Google Drive sign-in
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/oauth/authorize")
+async def oauth_authorize(
+    request: Request,
+    token: Optional[str] = Query(None),
+    user: Optional[CurrentUser] = Depends(get_optional_user),
+):
+    """Kick off the OAuth flow. Redirects the browser to Google's consent screen.
+
+    This is a top-level browser navigation (not an XHR), so the browser does
+    NOT send our Authorization header. We accept a `?token=` query param as
+    a fallback — same pattern as /memo/history/{id}/docx and document view."""
+    effective_user = user
+    if not effective_user and token:
+        payload = decode_token(token)
+        if payload:
+            effective_user = CurrentUser(uid=int(payload["sub"]), username=payload["user"], role=payload["role"])
+    if not effective_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="google-auth-oauthlib not installed. Run: pip install google-auth-oauthlib",
+        )
+
+    redirect_uri = _oauth_redirect_uri(request)
+    flow = Flow.from_client_config(
+        _oauth_client_config(request),
+        scopes=_OAUTH_SCOPES,
+        redirect_uri=redirect_uri,
+    )
+    state = _make_oauth_state(effective_user.id)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",          # required to get a refresh_token
+        prompt="consent",                # force refresh_token issuance even if user re-authorizes
+        include_granted_scopes="true",
+        state=state,
+    )
+    return RedirectResponse(url=auth_url)
+
+
+@router.get("/oauth/callback")
+async def oauth_callback(
+    request: Request,
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+):
+    """Google redirects here after the user clicks Allow/Deny on the consent
+    screen. Exchanges the authorization code for tokens, stores the refresh
+    token (encrypted), and bounces the user back to the IC Memo tab."""
+    if error:
+        return RedirectResponse(
+            url=f"/?drive_oauth=error&reason={error}#memo",
+            status_code=302,
+        )
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state in OAuth callback.")
+
+    user_id = _verify_oauth_state(state)
+
+    try:
+        from google_auth_oauthlib.flow import Flow
+    except ImportError:
+        raise HTTPException(
+            status_code=500,
+            detail="google-auth-oauthlib not installed. Run: pip install google-auth-oauthlib",
+        )
+
+    redirect_uri = _oauth_redirect_uri(request)
+    flow = Flow.from_client_config(
+        _oauth_client_config(request),
+        scopes=_OAUTH_SCOPES,
+        redirect_uri=redirect_uri,
+    )
+
+    try:
+        # Pass the full callback URL so the library can extract the code itself
+        flow.fetch_token(code=code)
+    except Exception as e:
+        logger.error(f"OAuth token exchange failed for user {user_id}: {e}")
+        return RedirectResponse(
+            url=f"/?drive_oauth=error&reason=token_exchange_failed#memo",
+            status_code=302,
+        )
+
+    creds = flow.credentials
+    if not creds.refresh_token:
+        # Should not happen with prompt=consent + access_type=offline, but be defensive
+        return RedirectResponse(
+            url="/?drive_oauth=error&reason=no_refresh_token#memo",
+            status_code=302,
+        )
+
+    # Verify the granted scopes include Drive read access
+    granted_scopes = set(creds.scopes or [])
+    if _REQUIRED_SCOPE not in granted_scopes:
+        return RedirectResponse(
+            url="/?drive_oauth=error&reason=missing_drive_scope#memo",
+            status_code=302,
+        )
+
+    # Resolve the user's Google email from the userinfo endpoint
+    google_email = ""
+    try:
+        from googleapiclient.discovery import build
+        oauth2_service = build("oauth2", "v2", credentials=creds, cache_discovery=False)
+        info = oauth2_service.userinfo().get().execute()
+        google_email = info.get("email", "")
+    except Exception as e:
+        logger.warning(f"Could not resolve Google email for user {user_id}: {e}")
+
+    _save_user_credentials(
+        user_id=user_id,
+        refresh_token=creds.refresh_token,
+        google_email=google_email,
+        scopes=list(creds.scopes or _OAUTH_SCOPES),
+    )
+
+    return RedirectResponse(url="/?drive_oauth=success#memo", status_code=302)
+
+
+@router.post("/disconnect")
+async def oauth_disconnect(user: CurrentUser = Depends(get_current_user)):
+    """Revoke the user's Drive access by deleting their stored credentials.
+    The user can also revoke from their Google account settings; this just
+    drops our copy of the refresh token. (We don't proactively call Google's
+    /revoke endpoint because the token is already encrypted at rest and
+    deleting it is sufficient to stop us from using it.)"""
+    deleted = _delete_user_credentials(user.id)
+    return {"ok": True, "was_connected": deleted}
+
+
+@router.get("/connection-status")
+async def oauth_connection_status(user: CurrentUser = Depends(get_current_user)):
+    """Report whether this user has connected Google Drive."""
+    return _get_user_drive_status(user.id)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -389,7 +819,7 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
     stats = {"new": 0, "updated": 0, "unchanged": 0, "removed": 0, "errors": 0, "skipped": 0}
 
     try:
-        service = _get_drive_service()
+        service = _get_drive_service(user.id)
 
         # List all files in the folder recursively
         drive_files = _list_files_recursive(service, folder_id)

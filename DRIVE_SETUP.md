@@ -1,71 +1,141 @@
 # Google Drive Integration Setup
 
-The RVM can sync data room documents directly from Google Drive folders. This uses a **service account** (no OAuth login flow required).
+VoLo Engine reads deal-room folders directly from Google Drive using **per-user
+OAuth**. Each team member signs in with their own Google account and the app
+sees only the folders they personally have access to — same as if they opened
+Drive themselves. No shared service account, no per-folder sharing step.
 
-## 1. Create a Google Cloud Project
+## What you need
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or use an existing one)
-3. Enable the **Google Drive API**: APIs & Services > Library > search "Google Drive API" > Enable
+A Google Workspace domain (we use `voloearth.com`) and one-time access to
+[Google Cloud Console](https://console.cloud.google.com) with permission to
+create a project there.
 
-## 2. Create a Service Account
+## 1. Create a Google Cloud project
 
-1. Go to APIs & Services > Credentials
-2. Click "Create Credentials" > "Service Account"
-3. Name it something like `rvm-drive-reader`
-4. Skip the optional permissions steps
-5. Click on the service account > Keys > Add Key > Create New Key > JSON
-6. Save the downloaded JSON file (e.g., `service-account.json`)
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Top-left project dropdown → **New Project**
+3. Name it `VoLo Engine`, set Organization to `voloearth.com`, click **Create**
+4. Switch into the new project (top-left dropdown)
 
-## 3. Configure the RVM
+## 2. Enable the Google Drive API
 
-Add one of these to your `.env` file:
+1. Left menu: **APIs & Services → Library**
+2. Search "Google Drive API" → click → **Enable**
+
+## 3. Configure the OAuth consent screen
+
+The Google Cloud UI was reorganized — these settings now live under
+**Google Auth Platform** in the left menu (the lock-shield icon). Old guides
+still say "OAuth consent screen"; same thing, new home.
+
+1. **Audience**: set User Type to **Internal**. This skips Google verification
+   and limits sign-ins to `@voloearth.com` accounts only.
+2. **Branding**: app name `VoLo Engine`, support email and developer email
+   filled in.
+3. **Data Access** → **Add or Remove Scopes** → search `drive` → check
+   `https://www.googleapis.com/auth/drive.readonly` → **Update** → **Save**.
+
+## 4. Create the OAuth Client
+
+1. **Clients → Create Client**
+2. Application type: **Web application**
+3. Name: `VoLo Engine Web Client`
+4. **Authorized redirect URIs** — add both:
+   - `https://vo-lo-analysis-tool.replit.app/api/drive/oauth/callback`
+   - `http://localhost:8000/api/drive/oauth/callback` (for local dev)
+5. Click **Create**
+
+A popup shows the **Client ID** and **Client Secret**. Copy both.
+
+## 5. Add the credentials to your environment
+
+The app needs three environment variables. On Replit, add these as Secrets;
+locally, add them to `.env`.
 
 ```bash
-# Option A: Path to the JSON key file
-GOOGLE_SERVICE_ACCOUNT_JSON=/path/to/service-account.json
+# From step 4
+GOOGLE_OAUTH_CLIENT_ID=<the long client ID ending in .apps.googleusercontent.com>
+GOOGLE_OAUTH_CLIENT_SECRET=<the secret>
 
-# Option B: Inline JSON (useful for Docker/cloud deployments)
-GOOGLE_SERVICE_ACCOUNT_CREDS='{"type":"service_account","project_id":"...","private_key":"...","client_email":"..."}'
+# Generate once with the command below — keep stable across deploys.
+GOOGLE_TOKEN_ENCRYPTION_KEY=<a Fernet key>
 ```
 
-## 4. Share Drive Folders with the Service Account
-
-The service account has its own email address (looks like `rvm-drive-reader@your-project.iam.gserviceaccount.com`).
-
-For each deal folder you want to sync:
-
-1. Open the Google Drive folder
-2. Click "Share"
-3. Add the service account email with **Viewer** access
-4. Uncheck "Notify people" and click Share
-
-## 5. Install Python Dependencies
+Generate the encryption key with:
 
 ```bash
-pip install google-api-python-client google-auth
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-## 6. Usage
+This key encrypts each user's stored Drive refresh token at rest. If you ever
+rotate it, every existing connection becomes unreadable and users will need to
+click Connect again — no data loss, just a one-click re-auth.
 
-1. Go to the **Investment Memo** tab
-2. In the "Data Room Documents" section, click **+** next to the library selector
-3. Enter the company name and paste the Google Drive folder URL
-4. Click **Link Folder**, then **Sync from Drive**
-5. The RVM will recursively pull all documents, extract text, and cache locally
-6. Subsequent syncs only download new or changed files
-7. When generating a memo, the library documents are automatically included
+`GOOGLE_OAUTH_REDIRECT_URI` is optional; the app derives it from the request
+host automatically, which works on both Replit and localhost.
 
-## Supported File Types
+## 6. Install the Python libraries
 
-Directly extractable: PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, HTML
+If you're updating an existing checkout, the new packages are in
+`requirements.txt`:
 
-Google Workspace files are auto-exported: Google Docs → DOCX, Google Sheets → XLSX, Google Slides → PPTX
+```bash
+pip install -r requirements.txt
+```
 
-## Notes
+This installs `google-api-python-client`, `google-auth`, `google-auth-oauthlib`,
+and `cryptography`.
 
-- The service account only needs **read** access (Viewer role)
-- Document text is cached in the local SQLite database — no re-extraction on subsequent memo generations
-- Re-syncing detects changed files by comparing `modifiedTime` from Drive
-- Files deleted from Drive are automatically removed from the library on next sync
-- Subfolders are traversed recursively; the subfolder path is preserved in the document metadata
+## 7. Connect from the app
+
+After the server restarts with the new env vars:
+
+1. Go to **IC Memo** tab
+2. Section **2. Data Room Documents → Google Drive** shows a "Connect Google
+   Drive" button
+3. Click it — Google's consent screen opens, you sign in with your
+   `@voloearth.com` account, click **Allow**
+4. You're redirected back to the IC Memo tab. The Google Drive section now
+   shows "Connected as your.name@voloearth.com" with a Disconnect button
+5. Paste a Drive folder URL → **Link Folder** → **Sync from Drive**
+
+The sync recursively walks subfolders, downloads supported file types, and
+extracts text into the local DB so memo generation can use it.
+
+## What the app can read
+
+- Anything **you personally** have access to in Drive: your own files, files
+  shared with you directly, files in shared drives where you're a member.
+- Read-only: the app cannot edit, delete, or upload anything to your Drive.
+
+If a folder doesn't appear or sync fails with permission errors, it means
+**your** Google account doesn't have access to it — share the folder with
+yourself in Drive (same as you would with a colleague), then re-sync.
+
+## Supported file types
+
+Directly extractable: PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, JSON, HTML.
+
+Google Workspace files are auto-exported on download:
+- Google Docs → DOCX
+- Google Sheets → XLSX
+- Google Slides → PPTX
+
+## Disconnecting / re-authorizing
+
+- **In the app**: IC Memo → Google Drive → Disconnect button. Drops the stored
+  refresh token immediately.
+- **From your Google account**: [myaccount.google.com/permissions](https://myaccount.google.com/permissions)
+  → find "VoLo Engine" → Remove access. The app's next call will fail; the
+  next time you visit IC Memo, the Connect button reappears.
+
+## Security notes
+
+- Refresh tokens are encrypted at rest with `GOOGLE_TOKEN_ENCRYPTION_KEY`
+  (Fernet / AES-128-CBC + HMAC-SHA256).
+- The CSRF state parameter on the OAuth callback is a signed JWT using the
+  app's `SECRET_KEY` with a 10-minute TTL — prevents OAuth code injection.
+- Each user's tokens are isolated; the server never reads another user's
+  Drive on their behalf.
+- Read-only scope (`drive.readonly`) — the app cannot modify anyone's Drive.

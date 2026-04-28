@@ -8226,6 +8226,106 @@ async function memoDeleteHistory(id) {
 
 // ── Google Drive Integration ────────────────────────────────────────────────
 
+// Per-user OAuth: each user signs into their own Google account. The IC Memo
+// tab shows a "Connect Google Drive" panel until they do; once connected, it
+// shows their Google email + a Disconnect button, and the library selector
+// becomes available.
+
+async function driveCheckStatus() {
+    const statusEl = document.getElementById('memo-drive-status');
+    const connectPanel = document.getElementById('memo-drive-connect-panel');
+    const connectedPanel = document.getElementById('memo-drive-connect');
+    const disconnectBtn = document.getElementById('memo-drive-disconnect');
+    if (!statusEl || !connectPanel || !connectedPanel) return;
+    try {
+        const r = await fetch('/api/drive/connection-status', { headers: _rvmHeaders() });
+        if (!r.ok) {
+            statusEl.textContent = '';
+            return;
+        }
+        const data = await r.json();
+        if (data.connected) {
+            statusEl.textContent = 'Connected as ' + (data.google_email || 'Google account');
+            statusEl.classList.add('is-connected');
+            statusEl.classList.remove('is-disconnected');
+            connectPanel.style.display = 'none';
+            connectedPanel.style.display = '';
+            if (disconnectBtn) disconnectBtn.style.display = '';
+            driveLoadLibraries();
+        } else {
+            statusEl.textContent = 'Not connected';
+            statusEl.classList.add('is-disconnected');
+            statusEl.classList.remove('is-connected');
+            connectPanel.style.display = '';
+            connectedPanel.style.display = 'none';
+            if (disconnectBtn) disconnectBtn.style.display = 'none';
+        }
+    } catch (e) {
+        console.error('drive status check failed:', e);
+        statusEl.textContent = '';
+    }
+}
+
+function driveConnect() {
+    // Top-level navigation — JS can't send the Authorization header on a
+    // navigation, so we pass the JWT as a ?token= query param. The
+    // /oauth/authorize endpoint accepts either form (Bearer header or query).
+    const tok = localStorage.getItem('rvm_token') || '';
+    if (!tok) {
+        alert('Please log in first.');
+        return;
+    }
+    window.location.href = '/api/drive/oauth/authorize?token=' + encodeURIComponent(tok);
+}
+
+async function driveDisconnect() {
+    if (!confirm('Disconnect Google Drive? You can reconnect any time.')) return;
+    try {
+        const r = await fetch('/api/drive/disconnect', {
+            method: 'POST',
+            headers: _rvmHeaders(),
+        });
+        if (!r.ok) {
+            alert('Failed to disconnect. Please try again.');
+            return;
+        }
+        await driveCheckStatus();
+    } catch (e) {
+        console.error('drive disconnect failed:', e);
+    }
+}
+
+// Detect the OAuth callback's redirect query param on page load.
+// Auto-switches to the IC Memo tab and refreshes the connection panel so the
+// user sees the result right where they started the flow.
+function _driveHandleOAuthRedirect() {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('drive_oauth');
+    if (!result) return;
+
+    // Auto-jump to the IC Memo tab where the Connect button lives
+    try { if (typeof switchTab === 'function') switchTab('memo'); } catch (e) { /* noop */ }
+
+    if (result === 'success') {
+        if (typeof showToast === 'function') {
+            showToast('Google Drive connected.', 'success');
+        }
+        // Make sure the panel reflects the new state
+        setTimeout(() => { try { driveCheckStatus(); } catch (e) {} }, 100);
+    } else if (result === 'error') {
+        const reason = (params.get('reason') || 'unknown_error').replace(/_/g, ' ');
+        alert('Could not connect Google Drive: ' + reason);
+    }
+    // Strip the query param so refreshes don't re-trigger
+    const cleanUrl = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, document.title, cleanUrl);
+}
+
+// Defer until everything (including the switchTab wrapper) is set up
+window.addEventListener('load', () => {
+    _driveHandleOAuthRedirect();
+});
+
 async function driveLoadLibraries() {
     const sel = document.getElementById('memo-library-select');
     if (!sel) return;
@@ -10712,7 +10812,7 @@ switchTab = function(tab) {
         memoLoadTemplates();
         memoInitUpload();
         _memoFollowonInit();
-        driveLoadLibraries();
+        driveCheckStatus();    // also calls driveLoadLibraries() if connected
         if (_memo.sessionId) memoRefreshDocList();
     }
 };
