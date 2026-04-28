@@ -444,7 +444,14 @@ def _get_drive_service(user_id: int):
 
 
 def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> list:
-    """Recursively list all files in a Drive folder and subfolders."""
+    """Recursively list all files in a Drive folder and subfolders.
+
+    Important: by default the Drive API silently returns 0 results for files
+    that live inside a Shared Drive (formerly Team Drive) or for some
+    Workspace-shared folders. We explicitly enable shared-drive support on
+    every list call so the same code works for personal folders, "Shared
+    with me" items, and Shared Drive content. This is the standard fix
+    for the "I see files in Drive but the app shows 0 docs" issue."""
     all_files = []
     page_token = None
 
@@ -454,6 +461,9 @@ def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> lis
             fields="nextPageToken, files(id, name, mimeType, size, modifiedTime)",
             pageSize=200,
             pageToken=page_token,
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+            corpora="allDrives",
         ).execute()
 
         for f in resp.get("files", []):
@@ -477,11 +487,13 @@ def _download_file(service, file_info: dict) -> bytes:
     mime = file_info["mimeType"]
     file_id = file_info["id"]
 
+    # supportsAllDrives is needed when the file lives in a Shared Drive,
+    # otherwise download silently fails. Harmless on personal-drive files.
     if mime in _GOOGLE_EXPORT_MIMES:
         export_mime, _ = _GOOGLE_EXPORT_MIMES[mime]
         request = service.files().export_media(fileId=file_id, mimeType=export_mime)
     else:
-        request = service.files().get_media(fileId=file_id)
+        request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
 
     from googleapiclient.http import MediaIoBaseDownload
     buffer = io.BytesIO()
