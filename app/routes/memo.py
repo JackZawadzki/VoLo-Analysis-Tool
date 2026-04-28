@@ -2321,6 +2321,12 @@ def _build_memo_payload(
             _total_out += v2_out
             _pass_log.extend(v2_log)
             _pass_log.append({"stage": "manifest_meta", "meta": manifest_meta})
+            # v2 emits its own absolute-percent progress (8% → ~90%) via the
+            # progress_cb. The shared Pass 3 below uses _emit_step_progress
+            # which calculates percent from _step / _total_llm_steps. Advance
+            # _step so the synthesis bar continues from where v2 left off
+            # instead of jumping backwards.
+            _step = int(_total_llm_steps * 0.94)
         else:
             # ── v1 PASS 1: Extract facts from each document ──────────────
             all_extractions = []

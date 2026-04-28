@@ -323,6 +323,14 @@ def _targeted_deep_reads(raw_docs: list, manifest: dict) -> dict:
             continue
         text = (raw.get("extracted_text") or "").strip()
         if not text:
+            # Doc was classified primary/reference but has no extractable text —
+            # likely an image-only PDF or a sync that returned empty. Log so we
+            # know what's missing from the corpus instead of failing silently.
+            logger.warning(
+                "memo_v2: dropping %r from corpus despite classification=%s "
+                "(extracted_text is empty — likely image-only PDF or extraction failure)",
+                name, cls,
+            )
             continue
         if cls == "primary":
             text = _truncate_to_cap(text, _PRIMARY_DOC_CAP)
