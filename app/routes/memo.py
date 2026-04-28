@@ -671,6 +671,39 @@ async def delete_document(doc_id: int, user: CurrentUser = Depends(get_current_u
         conn.close()
 
 
+@router.post("/session/clear")
+async def clear_memo_session(
+    session_id: str = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Wipe a memo session: delete every uploaded data-room document for the
+    given session_id (DB row + file on disk). Used by the "Start New Memo"
+    button to give the analyst a clean slate between memos without making
+    them remove files one by one."""
+    conn = get_db()
+    deleted = 0
+    try:
+        rows = conn.execute(
+            "SELECT id, file_path FROM memo_documents WHERE owner_id=? AND memo_session_id=?",
+            (user.id, session_id),
+        ).fetchall()
+        for r in rows:
+            if r["file_path"]:
+                try:
+                    Path(r["file_path"]).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        conn.execute(
+            "DELETE FROM memo_documents WHERE owner_id=? AND memo_session_id=?",
+            (user.id, session_id),
+        )
+        deleted = len(rows)
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True, "deleted": deleted}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  RE-PROCESS IMAGES — extract embedded images from existing uploaded PDFs
 # ─────────────────────────────────────────────────────────────────────────────

@@ -296,21 +296,25 @@ def _touch_last_used(user_id: int) -> None:
         conn.close()
 
 
-# ── Signed state parameter (CSRF protection on OAuth callback) ────────────────
+# ── Signed state parameter (CSRF protection + PKCE verifier transport) ────────
 
-def _make_oauth_state(user_id: int) -> str:
-    """Sign a short-lived JWT carrying the user_id so the OAuth callback knows
-    which logged-in user is authorizing. Uses the app's existing SECRET_KEY."""
+def _make_oauth_state(user_id: int, code_verifier: Optional[str] = None) -> str:
+    """Sign a short-lived JWT carrying the user_id and (if PKCE is in use)
+    the code_verifier. The OAuth callback recovers both from this token so
+    it can identify the user AND complete the PKCE handshake without trusting
+    query-string input."""
     payload = {
         "uid": user_id,
         "kind": "drive_oauth",
         "exp": datetime.now(timezone.utc) + timedelta(seconds=_OAUTH_STATE_TTL_SECONDS),
     }
+    if code_verifier:
+        payload["cv"] = code_verifier
     return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 
-def _verify_oauth_state(state: str) -> int:
-    """Validate the state token and return the user_id it was issued for.
+def _verify_oauth_state(state: str) -> tuple[int, Optional[str]]:
+    """Validate the state token and return (user_id, code_verifier_or_None).
     Raises HTTPException on invalid/expired state."""
     try:
         payload = jwt.decode(state, SECRET_KEY, algorithms=["HS256"])
@@ -320,7 +324,16 @@ def _verify_oauth_state(state: str) -> int:
         raise HTTPException(status_code=400, detail="Invalid OAuth state.")
     if payload.get("kind") != "drive_oauth":
         raise HTTPException(status_code=400, detail="Invalid OAuth state.")
-    return int(payload["uid"])
+    return int(payload["uid"]), payload.get("cv")
+
+
+def _generate_pkce_verifier() -> str:
+    """RFC 7636 PKCE code verifier — 43-128 chars from the unreserved set.
+    We use 96 chars (~512 bits of entropy) which fits comfortably and is
+    accepted by every server. Generated with secrets.token_urlsafe to ensure
+    cryptographic randomness."""
+    import secrets as _secrets
+    return _secrets.token_urlsafe(72)[:96]
 
 # ── Temp directory for downloaded files during extraction ─────────────────────
 _DRIVE_CACHE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "drive_cache"
@@ -590,7 +603,20 @@ async def oauth_authorize(
         scopes=_OAUTH_SCOPES,
         redirect_uri=redirect_uri,
     )
-    state = _make_oauth_state(effective_user.id)
+
+    # PKCE: pre-generate the verifier ourselves and inject it into the flow
+    # BEFORE authorization_url() runs. Google's OAuth library will hash it,
+    # send the challenge to Google, and Google will then require the same
+    # verifier on the token exchange. Because /authorize and /callback are
+    # separate request handlers (each with its own Flow instance), we must
+    # carry the verifier across the redirect — we do that by signing it into
+    # the state JWT. autogenerate_code_verifier=False stops the lib from
+    # generating its own and clobbering ours.
+    code_verifier = _generate_pkce_verifier()
+    flow.code_verifier = code_verifier
+    flow.autogenerate_code_verifier = False
+
+    state = _make_oauth_state(effective_user.id, code_verifier=code_verifier)
     auth_url, _ = flow.authorization_url(
         access_type="offline",          # required to get a refresh_token
         prompt="consent",                # force refresh_token issuance even if user re-authorizes
@@ -618,7 +644,7 @@ async def oauth_callback(
     if not code or not state:
         raise HTTPException(status_code=400, detail="Missing code or state in OAuth callback.")
 
-    user_id = _verify_oauth_state(state)
+    user_id, code_verifier = _verify_oauth_state(state)
 
     try:
         from google_auth_oauthlib.flow import Flow
@@ -634,6 +660,13 @@ async def oauth_callback(
         scopes=_OAUTH_SCOPES,
         redirect_uri=redirect_uri,
     )
+
+    # Restore the PKCE verifier we stored in the state JWT during /authorize.
+    # Without this, fetch_token() would have no verifier to send and Google
+    # would respond "(invalid_grant) Missing code verifier".
+    if code_verifier:
+        flow.code_verifier = code_verifier
+        flow.autogenerate_code_verifier = False
 
     try:
         # Pass the full callback URL so the library can extract the code itself

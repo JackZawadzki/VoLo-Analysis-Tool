@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=17">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=18">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -985,9 +985,14 @@
         <!-- INVESTMENT MEMO TAB                                           -->
         <!-- ══════════════════════════════════════════════════════════════ -->
         <div id="tab-memo" class="tab-content memo-tab" data-memo-mode="setup">
-            <div class="page-header">
-                <h1>Investment Memo Generator</h1>
-                <p class="page-subtitle">Assemble data room documents, select a deal report, and generate a comprehensive investment memorandum using AI.</p>
+            <div class="page-header memo-page-header">
+                <div class="memo-page-header-text">
+                    <h1>Investment Memo Generator</h1>
+                    <p class="page-subtitle">Assemble data room documents, select a deal report, and generate a comprehensive investment memorandum using AI.</p>
+                </div>
+                <button class="btn-outline memo-start-fresh-btn" onclick="memoStartFresh()" title="Clear all uploaded files and reset this memo session">
+                    Start New Memo
+                </button>
             </div>
 
             <!-- Top mode switcher (visible in setup + history modes) -->
@@ -2380,7 +2385,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=168"></script>
+    <script src="/static/app.js?v=169"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

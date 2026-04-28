@@ -424,6 +424,33 @@ table th {
     border-radius: 3px;
 }
 
+/* IC Memo header — title + Start New Memo button on one row */
+.memo-page-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+.memo-page-header-text { flex: 1; min-width: 0; }
+.memo-start-fresh-btn {
+    flex-shrink: 0;
+    padding: 8px 16px !important;
+    font-size: 0.82rem !important;
+    font-weight: 500 !important;
+    border: 1px solid var(--vf-hairline) !important;
+    background: var(--vf-paper) !important;
+    color: var(--vf-slate) !important;
+    border-radius: 6px !important;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.memo-start-fresh-btn:hover {
+    border-color: var(--vf-forest) !important;
+    color: var(--vf-forest) !important;
+    background: var(--vf-mint-bg-soft) !important;
+}
+
 /* User badge + logout — refined to match */
 .nav-user-badge {
     background: var(--vf-stone-bg) !important;

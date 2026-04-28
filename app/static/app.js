@@ -7288,6 +7288,71 @@ async function memoRefreshDocList() {
     }
 }
 
+// Wipe the current memo session so the analyst gets a clean slate for the
+// next memo. Calls the backend to delete uploaded files (DB rows + disk),
+// then resets every piece of in-memory state that survived in _memo.
+async function memoStartFresh() {
+    if (!confirm('Clear all uploaded files, links, locked sections, and unsaved memo state? Already-saved memos in History are unaffected.')) return;
+
+    // Server-side cleanup of uploaded data-room docs for this session
+    if (_memo.sessionId) {
+        try {
+            await fetch(`/api/memo/session/clear?session_id=${encodeURIComponent(_memo.sessionId)}`, {
+                method: 'POST',
+                headers: _rvmHeaders(),
+            });
+        } catch (e) {
+            console.error('memoStartFresh: server-side clear failed (continuing anyway):', e);
+        }
+    }
+
+    // Reset in-memory state
+    _memo.sessionId = '';
+    _memo.documents = [];
+    _memo.links = [];
+    _memo.libraryId = null;
+    _memo.currentMemoId = null;
+    _memo.currentMemoMd = '';
+    _memo.citations = {};
+    _memo.sections = {};
+    _memo.lockedSections = {};
+    localStorage.removeItem('rvm_memo_session');
+
+    // Reset visible form inputs
+    const reportSel = document.getElementById('memo-report-select');
+    if (reportSel) reportSel.value = '';
+    const tplSel = document.getElementById('memo-template-select');
+    if (tplSel) tplSel.value = '';
+    const tplText = document.getElementById('memo-template-text');
+    if (tplText) tplText.value = '';
+    const extra = document.getElementById('memo-extra-instructions');
+    if (extra) extra.value = '';
+    const drNew = document.getElementById('memo-drive-new');
+    if (drNew) drNew.style.display = 'none';
+    const drInfo = document.getElementById('memo-drive-library-info');
+    if (drInfo) drInfo.style.display = 'none';
+
+    // Repaint the data-room list and any links UI
+    memoRenderDocList();
+    if (typeof memoRenderLinks === 'function') memoRenderLinks();
+
+    // Clear the rendered memo preview pane if there's anything in it
+    const rendered = document.getElementById('memo-rendered');
+    const empty = document.getElementById('memo-output-empty');
+    const actions = document.getElementById('memo-output-actions');
+    if (rendered) rendered.innerHTML = '';
+    if (empty) empty.style.display = 'flex';
+    if (actions) actions.style.display = 'none';
+
+    // Clear any in-progress generation status
+    const statusEl = document.getElementById('memo-generate-status');
+    if (statusEl) { statusEl.style.display = 'none'; statusEl.innerHTML = ''; }
+
+    if (typeof showToast === 'function') {
+        showToast('Memo session cleared. Ready for a new memo.', 'success');
+    }
+}
+
 function memoRenderDocList() {
     const list = document.getElementById('memo-doc-list');
     if (!list) return;
