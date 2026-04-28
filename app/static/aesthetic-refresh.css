@@ -424,6 +424,76 @@ table th {
     border-radius: 3px;
 }
 
+/* ──────────────────────────────────────────────────────────
+   Drive sync progress UI — spinner + live counter + bar
+   ────────────────────────────────────────────────────────── */
+@keyframes drive-sync-spin { to { transform: rotate(360deg); } }
+.drive-sync-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--vf-hairline);
+    border-top-color: var(--vf-forest);
+    border-radius: 50%;
+    animation: drive-sync-spin 0.75s linear infinite;
+    flex-shrink: 0;
+}
+.drive-sync-btn-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: drive-sync-spin 0.75s linear infinite;
+    margin-right: 8px;
+    vertical-align: -2px;
+}
+#memo-drive-progress {
+    margin-top: 10px;
+    padding: 12px 14px;
+    background: var(--vf-mint-bg-soft);
+    border: 1px solid var(--vf-hairline);
+    border-radius: 8px;
+}
+.drive-sync-progress-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+.drive-sync-progress-text { flex: 1; min-width: 0; }
+.drive-sync-progress-main {
+    font-size: 0.86rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+}
+.drive-sync-progress-sub {
+    font-size: 0.76rem;
+    color: var(--vf-stone);
+    margin-top: 3px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+.drive-sync-progress-bar {
+    margin-top: 10px;
+    height: 6px;
+    background: var(--vf-hairline);
+    border-radius: 999px;
+    overflow: hidden;
+}
+.drive-sync-progress-bar-fill {
+    height: 100%;
+    background: var(--vf-forest);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}
+.drive-sync-progress-pct {
+    margin-top: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--vf-forest);
+    text-align: right;
+}
+
 /* IC Memo header — title + Start New Memo button on one row */
 .memo-page-header {
     display: flex;

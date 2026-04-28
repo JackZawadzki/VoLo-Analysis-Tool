@@ -8583,12 +8583,113 @@ async function driveLibraryChanged() {
     }
 }
 
+// Render the sync-progress UI for a given library row's sync_status.
+// The backend writes progress strings like:
+//   "syncing"                    — generic
+//   "syncing:listing"            — probing folder structure
+//   "syncing:N/T"                — processed N of T files
+//   "syncing:N/T:filename.pdf"   — currently working on filename
+function _driveRenderSyncProgress(syncStatus) {
+    const wrap = document.getElementById('memo-drive-progress');
+    const btn  = document.getElementById('memo-drive-sync-btn');
+    if (!wrap || !btn) return;
+
+    if (!syncStatus || !syncStatus.startsWith('syncing')) {
+        wrap.style.display = 'none';
+        wrap.innerHTML = '';
+        return;
+    }
+
+    let pct = 0;
+    let mainMsg = 'Starting sync…';
+    let subMsg  = '';
+
+    if (syncStatus === 'syncing') {
+        mainMsg = 'Connecting to Google Drive…';
+    } else if (syncStatus.startsWith('syncing:listing')) {
+        mainMsg = 'Reading folder structure…';
+        subMsg  = "Walking the folder tree on Google's side. This is fast.";
+    } else {
+        // "syncing:5/30" or "syncing:5/30:filename.pdf"
+        const rest = syncStatus.slice('syncing:'.length);
+        const [counts, ...fileParts] = rest.split(':');
+        const [doneStr, totalStr] = counts.split('/');
+        const done  = parseInt(doneStr  || '0', 10) || 0;
+        const total = parseInt(totalStr || '0', 10) || 0;
+        if (total > 0) {
+            pct = Math.min(100, Math.round((done / total) * 100));
+            mainMsg = `Processing files: ${done} of ${total}`;
+        } else {
+            mainMsg = 'Processing files…';
+        }
+        if (fileParts.length) {
+            subMsg = 'Currently: ' + fileParts.join(':');
+        } else {
+            subMsg = 'Each file is downloaded and its text is extracted. Larger PDFs and Excel models take a few seconds each.';
+        }
+    }
+
+    wrap.style.display = 'block';
+    wrap.innerHTML = `
+        <div class="drive-sync-progress-row">
+            <div class="drive-sync-spinner" aria-hidden="true"></div>
+            <div class="drive-sync-progress-text">
+                <div class="drive-sync-progress-main">${mainMsg}</div>
+                ${subMsg ? `<div class="drive-sync-progress-sub">${_escapeHtml(subMsg)}</div>` : ''}
+            </div>
+        </div>
+        ${pct > 0 ? `
+        <div class="drive-sync-progress-bar"><div class="drive-sync-progress-bar-fill" style="width:${pct}%"></div></div>
+        <div class="drive-sync-progress-pct">${pct}%</div>
+        ` : ''}
+    `;
+}
+
+function _escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+let _driveSyncPollHandle = null;
+
+// Start polling the library list so we can read sync_status updates the
+// backend writes as the sync progresses. Stops itself once the row's
+// status is no longer "syncing*".
+function _startDriveSyncPolling() {
+    if (_driveSyncPollHandle) clearInterval(_driveSyncPollHandle);
+    _driveSyncPollHandle = setInterval(async () => {
+        if (!_memo.libraryId) return;
+        try {
+            const r = await fetch('/api/drive/libraries', { headers: _rvmHeaders() });
+            if (!r.ok) return;
+            const libs = await r.json();
+            const lib = libs.find(l => l.id === _memo.libraryId);
+            if (!lib) return;
+            _driveRenderSyncProgress(lib.sync_status);
+            if (!String(lib.sync_status || '').startsWith('syncing')) {
+                _stopDriveSyncPolling();
+            }
+        } catch (e) {
+            // network blip — keep polling
+        }
+    }, 1500);
+}
+function _stopDriveSyncPolling() {
+    if (_driveSyncPollHandle) {
+        clearInterval(_driveSyncPollHandle);
+        _driveSyncPollHandle = null;
+    }
+}
+
 async function driveSyncLibrary() {
     if (!_memo.libraryId) return;
     const btn = document.getElementById('memo-drive-sync-btn');
     const status = document.getElementById('memo-drive-status');
-    if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="drive-sync-btn-spinner" aria-hidden="true"></span>Syncing…'; }
     if (status) { status.textContent = 'Syncing...'; status.className = 'memo-drive-status syncing'; }
+
+    // Start polling the backend immediately for progress updates
+    _driveRenderSyncProgress('syncing');
+    _startDriveSyncPolling();
 
     try {
         const r = await fetch(`/api/drive/libraries/${_memo.libraryId}/sync`, {
@@ -8633,6 +8734,8 @@ async function driveSyncLibrary() {
         console.error(e);
         alert('Sync error: ' + e.message);
     } finally {
+        _stopDriveSyncPolling();
+        _driveRenderSyncProgress('');  // hide the progress block
         if (btn) { btn.disabled = false; btn.textContent = 'Sync from Drive'; }
     }
 }

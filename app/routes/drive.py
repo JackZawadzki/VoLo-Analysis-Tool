@@ -1111,6 +1111,32 @@ async def delete_library(lib_id: int, user: CurrentUser = Depends(get_current_us
 #  SYNC — pull files from Google Drive
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _write_sync_progress(lib_id: int, status: str) -> None:
+    """Write a progress message into deal_document_libraries.sync_status so
+    the frontend can poll it and render real-time progress. Status values
+    we use:
+      - "syncing"                       — generic, just started
+      - "syncing:listing"                — probing folder structure
+      - "syncing:N/T"                    — processed N of T files
+      - "syncing:N/T:filename.pdf"       — currently working on filename
+      - "synced"                         — done
+      - "error"                          — failed (caller sets reason)
+    Frontend parses on the colons. Cheap DB write per file is fine — sync
+    is already I/O-bound on the file download itself."""
+    try:
+        conn = get_db()
+        try:
+            conn.execute(
+                "UPDATE deal_document_libraries SET sync_status=?, updated_at=datetime('now') WHERE id=?",
+                (status, lib_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.warning(f"_write_sync_progress({lib_id}, {status!r}) failed: {e}")
+
+
 @router.post("/libraries/{lib_id}/sync")
 async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user)):
     """
@@ -1118,6 +1144,9 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
     1. List all files recursively in the Drive folder
     2. For new/changed files: download, extract text, store in DB
     3. Remove DB records for files deleted from Drive
+
+    Progress is written to deal_document_libraries.sync_status as the sync
+    runs so the frontend can poll for real-time updates.
     """
     conn = get_db()
     try:
@@ -1131,17 +1160,7 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
     finally:
         conn.close()
 
-    # Update status to syncing
-    conn = get_db()
-    try:
-        conn.execute(
-            "UPDATE deal_document_libraries SET sync_status='syncing', updated_at=datetime('now') WHERE id=?",
-            (lib_id,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
+    _write_sync_progress(lib_id, "syncing:listing")
     start_time = time.time()
     stats = {"new": 0, "updated": 0, "unchanged": 0, "removed": 0, "errors": 0, "skipped": 0}
 
@@ -1151,6 +1170,19 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
         # List all files in the folder recursively
         drive_files = _list_files_recursive(service, folder_id)
         drive_file_ids = set()
+
+        # Pre-count how many files we'll actually process (extractable types
+        # only) so the progress denominator is meaningful, not inflated by
+        # ZIPs and images that get skipped instantly.
+        def _is_processable(f):
+            mime = f.get("mimeType", "")
+            if mime in _EXTRACTABLE_MIMES or mime in _GOOGLE_EXPORT_MIMES:
+                return True
+            ext = Path(f.get("name", "")).suffix.lower()
+            return ext in ('.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.md', '.json', '.html')
+
+        total_to_process = sum(1 for f in drive_files if _is_processable(f))
+        files_done = 0
 
         for f in drive_files:
             drive_file_ids.add(f["id"])
@@ -1180,9 +1212,15 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
                 conn.close()
 
             if existing and existing["drive_modified"] == modified:
-                # File unchanged
+                # File unchanged — still counts toward "files we processed"
+                # for the progress denominator, just no work needed.
                 stats["unchanged"] += 1
+                files_done += 1
                 continue
+
+            # Tell the frontend what we're working on right now
+            _safe_name = name.replace(":", "_")[:60]  # colons would confuse the parser
+            _write_sync_progress(lib_id, f"syncing:{files_done}/{total_to_process}:{_safe_name}")
 
             # Download and extract
             try:
@@ -1226,10 +1264,12 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
                     conn.commit()
                 finally:
                     conn.close()
+                files_done += 1
 
             except Exception as e:
                 logger.error(f"Drive sync: failed to process {name}: {e}")
                 stats["errors"] += 1
+                files_done += 1
                 continue
 
         # Remove documents that are no longer in Drive

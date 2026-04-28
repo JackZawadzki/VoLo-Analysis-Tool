@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=19">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=20">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -1142,6 +1142,7 @@
                                     <div id="memo-drive-library-info" style="display:none;">
                                         <div class="memo-drive-meta" id="memo-drive-meta"></div>
                                         <button class="btn-sm btn-primary" id="memo-drive-sync-btn" onclick="driveSyncLibrary()">Sync from Drive</button>
+                                        <div id="memo-drive-progress" style="display:none;"></div>
                                         <div class="memo-drive-doc-list" id="memo-drive-doc-list"></div>
                                     </div>
                                 </div>
@@ -2386,7 +2387,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=172"></script>
+    <script src="/static/app.js?v=173"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {
