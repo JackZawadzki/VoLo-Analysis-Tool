@@ -456,6 +456,13 @@ def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> lis
     page_token = None
 
     while True:
+        # NOTE: do NOT pass corpora="allDrives" here. That parameter is for
+        # cross-drive SEARCH queries; combined with `'folderId' in parents` it
+        # over-restricts and filters out "Shared with me" content (which is
+        # technically owned by another user's My Drive, not a Shared Drive
+        # workspace). The correct combination for a folder-children query is
+        # supportsAllDrives + includeItemsFromAllDrives WITHOUT a corpora
+        # override — Drive auto-detects where the folder lives.
         resp = service.files().list(
             q=f"'{folder_id}' in parents and trashed=false",
             fields="nextPageToken, files(id, name, mimeType, size, modifiedTime)",
@@ -463,7 +470,6 @@ def _list_files_recursive(service, folder_id: str, path_prefix: str = "") -> lis
             pageToken=page_token,
             supportsAllDrives=True,
             includeItemsFromAllDrives=True,
-            corpora="allDrives",
         ).execute()
 
         for f in resp.get("files", []):

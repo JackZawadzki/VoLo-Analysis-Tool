@@ -1004,6 +1004,14 @@ function wizNavBack(n) {
     const _pipelineTab = document.getElementById('tab-pipeline');
     if (_pipelineTab) _pipelineTab.scrollTop = 0;
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    // Re-render the Review panel when navigating to step 2 — otherwise it
+    // shows empty fields when the user jumps in from step 4 (Report) or
+    // after loading a saved deal. wizPopulateReview is idempotent and reads
+    // from _wizExtraction / _wizFmData, so calling it here is safe even
+    // when there's no data (it just renders empty groups).
+    if (n === 2) {
+        try { wizPopulateReview(); } catch (e) { console.error('wizPopulateReview on nav failed:', e); }
+    }
     // Re-apply config if navigating to step 3
     if (n === 3) {
         _wizPopulateVolumes();
