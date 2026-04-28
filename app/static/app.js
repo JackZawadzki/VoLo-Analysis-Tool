@@ -1152,6 +1152,19 @@ function _wizRenderLibrary() {
         return;
     }
 
+    // Find the most-recent timestamp in a list of artifacts. Each artifact
+    // type uses a different field name (deal_reports/memos: created_at,
+    // ddrs: generated_at) so we accept both.
+    const _latestOf = (arr) => {
+        if (!arr || !arr.length) return null;
+        let latest = null;
+        for (const a of arr) {
+            const ts = a.created_at || a.generated_at;
+            if (ts && (!latest || ts > latest)) latest = ts;
+        }
+        return latest;
+    };
+
     list.innerHTML = filtered.map((g, idx) => {
         const nDeal = g.deal_reports?.length || 0;
         const nDdr  = g.ddrs?.length         || 0;
@@ -1159,10 +1172,22 @@ function _wizRenderLibrary() {
         const authors = _libCollectAuthors(g);
         const authorText = authors.length ? authors.join(', ') : 'unknown';
 
+        // Per-artifact-type latest date so a card with 3 DDRs shows "latest
+        // DDR: 2d ago" inline, not just the company-level latest_at.
+        const latestDeal = _latestOf(g.deal_reports);
+        const latestDdr  = _latestOf(g.ddrs);
+        const latestMemo = _latestOf(g.memos);
+
+        const _dateSuffix = (n, latest) => {
+            if (n <= 1) return '';
+            const fmt = _libFmtDate(latest);
+            return fmt ? ` <span class="lib-chip-latest">latest ${fmt}</span>` : '';
+        };
+
         const chips = [];
-        if (nDeal) chips.push(`<span class="lib-chip lib-chip-deal"><span class="lib-chip-dot"></span>Deal Report${nDeal>1?` ×${nDeal}`:''}</span>`);
-        if (nDdr)  chips.push(`<span class="lib-chip lib-chip-ddr"><span class="lib-chip-dot"></span>DDR${nDdr>1?` ×${nDdr}`:''}</span>`);
-        if (nMemo) chips.push(`<span class="lib-chip lib-chip-memo"><span class="lib-chip-dot"></span>IC Memo${nMemo>1?` ×${nMemo}`:''}</span>`);
+        if (nDeal) chips.push(`<span class="lib-chip lib-chip-deal" title="${latestDeal ? 'Latest: ' + _libFmtDate(latestDeal) : ''}"><span class="lib-chip-dot"></span>Deal Report${nDeal>1?` ×${nDeal}`:''}${_dateSuffix(nDeal, latestDeal)}</span>`);
+        if (nDdr)  chips.push(`<span class="lib-chip lib-chip-ddr"  title="${latestDdr  ? 'Latest: ' + _libFmtDate(latestDdr)  : ''}"><span class="lib-chip-dot"></span>DDR${nDdr>1?` ×${nDdr}`:''}${_dateSuffix(nDdr, latestDdr)}</span>`);
+        if (nMemo) chips.push(`<span class="lib-chip lib-chip-memo" title="${latestMemo ? 'Latest: ' + _libFmtDate(latestMemo) : ''}"><span class="lib-chip-dot"></span>IC Memo${nMemo>1?` ×${nMemo}`:''}${_dateSuffix(nMemo, latestMemo)}</span>`);
         if (!chips.length) chips.push(`<span class="lib-chip lib-chip-empty">No artifacts</span>`);
 
         return `
@@ -1173,7 +1198,7 @@ function _wizRenderLibrary() {
                 </div>
                 <div class="lib-chips">${chips.join('')}</div>
                 <div class="lib-card-meta">
-                    <span class="lib-card-date">${_libFmtDate(g.latest_at)}</span>
+                    <span class="lib-card-date">Updated ${_libFmtDate(g.latest_at)}</span>
                     <span class="lib-card-arrow">&rsaquo;</span>
                 </div>
             </div>`;
@@ -2135,8 +2160,23 @@ async function wizExtractAndNext() {
     if (!deckFile && !modelFile && !url) { showToast('Upload a file or enter a URL'); return; }
 
     const status = document.getElementById('wiz-extract-status');
-    status.className = 'wiz-status loading';
-    status.textContent = deckFile ? 'Extracting deck (this may take 10-15 seconds)...' : 'Processing...';
+    status.className = 'wiz-status loading-card';
+    const mainMsg = deckFile
+        ? 'Extracting pitch deck with Claude...'
+        : (modelFile ? 'Reading financial model...' : 'Processing URL...');
+    const subMsg = deckFile
+        ? 'Two-pass LLM extraction: company info, market claims, team, traction, projections. Usually 10–20 seconds.'
+        : (modelFile ? 'Parsing sheets and pulling line items.' : 'Fetching and analyzing the page.');
+    status.innerHTML = `
+        <div class="wiz-load-row">
+            <div class="wiz-load-spinner" aria-hidden="true"></div>
+            <div class="wiz-load-text">
+                <div class="wiz-load-main">${mainMsg}</div>
+                <div class="wiz-load-sub">${subMsg}</div>
+            </div>
+        </div>
+        <div class="wiz-load-bar"><div class="wiz-load-bar-fill wiz-load-bar-indet"></div></div>
+    `;
     document.getElementById('wiz-extract-btn').disabled = true;
 
     _wizExtraction = {};
@@ -2967,8 +3007,42 @@ async function wizRunPipeline() {
     const btn = document.getElementById('wiz-run-btn');
     const status = document.getElementById('wiz-run-status');
     btn.disabled = true;
-    status.className = 'wiz-status loading';
-    status.textContent = 'Running analysis...';
+
+    // Render a prominent loading card with rotating phase messages so the
+    // user sees clear evidence the pipeline is alive across the 1-3 min run.
+    // The backend is a single blocking call so we can't get real progress —
+    // these messages are time-paced approximations of the actual stages.
+    const _phases = [
+        { at: 0,    main: 'Running 5,000 Monte Carlo paths...',         sub: 'Simulating revenue, dilution, and exit outcomes for every path.' },
+        { at: 12,   main: 'Calibrating Bass adoption curves...',         sub: 'Calibrating S-curve parameters from NREL ATB deployment data.' },
+        { at: 25,   main: 'Computing carbon impact (RVM)...',            sub: 'Lifecycle tCO₂ + risk-adjusted TCPI from volume + displaced-resource intensity.' },
+        { at: 40,   main: 'Pulling Damodaran valuation comps...',        sub: 'Mapping archetype to public-comp EV/EBITDA multiples (20% private discount).' },
+        { at: 55,   main: 'Running position-sizing optimizer...',        sub: 'Kelly criterion + grid-search for fund-level P10/P50/P90 TVPI.' },
+        { at: 75,   main: 'Computing portfolio-fund impact...',          sub: 'Marginal lift to fund TVPI / DPI / IRR from adding this deal.' },
+        { at: 100,  main: 'Finalizing report and saving...',             sub: 'Storing artifacts to the team library.' },
+    ];
+    const _renderPhase = (i) => {
+        const p = _phases[Math.min(i, _phases.length - 1)];
+        status.className = 'wiz-status loading-card';
+        status.innerHTML = `
+            <div class="wiz-load-row">
+                <div class="wiz-load-spinner" aria-hidden="true"></div>
+                <div class="wiz-load-text">
+                    <div class="wiz-load-main">${p.main}</div>
+                    <div class="wiz-load-sub">${p.sub}</div>
+                </div>
+            </div>
+            <div class="wiz-load-bar"><div class="wiz-load-bar-fill" style="width:${Math.min(95, p.at + 5)}%"></div></div>
+            <div class="wiz-load-hint">Typically 1–3 minutes. Don't refresh the page.</div>
+        `;
+    };
+    let _phaseIdx = 0;
+    _renderPhase(0);
+    const _phaseTimer = setInterval(() => {
+        _phaseIdx = Math.min(_phaseIdx + 1, _phases.length - 1);
+        _renderPhase(_phaseIdx);
+    }, 12000);
+    const _stopPhases = () => { clearInterval(_phaseTimer); };
 
     const vols = [];
     for (let i = 0; i < 10; i++) vols.push(parseFloat(document.getElementById(`wiz-vol-${i}`)?.value || 0));
@@ -3100,8 +3174,10 @@ async function wizRunPipeline() {
         _wizReportId = d.report_id;
         window._currentReportId = d.report_id;
         _wizSavedInputs = payload;
+        _stopPhases();
         status.className = 'wiz-status';
         status.textContent = '';
+        status.innerHTML = '';
         btn.disabled = false;
         wizRenderReport(d);
         wizGoStep(4);
@@ -3110,6 +3186,7 @@ async function wizRunPipeline() {
         // Auto-run QA review after a short delay so the report renders first
         setTimeout(() => wizRunQAReview(d.report_id, null), 800);
     } catch(e) {
+        _stopPhases();
         status.className = 'wiz-status error';
         status.textContent = e.message;
         btn.disabled = false;

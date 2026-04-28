@@ -494,6 +494,100 @@ table th {
     text-align: right;
 }
 
+/* ──────────────────────────────────────────────────────────
+   Wizard loading card (extract + run pipeline)
+   Bigger, more reassuring than the tiny spinner. Used during
+   operations that take 10s-3min so users see clear evidence
+   the system is working.
+   ────────────────────────────────────────────────────────── */
+.wiz-status.loading-card {
+    display: block !important;
+    margin: 18px auto !important;
+    padding: 18px 22px !important;
+    max-width: 560px !important;
+    background: var(--vf-mint-bg-soft) !important;
+    border: 1px solid var(--vf-hairline) !important;
+    border-radius: 10px !important;
+    text-align: left !important;
+    color: var(--vf-slate) !important;
+    font-size: 0.86rem !important;
+}
+/* Don't render the legacy tiny spinner when in card mode */
+.wiz-status.loading-card::after { content: none !important; }
+
+.wiz-load-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.wiz-load-spinner {
+    width: 26px;
+    height: 26px;
+    border: 3px solid var(--vf-hairline);
+    border-top-color: var(--vf-forest);
+    border-radius: 50%;
+    animation: drive-sync-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+.wiz-load-text { flex: 1; min-width: 0; }
+.wiz-load-main {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--vf-ink);
+    line-height: 1.3;
+}
+.wiz-load-sub {
+    font-size: 0.78rem;
+    color: var(--vf-stone);
+    margin-top: 4px;
+    line-height: 1.4;
+}
+.wiz-load-bar {
+    margin-top: 14px;
+    height: 6px;
+    background: var(--vf-hairline);
+    border-radius: 999px;
+    overflow: hidden;
+    position: relative;
+}
+.wiz-load-bar-fill {
+    height: 100%;
+    background: var(--vf-forest);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+/* Indeterminate variant — for operations where we don't know % */
+@keyframes wiz-load-bar-shimmer {
+    0%   { left: -40%; }
+    100% { left: 100%; }
+}
+.wiz-load-bar-indet {
+    width: 40% !important;
+    position: absolute;
+    top: 0;
+    left: -40%;
+    animation: wiz-load-bar-shimmer 1.4s ease-in-out infinite;
+}
+.wiz-load-hint {
+    margin-top: 10px;
+    font-size: 0.72rem;
+    color: var(--vf-stone-light);
+    font-style: italic;
+}
+
+/* Library card chip "latest" mini-pill */
+.lib-chip-latest {
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--vf-stone);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0;
+    white-space: nowrap;
+}
+
 /* IC Memo header — title + Start New Memo button on one row */
 .memo-page-header {
     display: flex;

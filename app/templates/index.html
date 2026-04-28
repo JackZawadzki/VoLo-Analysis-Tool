@@ -6,7 +6,7 @@
     <title>VoLo Earth Ventures — Underwriting Engine</title>
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
-    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=20">
+    <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=21">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -996,9 +996,12 @@
                 </button>
             </div>
 
-            <!-- Top mode switcher (visible in setup + history modes) -->
+            <!-- Top mode switcher (visible in setup + history modes).
+                 Tab is "Memo Inputs" (not "New Memo") to disambiguate from
+                 the Start New Memo button in the page header — they used
+                 to share the same label and confused users. -->
             <div class="memo-modeswitch" id="memo-modeswitch">
-                <button class="memo-modeswitch-btn active" data-mode-target="setup" onclick="memoSetMode('setup')">New Memo</button>
+                <button class="memo-modeswitch-btn active" data-mode-target="setup" onclick="memoSetMode('setup')">Memo Inputs</button>
                 <button class="memo-modeswitch-btn" data-mode-target="history" onclick="memoSetMode('history')">History</button>
             </div>
 
@@ -2387,7 +2390,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=173"></script>
+    <script src="/static/app.js?v=174"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {
