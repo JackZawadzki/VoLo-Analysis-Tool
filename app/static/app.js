@@ -1189,19 +1189,6 @@ function _wizRenderLibrary() {
         return;
     }
 
-    // Find the most-recent timestamp in a list of artifacts. Each artifact
-    // type uses a different field name (deal_reports/memos: created_at,
-    // ddrs: generated_at) so we accept both.
-    const _latestOf = (arr) => {
-        if (!arr || !arr.length) return null;
-        let latest = null;
-        for (const a of arr) {
-            const ts = a.created_at || a.generated_at;
-            if (ts && (!latest || ts > latest)) latest = ts;
-        }
-        return latest;
-    };
-
     list.innerHTML = filtered.map((g, idx) => {
         const nDeal = g.deal_reports?.length || 0;
         const nDdr  = g.ddrs?.length         || 0;
@@ -1209,22 +1196,10 @@ function _wizRenderLibrary() {
         const authors = _libCollectAuthors(g);
         const authorText = authors.length ? authors.join(', ') : 'unknown';
 
-        // Per-artifact-type latest date so a card with 3 DDRs shows "latest
-        // DDR: 2d ago" inline, not just the company-level latest_at.
-        const latestDeal = _latestOf(g.deal_reports);
-        const latestDdr  = _latestOf(g.ddrs);
-        const latestMemo = _latestOf(g.memos);
-
-        const _dateSuffix = (n, latest) => {
-            if (n <= 1) return '';
-            const fmt = _libFmtDate(latest);
-            return fmt ? ` <span class="lib-chip-latest">latest ${fmt}</span>` : '';
-        };
-
         const chips = [];
-        if (nDeal) chips.push(`<span class="lib-chip lib-chip-deal" title="${latestDeal ? 'Latest: ' + _libFmtDate(latestDeal) : ''}"><span class="lib-chip-dot"></span>Deal Report${nDeal>1?` ×${nDeal}`:''}${_dateSuffix(nDeal, latestDeal)}</span>`);
-        if (nDdr)  chips.push(`<span class="lib-chip lib-chip-ddr"  title="${latestDdr  ? 'Latest: ' + _libFmtDate(latestDdr)  : ''}"><span class="lib-chip-dot"></span>DDR${nDdr>1?` ×${nDdr}`:''}${_dateSuffix(nDdr, latestDdr)}</span>`);
-        if (nMemo) chips.push(`<span class="lib-chip lib-chip-memo" title="${latestMemo ? 'Latest: ' + _libFmtDate(latestMemo) : ''}"><span class="lib-chip-dot"></span>IC Memo${nMemo>1?` ×${nMemo}`:''}${_dateSuffix(nMemo, latestMemo)}</span>`);
+        if (nDeal) chips.push(`<span class="lib-chip lib-chip-deal"><span class="lib-chip-dot"></span>Deal Report${nDeal>1?` ×${nDeal}`:''}</span>`);
+        if (nDdr)  chips.push(`<span class="lib-chip lib-chip-ddr"><span class="lib-chip-dot"></span>DDR${nDdr>1?` ×${nDdr}`:''}</span>`);
+        if (nMemo) chips.push(`<span class="lib-chip lib-chip-memo"><span class="lib-chip-dot"></span>IC Memo${nMemo>1?` ×${nMemo}`:''}</span>`);
         if (!chips.length) chips.push(`<span class="lib-chip lib-chip-empty">No artifacts</span>`);
 
         return `
