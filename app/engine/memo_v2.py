@@ -195,6 +195,69 @@ _MANIFEST_OUTPUT_SCHEMA = """Output schema (JSON):
 Valid section_key values: investment_overview, high_level_opportunities, high_level_risks, company_overview, market, business_model, financials, team, traction, competitive_position, carbon_impact, technology_ip_moat, financing_overview, cohort_analysis."""
 
 
+def _extract_manifest_json(reply: str) -> Optional[dict]:
+    """Pull a JSON object out of an LLM reply, tolerating common formatting
+    drift (markdown fences, leading/trailing prose, partial fences). Returns
+    the parsed dict, or None if no valid JSON object can be recovered.
+
+    Tries, in order: raw parse, fence-stripped parse, brace-balanced
+    substring parse. Rejects non-dict top-level values (e.g. a JSON array)
+    so downstream `.get(...)` calls can't AttributeError."""
+
+    candidates = []
+
+    stripped = reply.strip()
+    if stripped:
+        candidates.append(stripped)
+
+    # Strip any markdown fences anywhere in the reply, not just at the start.
+    fence_stripped = re.sub(r"```(?:json)?\s*|\s*```", "", stripped, flags=re.IGNORECASE).strip()
+    if fence_stripped and fence_stripped != stripped:
+        candidates.append(fence_stripped)
+
+    # Brace-balanced extraction: find the first `{` that opens a complete
+    # object. Handles prose before/after, including a partial fence the
+    # regex above didn't catch.
+    for source in (stripped, fence_stripped):
+        start = source.find("{")
+        if start == -1:
+            continue
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(source)):
+            ch = source[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+            else:
+                if ch == '"':
+                    in_string = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidates.append(source[start : i + 1])
+                        break
+
+    for cand in candidates:
+        try:
+            parsed = json.loads(cand)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+        # JSON array / scalar at top level — the manifest schema is an
+        # object, so reject and try the next candidate.
+
+    return None
+
+
 def _pass_manifest(client, model: str, raw_docs: list, memo_section_titles: list) -> tuple[dict, int, int]:
     """Stage 1: Single LLM call producing a JSON manifest of the whole data room.
 
@@ -231,14 +294,12 @@ def _pass_manifest(client, model: str, raw_docs: list, memo_section_titles: list
         logger.error(f"v2 manifest pass failed: {e}")
         return _fallback_manifest(raw_docs), 0, 0
 
-    # Strip stray markdown fences if Claude added them despite instructions
-    if reply.startswith("```"):
-        reply = re.sub(r"^```(?:json)?\s*|\s*```$", "", reply, flags=re.MULTILINE).strip()
-
-    try:
-        manifest = json.loads(reply)
-    except json.JSONDecodeError as e:
-        logger.error(f"v2 manifest pass returned non-JSON: {e}; first 500 chars: {reply[:500]}")
+    manifest = _extract_manifest_json(reply)
+    if manifest is None:
+        logger.error(
+            "v2 manifest pass returned unparseable JSON; first 500 chars: %s",
+            reply[:500],
+        )
         return _fallback_manifest(raw_docs), tokens_in, tokens_out
 
     # Defensive fill: ensure every input doc has a classification
