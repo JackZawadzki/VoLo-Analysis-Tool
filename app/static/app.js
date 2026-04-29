@@ -1239,12 +1239,22 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-grouptitle">Deal Reports</div>');
         html.push('<div class="lib-art-list">');
         g.deal_reports.forEach(d => {
+            const customTitle = (d.custom_title || '').trim();
+            const titleText = customTitle || 'Deal Report';
+            const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            const subParts = [`By <strong>${_libEscape(d.owner_username)}</strong>`];
+            if (d.archetype)   subParts.push(_libEscape(d.archetype));
+            if (d.entry_stage) subParts.push(_libEscape(d.entry_stage));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-deal" onclick="wizOpenFolderDeal(${d.id})">&#9974;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderDeal(${d.id})">
-                        <div class="lib-art-title">Deal Report${d.archetype ? ` · ${_libEscape(d.archetype)}` : ''}${d.entry_stage ? ` · ${_libEscape(d.entry_stage)}` : ''}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(d.owner_username)}</strong></div>
+                        <div class="lib-art-title-row">
+                            <span class="lib-art-title">${_libEscape(titleText)}</span>
+                            ${renamedPill}
+                            <button class="lib-art-rename" onclick="event.stopPropagation(); libRenameDealReport(${d.id}, ${JSON.stringify(customTitle).replace(/"/g, '&quot;')});" title="Rename" aria-label="Rename">&#9998;</button>
+                        </div>
+                        <div class="lib-art-sub">${subParts.join(' · ')}</div>
                         <div class="lib-art-when">${_libFmtDateTime(d.created_at)}</div>
                     </div>
                     <button class="lib-art-srcbtn" onclick="event.stopPropagation(); libShowSourceData(${d.id});" title="View raw inputs the model used">Source data</button>
@@ -1269,12 +1279,21 @@ function wizOpenFolder(idx) {
                     ? (_bytes / 1024).toFixed(0) + ' KB'
                     : (_bytes / (1024 * 1024)).toFixed(1) + ' MB');
             const fnAttr = JSON.stringify(d.filename || 'DDR_Report.pdf').replace(/"/g, '&quot;');
+            const customTitle = (d.custom_title || '').trim();
+            const titleText = customTitle || 'Due Diligence Report';
+            const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            const subParts = [`By <strong>${_libEscape(d.generated_by)}</strong>`, sizeStr];
+            if (d.filename) subParts.push(_libEscape(d.filename));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-ddr" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&#128209;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">
-                        <div class="lib-art-title">${_libEscape(d.filename || 'DDR Report')}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(d.generated_by)}</strong> · ${sizeStr}</div>
+                        <div class="lib-art-title-row">
+                            <span class="lib-art-title">${_libEscape(titleText)}</span>
+                            ${renamedPill}
+                            <button class="lib-art-rename" onclick="event.stopPropagation(); libRenameDdr(${d.id}, ${JSON.stringify(customTitle).replace(/"/g, '&quot;')});" title="Rename" aria-label="Rename">&#9998;</button>
+                        </div>
+                        <div class="lib-art-sub">${subParts.join(' · ')}</div>
                         <div class="lib-art-when">${_libFmtDateTime(d.generated_at)}</div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteDdr(${d.id});" title="Delete this DDR" aria-label="Delete">&#128465;</button>
@@ -1289,12 +1308,21 @@ function wizOpenFolder(idx) {
         html.push('<div class="lib-art-grouptitle">IC Memos</div>');
         html.push('<div class="lib-art-list">');
         g.memos.forEach(m => {
+            const customTitle = (m.custom_title || '').trim();
+            const titleText = customTitle || 'Investment Memo';
+            const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            const subParts = [`By <strong>${_libEscape(m.owner_username)}</strong>`];
+            if (m.model_used) subParts.push(_libEscape(m.model_used));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-memo" onclick="wizOpenFolderMemo(${m.id})">&#128221;</div>
                     <div class="lib-art-info" onclick="wizOpenFolderMemo(${m.id})">
-                        <div class="lib-art-title">Investment Memo${m.model_used ? ` · ${_libEscape(m.model_used)}` : ''}</div>
-                        <div class="lib-art-sub">By <strong>${_libEscape(m.owner_username)}</strong></div>
+                        <div class="lib-art-title-row">
+                            <span class="lib-art-title">${_libEscape(titleText)}</span>
+                            ${renamedPill}
+                            <button class="lib-art-rename" onclick="event.stopPropagation(); libRenameMemo(${m.id}, ${JSON.stringify(customTitle).replace(/"/g, '&quot;')});" title="Rename" aria-label="Rename">&#9998;</button>
+                        </div>
+                        <div class="lib-art-sub">${subParts.join(' · ')}</div>
                         <div class="lib-art-when">${_libFmtDateTime(m.created_at)}</div>
                     </div>
                     <button class="lib-art-delbtn" onclick="event.stopPropagation(); libDeleteMemo(${m.id});" title="Delete this memo" aria-label="Delete">&#128465;</button>
@@ -1385,6 +1413,72 @@ function libDeleteMemo(memoId) {
     _libDeleteWithConfirm({
         url: `/api/memo/history/${memoId}`,
         label: 'IC memo',
+    });
+}
+
+// ─── Library: rename artifact (deal report / DDR / memo) ──────────────
+// Empty input resets to the default label. The library is reloaded on
+// success so the new title (and the "Renamed" pill) appears immediately.
+async function _libRename({ url, label, defaultName, currentTitle }) {
+    const promptMsg = `Rename this ${label}:\n\n(Leave empty to reset to default "${defaultName}")`;
+    const next = window.prompt(promptMsg, currentTitle || '');
+    if (next === null) return;  // cancelled
+    const trimmed = next.trim();
+    try {
+        const r = await fetch(url, {
+            method: 'PATCH',
+            headers: { ..._rvmHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: trimmed }),
+        });
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({ detail: r.statusText }));
+            throw new Error(err.detail || ('HTTP ' + r.status));
+        }
+        showToast(trimmed ? `Renamed to "${trimmed}".` : `Reset to default "${defaultName}".`);
+        // Refresh the library + reopen the folder so the change shows up.
+        const stayOpenName = _libNotes.company;
+        wizCloseFolder();
+        await new Promise(res => setTimeout(res, 100));
+        if (typeof wizLoadReports === 'function') {
+            wizLoadReports();
+            if (stayOpenName) {
+                setTimeout(() => {
+                    const idx = (window._libCompanies || []).findIndex(c =>
+                        (c.company_name || '').trim().toLowerCase() === (stayOpenName || '').trim().toLowerCase()
+                    );
+                    if (idx >= 0) wizOpenFolder(idx);
+                }, 600);
+            }
+        }
+    } catch (e) {
+        showToast('Rename failed: ' + e.message);
+    }
+}
+
+function libRenameDealReport(reportId, currentTitle) {
+    _libRename({
+        url: `/api/deal-pipeline/report/${reportId}/title`,
+        label: 'deal report',
+        defaultName: 'Deal Report',
+        currentTitle,
+    });
+}
+
+function libRenameDdr(ddrId, currentTitle) {
+    _libRename({
+        url: `/api/ddr/reports/${ddrId}/title`,
+        label: 'DDR report',
+        defaultName: 'Due Diligence Report',
+        currentTitle,
+    });
+}
+
+function libRenameMemo(memoId, currentTitle) {
+    _libRename({
+        url: `/api/memo/history/${memoId}/title`,
+        label: 'IC memo',
+        defaultName: 'Investment Memo',
+        currentTitle,
     });
 }
 
@@ -7240,23 +7334,67 @@ function memoSetMode(mode) {
 }
 
 // ── Load reports into dropdown ──────────────────────────────────────────────
+// Reports are firm-wide (any teammate's report can be picked). Cache the
+// raw list so the search box can filter client-side without re-hitting the API.
+let _memoReportsAll = [];
+
+function _memoFormatReportLabel(rpt) {
+    const date = (rpt.created_at || '').substring(0, 10);
+    const archetype = rpt.archetype || '';
+    const stage = rpt.entry_stage || '';
+    const author = rpt.author || 'unknown';
+    const meta = [stage, archetype].filter(Boolean).join(' · ');
+    const parts = [rpt.company_name];
+    if (meta) parts.push(meta);
+    if (date) parts.push(date);
+    parts.push(`by ${author}`);
+    return parts.join(' · ');
+}
+
+function _memoRenderReportOptions(reports) {
+    const sel = document.getElementById('memo-report-select');
+    if (!sel) return;
+    const previousValue = sel.value;
+    sel.innerHTML = '<option value="">— No report selected —</option>';
+    if (!reports.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.textContent = '— No reports match your search —';
+        sel.appendChild(opt);
+        return;
+    }
+    reports.forEach(rpt => {
+        const opt = document.createElement('option');
+        opt.value = rpt.id;
+        opt.textContent = _memoFormatReportLabel(rpt);
+        opt.title = `Report ID #${rpt.id}`;
+        sel.appendChild(opt);
+    });
+    // Preserve the user's selection if it's still in the filtered list
+    if (previousValue && reports.some(r => String(r.id) === String(previousValue))) {
+        sel.value = previousValue;
+    }
+}
+
 async function memoLoadReports() {
     try {
         const r = await fetch('/api/memo/reports', { headers: _rvmHeaders() });
         if (!r.ok) return;
-        const reports = await r.json();
-        const sel = document.getElementById('memo-report-select');
-        if (!sel) return;
-        sel.innerHTML = '<option value="">— No report selected —</option>';
-        reports.forEach(rpt => {
-            const opt = document.createElement('option');
-            opt.value = rpt.id;
-            opt.textContent = `#${rpt.id} — ${rpt.company_name} (${rpt.archetype}, ${rpt.entry_stage}) — ${rpt.created_at?.substring(0,10) || ''}`;
-            sel.appendChild(opt);
-        });
+        _memoReportsAll = await r.json();
+        memoFilterReports();  // render with whatever's currently in the search box
     } catch (e) {
         console.error('Failed to load reports for memo:', e);
     }
+}
+
+function memoFilterReports() {
+    const search = document.getElementById('memo-report-search');
+    const q = (search?.value || '').trim().toLowerCase();
+    const filtered = q
+        ? _memoReportsAll.filter(r => (r.company_name || '').toLowerCase().includes(q))
+        : _memoReportsAll;
+    _memoRenderReportOptions(filtered);
 }
 
 function memoOnReportSelect() {
@@ -7264,8 +7402,10 @@ function memoOnReportSelect() {
     const preview = document.getElementById('memo-report-preview');
     if (!sel || !preview) return;
     if (sel.value) {
+        const rpt = _memoReportsAll.find(r => String(r.id) === String(sel.value));
+        const label = rpt ? _memoFormatReportLabel(rpt) : `Report ${sel.value}`;
         preview.style.display = 'block';
-        preview.innerHTML = `<span style="color:var(--accent);">&#10003;</span> Report #${sel.value} selected. Simulation results, carbon impact, and financial data will be included.`;
+        preview.innerHTML = `<span style="color:var(--accent);">&#10003;</span> Selected: <strong>${label}</strong>. Simulation results, carbon impact, and financial data will be included.`;
     } else {
         preview.style.display = 'none';
     }

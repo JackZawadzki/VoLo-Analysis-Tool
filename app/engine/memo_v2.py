@@ -663,7 +663,7 @@ def run_memo_v2_pipeline(
 
     # ── Stage 1: manifest pass ────────────────────────────────────────────
     if raw_docs:
-        _progress(8, "Cataloging the data room (manifest pass)...")
+        _progress(8, "Reading through the data room...")
         section_titles = [s["title"] for s in memo_sections]
         manifest, m_in, m_out = _pass_manifest(client, model, raw_docs, section_titles)
         total_in += m_in

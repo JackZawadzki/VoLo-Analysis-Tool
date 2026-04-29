@@ -836,14 +836,31 @@ async def extract_deal_terms_endpoint(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/reports")
-async def list_reports_for_memo(user: CurrentUser = Depends(get_current_user)):
-    """Return a lightweight list of deal reports the user can pull into memo generation."""
+async def list_reports_for_memo(
+    user: CurrentUser = Depends(get_current_user),
+    q: str = "",
+):
+    """Return deal reports across the whole team for memo selection.
+
+    Reports are shared inside the firm — any signed-in user can pull any
+    completed report into a memo. Each row carries the author's username so
+    the picker can show "by joseph" / "by jack". Optional `q` filters on
+    company name (case-insensitive substring)."""
     conn = get_db()
     try:
-        rows = conn.execute(
-            "SELECT id, company_name, archetype, entry_stage, status, created_at FROM deal_reports WHERE owner_id=? ORDER BY created_at DESC LIMIT 50",
-            (user.id,),
-        ).fetchall()
+        sql = (
+            "SELECT r.id, r.company_name, r.archetype, r.entry_stage, "
+            "       r.status, r.created_at, r.owner_id, "
+            "       COALESCE(u.username, '(unknown)') AS author "
+            "FROM deal_reports r "
+            "LEFT JOIN users u ON u.id = r.owner_id "
+        )
+        params: tuple = ()
+        if q.strip():
+            sql += "WHERE LOWER(r.company_name) LIKE ? "
+            params = (f"%{q.strip().lower()}%",)
+        sql += "ORDER BY r.created_at DESC LIMIT 200"
+        rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -2234,9 +2251,11 @@ def _build_memo_payload(
         company_name = req.company_name
         report_id = req.report_id
         if report_id:
+            # Reports are shared firm-wide — any signed-in user can pull any
+            # report into their memo (no owner_id filter).
             row = conn.execute(
-                "SELECT * FROM deal_reports WHERE id=? AND owner_id=?",
-                (report_id, user_id),
+                "SELECT * FROM deal_reports WHERE id=?",
+                (report_id,),
             ).fetchone()
             if row:
                 report_context = _build_report_context(row)
@@ -2330,7 +2349,7 @@ def _build_memo_payload(
 
         if engine == "v2":
             from ..engine.memo_v2 import run_memo_v2_pipeline
-            _emit_step_progress(0, "Cataloging the data room (manifest pass)...")
+            _emit_step_progress(0, "Reading through the data room...")
             v2_section_texts, v2_in, v2_out, v2_log, manifest_meta = run_memo_v2_pipeline(
                 client=client,
                 model=model,
@@ -2974,6 +2993,33 @@ async def delete_memo(memo_id: int, user: CurrentUser = Depends(get_current_user
         conn.close()
 
 
+class _MemoRenameRequest(BaseModel):
+    title: str = ""
+
+
+@router.patch("/history/{memo_id}/title")
+async def rename_memo(
+    memo_id: int,
+    body: _MemoRenameRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Rename an IC memo (any teammate can rename — memos are shared). Pass
+    an empty title to reset to the default 'Investment Memo' label."""
+    new_title = (body.title or "").strip()[:200]
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE generated_memos SET custom_title=? WHERE id=?",
+            (new_title, memo_id),
+        )
+        conn.commit()
+        if (cur.rowcount or 0) == 0:
+            raise HTTPException(404, "Memo not found.")
+    finally:
+        conn.close()
+    return {"ok": True, "id": memo_id, "custom_title": new_title}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  DOCX EXPORT
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3226,9 +3272,11 @@ async def revise_section(
         # Get report context if available
         report_context = ""
         if row["report_id"]:
+            # Reports are shared firm-wide — drop owner scoping so a memo
+            # built off a teammate's report can still be revised by section.
             rpt_row = conn.execute(
-                "SELECT report_json FROM deal_reports WHERE id=? AND owner_id=?",
-                (row["report_id"], user.id),
+                "SELECT report_json FROM deal_reports WHERE id=?",
+                (row["report_id"],),
             ).fetchone()
             if rpt_row:
                 try:

@@ -936,12 +936,23 @@ body {
 .lib-art-icon.lib-art-ddr   { background: #faf3e3; color: #8a6a3c; }
 .lib-art-icon.lib-art-memo  { background: #ecf3f5; color: #4f6b75; }
 .lib-art-info { flex: 1; min-width: 0; }
+.lib-art-title-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 2px; }
 .lib-art-title {
     font-size: 0.88rem;
     font-weight: 600;
     color: var(--text-primary);
-    margin: 0 0 2px;
     line-height: 1.3;
+}
+.lib-art-rename {
+    background: none; border: none; padding: 2px 5px; cursor: pointer;
+    color: var(--text-tertiary); font-size: 0.78rem; line-height: 1;
+    border-radius: 4px; transition: background 0.12s, color 0.12s;
+}
+.lib-art-rename:hover { background: var(--accent-light); color: var(--accent); }
+.lib-art-renamed-pill {
+    font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--accent); background: var(--accent-light);
+    padding: 2px 7px; border-radius: 99px; line-height: 1.4;
 }
 .lib-art-sub {
     font-size: 0.72rem;

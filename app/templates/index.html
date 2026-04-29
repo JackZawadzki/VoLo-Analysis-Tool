@@ -1085,7 +1085,8 @@
                             <span class="memo-section-chevron" id="memo-sec-report-chev">&#9660;</span>
                         </div>
                         <div class="memo-section-body" id="memo-sec-report">
-                            <p class="memo-helper-text">Choose a completed deal analysis report to include simulation results, carbon impact, and financial extraction data.</p>
+                            <p class="memo-helper-text">Choose a deal report. Search by company name to narrow the list.</p>
+                            <input type="text" id="memo-report-search" placeholder="Search by company (e.g. Type One)…" oninput="memoFilterReports()" autocomplete="off" style="width:100%; padding:8px 10px; margin-bottom:8px; box-sizing:border-box;">
                             <select id="memo-report-select" onchange="memoOnReportSelect()">
                                 <option value="">— No report selected —</option>
                             </select>

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
@@ -368,6 +369,33 @@ async def ddr_delete_report(report_id: int, user: CurrentUser = Depends(get_curr
     finally:
         db.close()
     return {"ok": True, "deleted_id": report_id}
+
+
+class _DdrRenameRequest(BaseModel):
+    title: str = ""
+
+
+@router.patch("/reports/{report_id}/title")
+async def ddr_rename_report(
+    report_id: int,
+    body: _DdrRenameRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Rename a DDR report (team-shared library). Pass an empty title to
+    reset to the default 'Due Diligence Report' label."""
+    new_title = (body.title or "").strip()[:200]
+    db = get_db()
+    try:
+        cur = db.execute(
+            "UPDATE ddr_reports SET custom_title=? WHERE id=?",
+            (new_title, report_id),
+        )
+        db.commit()
+        if (cur.rowcount or 0) == 0:
+            raise HTTPException(404, "DDR report not found")
+    finally:
+        db.close()
+    return {"ok": True, "id": report_id, "custom_title": new_title}
 
 
 @router.get("/reports/{report_id}/download")

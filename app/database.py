@@ -802,6 +802,12 @@ def migrate_db():
         tokens_out      INTEGER NOT NULL DEFAULT 0,
         created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
     )""")
+    # Optional user-supplied display titles for library artifacts. Empty
+    # string means "use the default label" (Deal Report / Due Diligence
+    # Report / Investment Memo). Anyone on the team can rename any artifact.
+    migrations.append("ALTER TABLE deal_reports ADD COLUMN custom_title TEXT NOT NULL DEFAULT ''")
+    migrations.append("ALTER TABLE generated_memos ADD COLUMN custom_title TEXT NOT NULL DEFAULT ''")
+    migrations.append("ALTER TABLE ddr_reports ADD COLUMN custom_title TEXT NOT NULL DEFAULT ''")
     for sql in migrations:
         try:
             conn.execute(sql)

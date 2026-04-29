@@ -277,6 +277,33 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
         db.close()
 
 
+class RenameRequest(BaseModel):
+    title: str = ""
+
+
+@router.patch("/report/{rid}/title")
+def rename_deal_report(
+    rid: int,
+    body: RenameRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Rename a deal report (any teammate can rename — reports are shared).
+    Pass an empty title to reset to the default 'Deal Report' label."""
+    new_title = (body.title or "").strip()[:200]
+    db = get_db()
+    try:
+        cur = db.execute(
+            "UPDATE deal_reports SET custom_title=? WHERE id=?",
+            (new_title, rid),
+        )
+        db.commit()
+        if (cur.rowcount or 0) == 0:
+            raise HTTPException(404, "Deal report not found.")
+    finally:
+        db.close()
+    return {"ok": True, "id": rid, "custom_title": new_title}
+
+
 @router.delete("/report/{rid}")
 def delete_deal_report(rid: int, user: CurrentUser = Depends(get_current_user)):
     """Delete a deal report owned by the current user. Returns 404 if the
@@ -397,14 +424,16 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
     try:
         deals = db.execute(
             """SELECT r.id, r.company_name, r.archetype, r.entry_stage,
-                      r.status, r.created_at, u.username AS owner_username
+                      r.status, r.created_at, r.custom_title,
+                      u.username AS owner_username
                FROM deal_reports r
                LEFT JOIN users u ON u.id = r.owner_id
                ORDER BY r.created_at DESC"""
         ).fetchall()
         memos = db.execute(
             """SELECT m.id, m.company_name, m.report_id, m.created_at,
-                      m.model_used, u.username AS owner_username
+                      m.model_used, m.custom_title,
+                      u.username AS owner_username
                FROM generated_memos m
                LEFT JOIN users u ON u.id = m.owner_id
                WHERE m.status = 'completed' OR m.status = ''
@@ -412,7 +441,7 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
         ).fetchall()
         ddrs = db.execute(
             """SELECT id, company_name, filename, generated_by, generated_at,
-                      file_size_bytes
+                      file_size_bytes, custom_title
                FROM ddr_reports
                ORDER BY generated_at DESC"""
         ).fetchall()
@@ -440,6 +469,7 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
             "archetype": d["archetype"],
             "entry_stage": d["entry_stage"],
             "status": d["status"],
+            "custom_title": (d["custom_title"] or "").strip(),
         })
         if (d["created_at"] or "") > (g["latest_at"] or ""):
             g["latest_at"] = d["created_at"]
@@ -459,6 +489,7 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
             "created_at": m["created_at"],
             "report_id": m["report_id"],
             "model_used": m["model_used"],
+            "custom_title": (m["custom_title"] or "").strip(),
         })
         if (m["created_at"] or "") > (g["latest_at"] or ""):
             g["latest_at"] = m["created_at"]
@@ -478,6 +509,7 @@ def list_library(user: CurrentUser = Depends(get_current_user)):
             "generated_by": d["generated_by"] or "unknown",
             "generated_at": d["generated_at"],
             "file_size_bytes": d["file_size_bytes"],
+            "custom_title": (d["custom_title"] or "").strip(),
         })
         if (d["generated_at"] or "") > (g["latest_at"] or ""):
             g["latest_at"] = d["generated_at"]
