@@ -352,6 +352,20 @@ _EXTRACTABLE_MIMES = {
     'text/html': '.html',
 }
 
+# Zips are first-class. We unpack each supported member as its own row
+# in deal_documents so the manifest pass sees the contents the same way
+# it sees any other data-room doc. The zip itself never enters the DB.
+_ZIP_MIMES = {
+    'application/zip',
+    'application/x-zip-compressed',
+    'multipart/x-zip',
+    'application/x-compressed',
+}
+
+# Extensions we know how to extract text from (matches _extract_text
+# below). Used both at top level and when iterating zip members.
+_SUPPORTED_EXTS = ('.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.md', '.json', '.html')
+
 # Google Docs/Sheets/Slides need to be exported
 _GOOGLE_EXPORT_MIMES = {
     'application/vnd.google-apps.document': ('application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.docx'),
@@ -631,6 +645,89 @@ def _extract_text(file_bytes: bytes, file_name: str, mime_type: str) -> str:
         text = f"[Extraction error: {str(e)[:200]}]"
 
     return text
+
+
+# ─── Zip handling ────────────────────────────────────────────────────────────
+# Drive folders for late-stage diligence often arrive as one big .zip
+# (sometimes multiple GB) instead of a flat tree of files. We unpack zips
+# inline during sync, treat each supported member as its own document, and
+# key them by a synthetic drive_file_id of "{zip_id}::{member_path}" so the
+# (library_id, drive_file_id) UNIQUE constraint still holds and per-zip
+# cache invalidation is straightforward (delete-by-prefix on re-sync).
+#
+# Memory note: zips can be huge, so we stream the download to a temp file
+# rather than loading it all into RAM (which would OOM Replit's small
+# instances). Individual members are still read into RAM one at a time —
+# fine for typical PDFs/decks/models, which are small relative to the zip.
+
+def _is_zip(file_info: dict) -> bool:
+    mime = (file_info.get("mimeType") or "").lower()
+    if mime in _ZIP_MIMES:
+        return True
+    return Path(file_info.get("name") or "").suffix.lower() == ".zip"
+
+
+def _download_file_to_temp(service, file_info: dict) -> Path:
+    """Stream a Drive file to a temp file on disk. Returns the path; the
+    caller MUST unlink() it when done. Used for zips so a 5 GB archive
+    doesn't blow up the worker's RSS the way _download_file would."""
+    file_id = file_info["id"]
+    request = service.files().get_media(fileId=file_id, supportsAllDrives=True)
+    from googleapiclient.http import MediaIoBaseDownload
+    import tempfile as _tempfile
+    tmp = _tempfile.NamedTemporaryFile(prefix="drive_zip_", suffix=".zip", delete=False)
+    try:
+        # 8 MB chunks: large enough that overhead per chunk is negligible,
+        # small enough that we make steady progress on slow connections.
+        downloader = MediaIoBaseDownload(tmp, request, chunksize=8 * 1024 * 1024)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+    finally:
+        tmp.close()
+    return Path(tmp.name)
+
+
+def _iter_zip_members(zip_path: Path):
+    """Yield (member_path, member_bytes, ext) for each supported member.
+    Skips directories, hidden/system entries (.DS_Store, __MACOSX/…), and
+    unsupported extensions including nested zips. We deliberately do NOT
+    recurse into nested zips — one level deep covers ~all real-world
+    data-room cases and keeps the worst-case memory/CPU bounded."""
+    import zipfile as _zipfile
+    try:
+        zf = _zipfile.ZipFile(zip_path)
+    except _zipfile.BadZipFile as e:
+        logger.warning("Drive sync: corrupt zip %s — skipping: %s", zip_path.name, e)
+        return
+    try:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            name = info.filename
+            base = Path(name).name
+            if not base or base.startswith('.') or '__MACOSX' in name:
+                continue
+            ext = Path(name).suffix.lower()
+            if ext not in _SUPPORTED_EXTS:
+                continue  # nested zip, image, executable, etc.
+            try:
+                data = zf.read(info)
+            except Exception as e:
+                logger.warning("Drive sync: cannot read %s from %s: %s", name, zip_path.name, e)
+                continue
+            yield name, data, ext
+    finally:
+        zf.close()
+
+
+def _ext_to_extractable_mime(ext: str) -> str:
+    """Reverse lookup so _extract_text gets a sensible mime hint when the
+    member came from a zip (where Drive's mimeType doesn't apply)."""
+    for mime, e in _EXTRACTABLE_MIMES.items():
+        if e == ext:
+            return mime
+    return 'application/octet-stream'
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1172,14 +1269,17 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
         drive_file_ids = set()
 
         # Pre-count how many files we'll actually process (extractable types
-        # only) so the progress denominator is meaningful, not inflated by
-        # ZIPs and images that get skipped instantly.
+        # plus zips, which expand into per-member rows during processing) so
+        # the progress denominator is meaningful, not inflated by images or
+        # other binaries that get skipped instantly.
         def _is_processable(f):
             mime = f.get("mimeType", "")
             if mime in _EXTRACTABLE_MIMES or mime in _GOOGLE_EXPORT_MIMES:
                 return True
+            if _is_zip(f):
+                return True
             ext = Path(f.get("name", "")).suffix.lower()
-            return ext in ('.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.md', '.json', '.html')
+            return ext in _SUPPORTED_EXTS
 
         total_to_process = sum(1 for f in drive_files if _is_processable(f))
         files_done = 0
@@ -1192,12 +1292,116 @@ async def sync_library(lib_id: int, user: CurrentUser = Depends(get_current_user
             size = int(f.get("size", 0)) if f.get("size") else 0
             subfolder = f.get("subfolder_path", "")
 
+            # ── Zip branch ───────────────────────────────────────────────
+            # Zips never enter deal_documents themselves; their members do,
+            # keyed by "{zip_id}::{member_path}". Cache invalidation is
+            # per-zip: if the zip's drive_modified is unchanged we trust
+            # the existing member rows; otherwise we delete-by-prefix and
+            # re-extract. Member rows are added to drive_file_ids so the
+            # cleanup pass at the end of sync doesn't garbage-collect them.
+            if _is_zip(f):
+                _safe_name = name.replace(":", "_")[:60]
+                _write_sync_progress(lib_id, f"syncing:{files_done}/{total_to_process}:{_safe_name}")
+
+                conn = get_db()
+                try:
+                    existing_member = conn.execute(
+                        "SELECT drive_modified FROM deal_documents "
+                        "WHERE library_id=? AND drive_file_id LIKE ? LIMIT 1",
+                        (lib_id, f"{f['id']}::%"),
+                    ).fetchone()
+                    member_ids_rows = conn.execute(
+                        "SELECT drive_file_id FROM deal_documents "
+                        "WHERE library_id=? AND drive_file_id LIKE ?",
+                        (lib_id, f"{f['id']}::%"),
+                    ).fetchall()
+                finally:
+                    conn.close()
+                existing_member_ids = [r["drive_file_id"] for r in member_ids_rows]
+
+                if existing_member and existing_member["drive_modified"] == modified:
+                    # Zip unchanged since last sync — keep the member rows
+                    # alive, count them as unchanged, move on.
+                    drive_file_ids.update(existing_member_ids)
+                    stats["unchanged"] += max(1, len(existing_member_ids))
+                    files_done += 1
+                    continue
+
+                # Zip is new or modified — wipe old member rows and re-extract.
+                if existing_member_ids:
+                    conn = get_db()
+                    try:
+                        conn.execute(
+                            "DELETE FROM deal_documents WHERE library_id=? AND drive_file_id LIKE ?",
+                            (lib_id, f"{f['id']}::%"),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+
+                zip_path = None
+                try:
+                    zip_path = _download_file_to_temp(service, f)
+                    zip_basename = Path(name).stem
+                    member_count = 0
+                    for member_path, member_bytes, member_ext in _iter_zip_members(zip_path):
+                        member_basename = Path(member_path).name
+                        member_dir = str(Path(member_path).parent)
+                        if member_dir == ".":
+                            member_dir = ""
+                        synthetic_id = f"{f['id']}::{member_path}"
+                        # Subfolder shows the user the logical path: original
+                        # Drive folder + zip's basename + member's parent dir.
+                        sub_parts = [p for p in (subfolder.strip("/"), zip_basename, member_dir.strip("/")) if p]
+                        sub = "/".join(sub_parts)
+
+                        member_mime = _ext_to_extractable_mime(member_ext)
+                        text = _extract_text(member_bytes, member_basename, member_mime)
+                        text_hash = hashlib.md5(text.encode()).hexdigest()
+                        category = _infer_category(member_basename)
+
+                        conn = get_db()
+                        try:
+                            conn.execute(
+                                """INSERT INTO deal_documents
+                                   (library_id, owner_id, drive_file_id, file_name, file_type,
+                                    file_size, mime_type, subfolder_path, doc_category,
+                                    extracted_text, extraction_hash, drive_modified, last_extracted)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))""",
+                                (lib_id, user.id, synthetic_id, member_basename, member_ext,
+                                 len(member_bytes), member_mime, sub, category, text,
+                                 text_hash, modified),
+                            )
+                            conn.commit()
+                        finally:
+                            conn.close()
+                        drive_file_ids.add(synthetic_id)
+                        stats["new"] += 1
+                        member_count += 1
+
+                    if member_count == 0:
+                        # Empty / encrypted / contains only unsupported types.
+                        # Don't error the whole sync — just note it.
+                        logger.info("Drive sync: zip %s yielded no extractable members", name)
+                        stats["skipped"] += 1
+                except Exception as e:
+                    logger.error(f"Drive sync: failed to process zip {name}: {e}")
+                    stats["errors"] += 1
+                finally:
+                    if zip_path is not None:
+                        try:
+                            zip_path.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                files_done += 1
+                continue
+
             # Check if this file type is extractable
             is_extractable = mime in _EXTRACTABLE_MIMES or mime in _GOOGLE_EXPORT_MIMES
             if not is_extractable:
                 # Check by extension
                 ext = Path(name).suffix.lower()
-                if ext not in ('.pdf', '.docx', '.xlsx', '.pptx', '.txt', '.csv', '.md', '.json', '.html'):
+                if ext not in _SUPPORTED_EXTS:
                     stats["skipped"] += 1
                     continue
 
