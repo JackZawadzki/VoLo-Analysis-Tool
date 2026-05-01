@@ -850,7 +850,7 @@ async def list_reports_for_memo(
     try:
         sql = (
             "SELECT r.id, r.company_name, r.archetype, r.entry_stage, "
-            "       r.status, r.created_at, r.owner_id, "
+            "       r.status, r.created_at, r.owner_id, r.custom_title, "
             "       COALESCE(u.username, '(unknown)') AS author "
             "FROM deal_reports r "
             "LEFT JOIN users u ON u.id = r.owner_id "

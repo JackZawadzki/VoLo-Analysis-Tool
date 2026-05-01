@@ -7340,10 +7340,17 @@ let _memoReportsAll = [];
 
 function _memoFormatReportLabel(rpt) {
     const date = (rpt.created_at || '').substring(0, 10);
-    const archetype = rpt.archetype || '';
-    const stage = rpt.entry_stage || '';
     const author = rpt.author || 'unknown';
-    const meta = [stage, archetype].filter(Boolean).join(' · ');
+    const customTitle = (rpt.custom_title || '').trim();
+    // If the report was renamed in the library, use that name here too —
+    // names stay consistent across the library card and this picker.
+    if (customTitle) {
+        const parts = [customTitle];
+        if (date) parts.push(date);
+        parts.push(`by ${author}`);
+        return parts.join(' · ');
+    }
+    const meta = [rpt.entry_stage, rpt.archetype].filter(Boolean).join(' · ');
     const parts = [rpt.company_name];
     if (meta) parts.push(meta);
     if (date) parts.push(date);
