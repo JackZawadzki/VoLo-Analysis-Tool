@@ -175,42 +175,67 @@ def _pdf_to_text(pdf_bytes: bytes, max_chars: int = 150_000) -> str:
     so the LLM can attribute facts back to a slide. Caps total length so
     a 100-page deck doesn't blow the model's context window.
 
-    Uses PyMuPDF (fitz) — same library used elsewhere in the app for PDF
-    text extraction (see drive.py and the memo-engine extractors)."""
+    Prefers PyMuPDF (fitz) for quality. Falls back to pypdf — which is
+    always in requirements.txt — when PyMuPDF isn't installed on the
+    deploy yet (e.g. Replit hasn't refreshed deps after a redeploy).
+    Both libraries handle text-based PDFs fine; PyMuPDF is just a bit
+    more robust on tricky layouts."""
+    pages: list[str] = []
+    last_err: Exception | None = None
+
+    # Try PyMuPDF first
     try:
         import fitz  # PyMuPDF
-    except ImportError as e:
-        raise HTTPException(
-            500,
-            "PyMuPDF not installed — cannot extract text from PDF financial overviews.",
-        ) from e
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        try:
+            for page in doc:
+                pages.append((page.get_text() or "").strip())
+        finally:
+            doc.close()
+    except ImportError:
+        pages = []  # signal to try fallback
+    except Exception as e:
+        last_err = e
+        pages = []
+
+    # Fallback to pypdf if PyMuPDF wasn't available or failed
+    if not any(p for p in pages):
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+            pages = [(p.extract_text() or "").strip() for p in reader.pages]
+        except ImportError as e:
+            raise HTTPException(
+                500,
+                "Neither PyMuPDF nor pypdf is installed — cannot extract text "
+                "from PDFs. Install either pymupdf or pypdf.",
+            ) from e
+        except Exception as e:
+            raise HTTPException(
+                400,
+                f"Could not open PDF: {e if not last_err else last_err}",
+            )
+
+    if not any(p for p in pages):
+        return ""
 
     parts: list[str] = []
     total = 0
-    try:
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    except Exception as e:
-        raise HTTPException(400, f"Could not open PDF: {e}")
-    try:
-        for i, page in enumerate(doc):
-            page_text = page.get_text() or ""
-            page_text = page_text.strip()
-            if not page_text:
-                continue
-            header = f"\n\n=== Page {i + 1} ===\n"
-            chunk = header + page_text
-            if total + len(chunk) > max_chars:
-                # Cap budget — most financial-overview decks fit comfortably,
-                # but a 200-page diligence binder wouldn't.
-                remaining = max_chars - total
-                if remaining > len(header):
-                    parts.append(chunk[:remaining])
-                parts.append(f"\n\n[…truncated at {max_chars:,} chars]")
-                break
-            parts.append(chunk)
-            total += len(chunk)
-    finally:
-        doc.close()
+    for i, page_text in enumerate(pages):
+        if not page_text:
+            continue
+        header = f"\n\n=== Page {i + 1} ===\n"
+        chunk = header + page_text
+        if total + len(chunk) > max_chars:
+            # Cap budget — most financial-overview decks fit comfortably,
+            # but a 200-page diligence binder wouldn't.
+            remaining = max_chars - total
+            if remaining > len(header):
+                parts.append(chunk[:remaining])
+            parts.append(f"\n\n[…truncated at {max_chars:,} chars]")
+            break
+        parts.append(chunk)
+        total += len(chunk)
     return "".join(parts).strip()
 
 
