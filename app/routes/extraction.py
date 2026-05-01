@@ -170,6 +170,225 @@ def _vision_map_metric(raw_name: str) -> str | None:
     return None
 
 
+def _pdf_to_text(pdf_bytes: bytes, max_chars: int = 150_000) -> str:
+    """Extract text from a PDF, page-by-page, with explicit page markers
+    so the LLM can attribute facts back to a slide. Caps total length so
+    a 100-page deck doesn't blow the model's context window.
+
+    Uses PyMuPDF (fitz) — same library used elsewhere in the app for PDF
+    text extraction (see drive.py and the memo-engine extractors)."""
+    try:
+        import fitz  # PyMuPDF
+    except ImportError as e:
+        raise HTTPException(
+            500,
+            "PyMuPDF not installed — cannot extract text from PDF financial overviews.",
+        ) from e
+
+    parts: list[str] = []
+    total = 0
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(400, f"Could not open PDF: {e}")
+    try:
+        for i, page in enumerate(doc):
+            page_text = page.get_text() or ""
+            page_text = page_text.strip()
+            if not page_text:
+                continue
+            header = f"\n\n=== Page {i + 1} ===\n"
+            chunk = header + page_text
+            if total + len(chunk) > max_chars:
+                # Cap budget — most financial-overview decks fit comfortably,
+                # but a 200-page diligence binder wouldn't.
+                remaining = max_chars - total
+                if remaining > len(header):
+                    parts.append(chunk[:remaining])
+                parts.append(f"\n\n[…truncated at {max_chars:,} chars]")
+                break
+            parts.append(chunk)
+            total += len(chunk)
+    finally:
+        doc.close()
+    return "".join(parts).strip()
+
+
+async def _pdf_extract_financials(pdf_bytes: bytes, filename: str) -> dict:
+    """Use Claude to extract structured financials from a financial-overview
+    PDF (e.g. a Series B deck's "Use of Funds" + roadmap pages).
+
+    Returns the same dict schema as the Excel/vision extractors so the rest
+    of the pipeline doesn't care which input type produced the data.
+
+    These PDFs are typically narrative + tables, not cell-precise models —
+    so the prompt asks the LLM for whatever metric/year combinations it can
+    confidently recover, and is explicit that missing fields are fine
+    (financial overviews rarely have a full P&L).
+    """
+    import anthropic
+    import re
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not configured — cannot use PDF extraction.")
+
+    text = _pdf_to_text(pdf_bytes)
+    if not text:
+        raise HTTPException(
+            422,
+            "PDF appears to contain no extractable text (image-only / scanned). "
+            "Use a text-based PDF, or upload a screenshot for vision extraction.",
+        )
+
+    prompt = f"""You are a financial analyst extracting structured data from a venture financial-overview PDF (Series A/B/C deck, use-of-funds memo, or roadmap document).
+
+The full PDF text is below, page-by-page. Carefully read every page and pull out every quantitative financial fact you can find. Then return ONLY a valid JSON object — no prose, no markdown fences.
+
+JSON schema:
+{{
+  "scale": "raw" | "thousands" | "millions" | "billions",
+  "currency": "USD",
+  "years": [2024, 2025, 2026],
+  "metrics": {{
+    "<row label exactly as written or naturally phrased>": {{
+      "2024": 1234567,
+      "2025": null
+    }}
+  }},
+  "notes": "<important caveats: pre-revenue stage, partial year, fiscal year ending, source page numbers>"
+}}
+
+Rules:
+1. "scale" describes how the numbers are presented IN the document. Do NOT multiply — report values exactly as shown. I will apply the multiplier.
+   - "$100M Series B" → scale="millions", value=100
+   - "Team $46.9" in a chart labeled "($ millions)" → scale="millions", value=46.9
+   - "$1,234,567" → scale="raw", value=1234567
+2. Common metrics to look for: capital raised (Series A/B/C amounts), revenue, ARR, EBITDA, gross margin, customer count, headcount/team size, runway. Use-of-funds line items (Team, R&D, G&A, Capex, Sales & Marketing, etc.) are also valid metrics — keep their exact label.
+3. If a value applies to a future year (e.g. "Series C of $300M targeted for 2027"), include it under that year. Mark the metric clearly (e.g. "series_c_target") so it's not confused with realized data.
+4. Use null for fields not present. It is normal and expected for financial-overview PDFs to have many gaps — do NOT invent numbers to fill the schema.
+5. Extract any quarterly milestones with dollar amounts as separate facts where they fit a year (e.g. "Q3 2026" rolls up to year 2026 if no quarter granularity is needed).
+6. CRITICAL: numbers expressed as percentages (e.g. "30% gross margin", "EBITDA margin 19%") must use a label that includes "%" or "Margin" so they're not confused with dollar metrics. Keep each row label as written in the document.
+7. Only include years between 2015 and 2040.
+8. The "notes" field should mention the company stage (pre-revenue / pre-Series A / etc.) if discernible, plus any caveat the analyst should know.
+
+PDF TEXT BEGINS:
+{text}
+PDF TEXT ENDS.
+
+Now produce the JSON object."""
+
+    client = anthropic.Anthropic(api_key=api_key)
+    response = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=8192,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    raw_text = response.content[0].text.strip()
+
+    # ── Robust JSON extraction ────────────────────────────────────────────────
+    # Same hardening logic as _vision_extract_financials: strip fences, slice
+    # to the outer { … }, repair common LLM JSON malformations.
+    raw_text = re.sub(r"```[a-z]*\s*", "", raw_text)
+    raw_text = raw_text.replace("```", "").strip()
+    brace_start = raw_text.find("{")
+    brace_end = raw_text.rfind("}")
+    if brace_start != -1 and brace_end != -1 and brace_end > brace_start:
+        raw_text = raw_text[brace_start: brace_end + 1]
+
+    def _repair_json(t: str) -> str:
+        t = re.sub(r"//[^\n]*", "", t)
+        t = re.sub(r"/\*.*?\*/", "", t, flags=re.DOTALL)
+        t = re.sub(r",(\s*[}\]])", r"\1", t)
+        t = re.sub(r'(?<=")([^"]*?)(?=")',
+                   lambda m: m.group(0).replace("\n", " ").replace("\t", " "), t)
+        return t
+
+    try:
+        extracted = json.loads(raw_text)
+    except json.JSONDecodeError:
+        try:
+            extracted = json.loads(_repair_json(raw_text))
+        except json.JSONDecodeError as e:
+            raise HTTPException(
+                422,
+                f"PDF model returned unparseable JSON: {e}. Raw (first 500 chars): {raw_text[:500]}",
+            )
+
+    # Apply scale multiplier (same logic as vision path)
+    scale_str = extracted.get("scale", "raw")
+    scale_mult = {"raw": 1, "thousands": 1_000,
+                  "millions": 1_000_000, "billions": 1_000_000_000}.get(scale_str, 1)
+
+    raw_metrics: dict = extracted.get("metrics", {}) or {}
+    years_raw: list = extracted.get("years", []) or []
+    valid_years = sorted({int(y) for y in years_raw
+                          if isinstance(y, (int, float)) and 2015 <= int(y) <= 2040})
+
+    # Map raw labels → canonical metric names (where possible). Labels that
+    # don't map (use-of-funds line items, milestone amounts) are kept under
+    # their raw label so the analyst can still see them in the diagnostics.
+    financials: dict = {}
+    unmapped: dict = {}
+    for raw_label, year_vals in raw_metrics.items():
+        if not isinstance(year_vals, dict):
+            continue
+        canonical = _vision_map_metric(raw_label)
+        target = financials if canonical else unmapped
+        key = canonical or raw_label
+        if key not in target:
+            target[key] = {}
+        for yr_key, val in year_vals.items():
+            try:
+                yr_int = int(float(str(yr_key)))
+            except (ValueError, TypeError):
+                continue
+            if not (2015 <= yr_int <= 2040):
+                continue
+            if val is not None:
+                try:
+                    target[key][str(yr_int)] = float(val) * scale_mult
+                except (ValueError, TypeError):
+                    pass
+
+    all_extracted_years = sorted({int(y) for metric_vals in financials.values()
+                                  for y in metric_vals.keys()})
+    if not all_extracted_years:
+        all_extracted_years = valid_years
+
+    records_count = sum(len(v) for v in financials.values())
+
+    return {
+        "status": "ok",
+        "file_name": filename,
+        "records_count": records_count,
+        "failures_count": 0,
+        "financials": financials,
+        "units": {},
+        "fiscal_years": all_extracted_years,
+        "scale_info": f"USD (scale={scale_str}, multiplier={scale_mult:,})",
+        "model_summary": {
+            "source": "pdf_extraction",
+            "manually_edited": False,
+            "extraction_notes": extracted.get("notes", ""),
+            "extraction_model": "claude-opus-4-6",
+        },
+        "scenarios": None,
+        "detected_scenarios": ["base"],
+        "primary_scenario": "base",
+        "_diagnostics": {
+            "pdf_extraction": True,
+            "scale_detected": scale_str,
+            "scale_multiplier": scale_mult,
+            "unmapped_labels": list(unmapped.keys()),
+            "unmapped_values": unmapped,
+            "raw_years": years_raw,
+            "pdf_text_chars": len(text),
+        },
+    }
+
+
 async def _vision_extract_financials(image_bytes: bytes, filename: str) -> dict:
     """Use Claude Vision to extract a financial model from a screenshot image.
 
@@ -526,8 +745,20 @@ async def extract_financial_model_standalone(
         content = await file.read()
         return await _vision_extract_financials(content, file.filename)
 
+    # ── PDF path: text-based LLM extraction for financial-overview decks ─────
+    # Many late-stage deals share a "Series B Financial Overview" PDF
+    # instead of a working Excel model. We extract the text per page and
+    # have Claude pull out structured numbers — same response shape as the
+    # Excel/vision paths so downstream code is unchanged.
+    if ext == ".pdf":
+        content = await file.read()
+        return await _pdf_extract_financials(content, file.filename)
+
     if ext not in (".xlsx", ".xlsm", ".xls", ".csv"):
-        raise HTTPException(400, f"Unsupported file type: {ext}. Upload .xlsx/.xls/.csv or a screenshot (.png/.jpg/.jpeg)")
+        raise HTTPException(
+            400,
+            f"Unsupported file type: {ext}. Upload .xlsx/.xls/.csv, a PDF financial overview (.pdf), or a screenshot (.png/.jpg/.jpeg).",
+        )
 
     upload_dir = os.path.join(tempfile.gettempdir(), f"fm_wiz_{secrets.token_hex(6)}")
     os.makedirs(upload_dir, exist_ok=True)
@@ -801,8 +1032,8 @@ async def extract_model_deep_start(
         raise HTTPException(
             400,
             f"Deep extraction supports spreadsheet files only (got {ext}). "
-            "Upload .xlsx/.xls/.csv for AI extraction, or use Quick extract "
-            "for images.",
+            "Upload .xlsx/.xls/.csv for AI extraction. For PDF financial "
+            "overviews or screenshots, use Quick extract instead.",
         )
 
     # Persist upload to a temp path the banker can read.
