@@ -1284,8 +1284,10 @@ function wizOpenFolder(idx) {
             const customTitle = (d.custom_title || '').trim();
             const titleText = customTitle || 'Due Diligence Report';
             const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            // The raw filename ("DDR_Type One Energy_20260426_221913.pdf")
+            // used to live here too — verbose and noisy. Kept just author
+            // and file size on the subtitle.
             const subParts = [`By <strong>${_libEscape(d.generated_by)}</strong>`, sizeStr];
-            if (d.filename) subParts.push(_libEscape(d.filename));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-ddr" onclick="wizOpenFolderDdr(${d.id}, ${fnAttr})">&#128209;</div>
@@ -1313,8 +1315,10 @@ function wizOpenFolder(idx) {
             const customTitle = (m.custom_title || '').trim();
             const titleText = customTitle || 'Investment Memo';
             const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            // The model name ("claude-sonnet-4-20250514") used to live
+            // here — clutter most analysts don't care about. The author
+            // is what matters for picking which memo to open.
             const subParts = [`By <strong>${_libEscape(m.owner_username)}</strong>`];
-            if (m.model_used) subParts.push(_libEscape(m.model_used));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-memo" onclick="wizOpenFolderMemo(${m.id})">&#128221;</div>
@@ -8300,7 +8304,30 @@ async function memoPrintPDF() {
         'sup[data-cite],.memo-citation-chip'
     ).forEach(el => el.remove());
 
-    // 3b. Page-break strategy:
+    // 3b. Strip sections that failed to generate. Each failed section
+    // would otherwise become its own page with one line like
+    // "[Generation failed for this section: Error code: 400 …]" or an
+    // LLM-refusal message ("I apologize, but I cannot write …"). They
+    // make the PDF look broken and pad the page count. Drop them
+    // entirely from the export — the live UI still shows the failure
+    // so the analyst can re-generate.
+    const _FAILURE_PATTERNS = [
+        /\[Generation failed for this section/i,
+        /\[Synthesis failed/i,
+        /I apologize,?\s+but I cannot write/i,
+        /\[Extraction failed/i,
+    ];
+    clone.querySelectorAll('.memo-section-wrapper').forEach(wrapper => {
+        const txt = (wrapper.textContent || '').trim();
+        // Use a moderate-length excerpt — failure messages always appear
+        // in the first few hundred chars of a failed section.
+        const head = txt.slice(0, 600);
+        if (_FAILURE_PATTERNS.some(rx => rx.test(head))) {
+            wrapper.remove();
+        }
+    });
+
+    // 3c. Page-break strategy:
     // We rely on the inline CSS rules below (.memo-cover-page break-after,
     // .memo-disclaimer-page / .memo-toc-page / .memo-section-wrapper
     // break-before). An earlier version also injected zero-height
@@ -8310,8 +8337,18 @@ async function memoPrintPDF() {
     // (visible in exports as "page 7 blank, page 8 content, page 9 blank,
     // page 10 content, …"). Trusting the CSS alone yields a tight memo.
 
-    const companyName = document.getElementById('memo-output-meta')
-        ?.textContent?.split('·')[0]?.trim() || 'Investment Memo';
+    // Resolve the company name from the loaded memo state, NOT by parsing
+    // the meta element (which can have the model name first and produce
+    // filenames like "claude-opus-4-20250514 — VoLo Earth Ventures.pdf").
+    const companyName =
+        (_memo.currentMemoCompany && _memo.currentMemoCompany.trim()) ||
+        'Investment Memo';
+    // Build a sensible default print filename Chrome will offer:
+    // "XGS Energy IC Memo 2026-05-02". Date is the memo's date when we
+    // have it, otherwise today.
+    const _today = new Date();
+    const _dateStr = _today.toISOString().slice(0, 10);  // YYYY-MM-DD
+    const docTitle = `${companyName} IC Memo ${_dateStr}`;
 
     // 4. Build the full print HTML, then open via Blob URL so the browser fully
     //    renders (CSS layout, image decode, page-break calculation) before the
@@ -8319,7 +8356,7 @@ async function memoPrintPDF() {
     //    that was causing Chrome to honour only 3 pages.
     const printHtml = `<!DOCTYPE html><html><head>
 <meta charset="utf-8">
-<title>${companyName} — VoLo Earth Ventures</title>
+<title>${docTitle}</title>
 <style>
 /* ── Reset & base ── */
 *,*::before,*::after{box-sizing:border-box}
@@ -8399,13 +8436,18 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-toc-note{font-size:8pt;color:#888;margin-top:16pt;font-style:italic}
 
 /* ── SECTION WRAPPERS ── */
-/* Every major section starts on a fresh page, including the first one
-   (the TOC no longer has break-after, so the first section's break-before
-   is what opens its page). */
+/* Sections flow continuously instead of forcing a new page each time.
+   When every section took a fresh page, short sections (Carbon Impact,
+   Team) wasted 60-80% of their page. The h2 heading's bold + green-
+   underline styling is enough to separate sections visually. The first
+   section still breaks-before so it opens after the TOC. */
 .memo-section-wrapper{
-  break-before:page;page-break-before:always;
+  break-before:auto;page-break-before:auto;
   break-inside:auto;page-break-inside:auto;
-  padding-top:0;margin-top:0}
+  padding-top:0;margin-top:18pt}
+.memo-section-wrapper:first-of-type{
+  break-before:page;page-break-before:always;
+  margin-top:0}
 /* Body wrapper for the page area (after cover, has margins) */
 .memo-content-body{background:#fff;padding:0 .75in;width:8.5in}
 

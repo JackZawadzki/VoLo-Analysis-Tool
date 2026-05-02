@@ -4722,15 +4722,19 @@ h2 .info-tip-body {
        starts on a new page
     ════════════════════════════════════════ */
     #memo-rendered .memo-section-wrapper {
-        break-before: page;
-        page-break-before: always;
-        /* Allow long sections to flow across multiple pages naturally */
+        break-before: auto;
+        page-break-before: auto;
         break-inside: auto;
         page-break-inside: auto;
+        margin-top: 18pt !important;
+    }
+    /* First section opens after the TOC; all subsequent sections flow
+       continuously so short sections don't waste 60-80% of a page each. */
+    #memo-rendered .memo-section-wrapper:first-of-type {
+        break-before: page;
+        page-break-before: always;
         margin-top: 0 !important;
     }
-    /* Every section, including the first, opens its own page now that
-       the TOC no longer has break-after (which used to double-page). */
 
     /* Headings: never orphan a heading at the bottom of a page */
     #memo-rendered h2 { break-after: avoid; page-break-after: avoid; }
