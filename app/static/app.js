@@ -8364,7 +8364,9 @@ async function memoPrintPDF() {
 print-color-adjust:exact;
 
 /* ── Page setup: US Letter portrait ── */
-@page{size:letter portrait;margin:.75in .75in .85in .75in}
+/* Tighter margins than the previous .75in/.85in so we recover ~50pt of
+   vertical space per page. Still leaves comfortable gutter for printing. */
+@page{size:letter portrait;margin:.6in .65in .7in .65in}
 /* Cover page: zero margin for full bleed */
 @page:first{margin:0}
 
@@ -8405,16 +8407,18 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-cover-confidential{font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#dc2626;border:1px solid #dc2626;padding:5pt 14pt;border-radius:3pt;margin-bottom:24pt;font-weight:600}
 .memo-cover-footer{font-size:8pt;color:#666;line-height:1.5}
 
-/* Disclaimer page — break BEFORE only. break-after creates a phantom blank page when followed by another break-before element (TOC). */
+/* Disclaimer page — break BEFORE only. break-after creates a phantom blank page when followed by another break-before element (TOC). Padding + line-height
+   tightened so all ~10 disclaimer blocks fit on a single page (RISK
+   FACTORS used to spill onto page 3 at 9% coverage). */
 .memo-disclaimer-page{
   background:#fff;width:100%;
-  padding:48pt 64pt 48pt 64pt;
+  padding:28pt 56pt 28pt 56pt;
   break-before:page;page-break-before:always}
 .memo-disclaimer-inner{max-width:100%}
-.memo-disclaimer-title{font-size:15pt;font-weight:700;color:#1a1a1a;margin-bottom:16pt;padding-bottom:6pt;border-bottom:2px solid #5B7744}
-.memo-disclaimer-block{font-size:9pt;line-height:1.65;margin-bottom:9pt;text-align:justify}
-.memo-disclaimer-nonreliance{display:block;font-size:9pt;font-weight:700;line-height:1.65}
-.memo-disclaimer-date{font-size:8pt;color:#888;margin-top:18pt;border-top:1px solid #ddd;padding-top:6pt}
+.memo-disclaimer-title{font-size:14pt;font-weight:700;color:#1a1a1a;margin-bottom:10pt;padding-bottom:4pt;border-bottom:2px solid #5B7744}
+.memo-disclaimer-block{font-size:8.5pt;line-height:1.4;margin-bottom:6pt;text-align:justify}
+.memo-disclaimer-nonreliance{display:block;font-size:8.5pt;font-weight:700;line-height:1.4}
+.memo-disclaimer-date{font-size:7.5pt;color:#888;margin-top:10pt;border-top:1px solid #ddd;padding-top:4pt}
 
 /* TOC page — break BEFORE only (same reasoning as disclaimer). The first
    section's break-before:page handles the transition out. */
@@ -8481,8 +8485,22 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-chart-caption,.memo-chart-note{font-size:8.5pt;color:#666;margin:3pt 0}
 .memo-chart-row{display:flex;gap:12pt;break-inside:avoid;page-break-inside:avoid}
 .memo-chart-wrap{flex:1;overflow:hidden}
-.memo-chart-wrap img{width:100%;max-height:190pt;object-fit:contain}
-canvas{max-height:190pt!important;width:100%!important;object-fit:contain}
+/* Charts: cap height so a chart can fit on a partial page, but stay
+   tall enough that a typical 2:1 Chart.js render isn't heavily side-
+   letterboxed against a full-page-width container. 180pt ≈ 2.5in is
+   the sweet spot. object-fit:contain preserves aspect ratio — charts
+   are NEVER stretched or distorted, only scaled within the box. */
+.memo-chart-wrap img{width:100%;max-height:180pt;object-fit:contain}
+canvas{max-height:180pt!important;width:100%!important;object-fit:contain}
+/* Single-chart blocks center themselves at moderate width so a 2:1
+   chart fills the box edge-to-edge (no horizontal letterboxing). */
+.memo-chart-inline{max-width:6.4in;margin-left:auto;margin-right:auto}
+/* Two-charts-side-by-side: each child fills its half, aspect preserved. */
+.memo-chart-row > .memo-chart-wrap{min-width:0}
+.memo-chart-row > .memo-chart-wrap canvas,
+.memo-chart-row > .memo-chart-wrap img{max-height:160pt!important}
+/* Embedded data-room images (PNGs) keep their natural aspect ratio. */
+.memo-image-embed{max-width:100%;height:auto;object-fit:contain}
 /* Images */
 .memo-image-figure{break-inside:avoid;page-break-inside:avoid;max-width:60%;margin:10pt auto;text-align:center}
 .memo-image-embed{max-width:100%;height:auto}

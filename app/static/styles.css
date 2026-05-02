@@ -4810,9 +4810,15 @@ h2 .info-tip-body {
     #memo-rendered .memo-chart-wrap { flex: 1; overflow: hidden; }
     #memo-rendered canvas,
     #memo-rendered .memo-chart-wrap img {
-        max-height: 190pt !important;
+        max-height: 180pt !important;
         width: 100% !important;
-        object-fit: contain;
+        object-fit: contain;  /* preserves aspect ratio — never stretches */
+    }
+    /* Two-up chart rows get a tighter cap since each child only has
+       half the page width. Keeps a 2:1 chart from overflowing height-wise. */
+    #memo-rendered .memo-chart-row canvas,
+    #memo-rendered .memo-chart-row img {
+        max-height: 160pt !important;
     }
 
     /* Images */
