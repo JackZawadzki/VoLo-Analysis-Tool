@@ -1242,9 +1242,11 @@ function wizOpenFolder(idx) {
             const customTitle = (d.custom_title || '').trim();
             const titleText = customTitle || 'Deal Report';
             const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
+            // Archetype + stage used to live on this line ("By Joe ·
+            // base_hard_tech · Series B"). They were noisy and the analyst
+            // already sees them inside the deal report itself, so the card
+            // subtitle is now just the author.
             const subParts = [`By <strong>${_libEscape(d.owner_username)}</strong>`];
-            if (d.archetype)   subParts.push(_libEscape(d.archetype));
-            if (d.entry_stage) subParts.push(_libEscape(d.entry_stage));
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-deal" onclick="wizOpenFolderDeal(${d.id})">&#9974;</div>
@@ -7342,17 +7344,15 @@ function _memoFormatReportLabel(rpt) {
     const date = (rpt.created_at || '').substring(0, 10);
     const author = rpt.author || 'unknown';
     const customTitle = (rpt.custom_title || '').trim();
-    // If the report was renamed in the library, use that name here too —
-    // names stay consistent across the library card and this picker.
-    if (customTitle) {
-        const parts = [customTitle];
-        if (date) parts.push(date);
-        parts.push(`by ${author}`);
-        return parts.join(' · ');
-    }
-    const meta = [rpt.entry_stage, rpt.archetype].filter(Boolean).join(' · ');
-    const parts = [rpt.company_name];
-    if (meta) parts.push(meta);
+    // If the report was renamed in the library, use that name. Otherwise
+    // fall back to the company name. Stage + archetype used to live in
+    // the label (e.g. "Type One Energy · Series B · base_hard_tech ·
+    // 2026-04-29 · by Joe") but were noisy and rarely the deciding
+    // factor when picking a report — the analyst opens the deal report
+    // itself if they need that detail. Now the label is just the title +
+    // date + author.
+    const titleText = customTitle || rpt.company_name || 'Deal report';
+    const parts = [titleText];
     if (date) parts.push(date);
     parts.push(`by ${author}`);
     return parts.join(' · ');
