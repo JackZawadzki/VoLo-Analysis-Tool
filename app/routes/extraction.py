@@ -170,6 +170,47 @@ def _vision_map_metric(raw_name: str) -> str | None:
     return None
 
 
+def _pdf_render_pages_to_images(
+    pdf_bytes: bytes,
+    max_pages: int = 20,
+    target_width_px: int = 1280,
+) -> list[bytes]:
+    """Render each PDF page to a PNG and return the bytes. Used so Claude
+    can see charts/graphs visually, not just the text PyMuPDF extracted.
+
+    Returns an empty list if PyMuPDF isn't available — the caller falls
+    back to text-only. Caps page count so a 100-page binder doesn't blow
+    Claude's per-request image budget. Width is set to a moderate
+    resolution: enough to read chart labels and bar values, not so high
+    that the request payload balloons.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        return []
+    images: list[bytes] = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return []
+    try:
+        n_pages = min(doc.page_count, max_pages)
+        for i in range(n_pages):
+            page = doc[i]
+            # Compute zoom so the rendered image is ~target_width_px wide.
+            base_width = page.rect.width or 612
+            zoom = max(1.0, target_width_px / base_width)
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+            images.append(pix.tobytes("png"))
+    except Exception:
+        # If rendering fails partway, return what we have — better than nothing.
+        pass
+    finally:
+        doc.close()
+    return images
+
+
 def _pdf_to_text(pdf_bytes: bytes, max_chars: int = 150_000) -> str:
     """Extract text from a PDF, page-by-page, with explicit page markers
     so the LLM can attribute facts back to a slide. Caps total length so
@@ -243,15 +284,19 @@ async def _pdf_extract_financials(pdf_bytes: bytes, filename: str) -> dict:
     """Use Claude to extract structured financials from a financial-overview
     PDF (e.g. a Series B deck's "Use of Funds" + roadmap pages).
 
-    Returns the same dict schema as the Excel/vision extractors so the rest
-    of the pipeline doesn't care which input type produced the data.
+    Two-channel extraction: we send Claude both the per-page text (so any
+    inline numbers, tables, and prose are preserved exactly) AND a
+    rendered image of every page (so chart/graph values that live only
+    in pixels — bar heights, axis labels, headcount projections — are
+    also recovered). The model fuses both into one structured output.
 
-    These PDFs are typically narrative + tables, not cell-precise models —
-    so the prompt asks the LLM for whatever metric/year combinations it can
-    confidently recover, and is explicit that missing fields are fine
-    (financial overviews rarely have a full P&L).
+    Returns the same dict schema as the Excel/vision extractors so the
+    rest of the pipeline doesn't care which input type produced the data.
+    Financial-overview PDFs rarely have a full P&L, so missing fields
+    are normal — the prompt is explicit about that.
     """
     import anthropic
+    import base64
     import re
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -259,16 +304,23 @@ async def _pdf_extract_financials(pdf_bytes: bytes, filename: str) -> dict:
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured — cannot use PDF extraction.")
 
     text = _pdf_to_text(pdf_bytes)
-    if not text:
+    page_images = _pdf_render_pages_to_images(pdf_bytes)
+
+    if not text and not page_images:
         raise HTTPException(
             422,
-            "PDF appears to contain no extractable text (image-only / scanned). "
-            "Use a text-based PDF, or upload a screenshot for vision extraction.",
+            "PDF could not be opened (no extractable text and no renderable pages).",
         )
 
-    prompt = f"""You are a financial analyst extracting structured data from a venture financial-overview PDF (Series A/B/C deck, use-of-funds memo, or roadmap document).
+    prompt_text = f"""You are a financial analyst extracting structured data from a venture financial-overview PDF (Series A/B/C deck, use-of-funds memo, roadmap document).
 
-The full PDF text is below, page-by-page. Carefully read every page and pull out every quantitative financial fact you can find. Then return ONLY a valid JSON object — no prose, no markdown fences.
+You receive TWO views of the same PDF:
+  (a) The text PyMuPDF extracted from each page, below this instruction block.
+  (b) A rendered image of each page (in order). Charts, bar graphs, and
+      headcount projections that don't appear in the text live in those
+      images — read the bar heights, axis labels, and chart legends.
+
+Fuse both channels and return ONLY a valid JSON object — no prose, no markdown fences.
 
 JSON schema:
 {{
@@ -281,33 +333,46 @@ JSON schema:
       "2025": null
     }}
   }},
-  "notes": "<important caveats: pre-revenue stage, partial year, fiscal year ending, source page numbers>"
+  "notes": "<caveats: pre-revenue stage, partial year, source page numbers, anything the analyst should know>"
 }}
 
 Rules:
 1. "scale" describes how the numbers are presented IN the document. Do NOT multiply — report values exactly as shown. I will apply the multiplier.
    - "$100M Series B" → scale="millions", value=100
-   - "Team $46.9" in a chart labeled "($ millions)" → scale="millions", value=46.9
+   - "Team $46.9" on a chart labeled "($ millions)" → scale="millions", value=46.9
    - "$1,234,567" → scale="raw", value=1234567
-2. Common metrics to look for: capital raised (Series A/B/C amounts), revenue, ARR, EBITDA, gross margin, customer count, headcount/team size, runway. Use-of-funds line items (Team, R&D, G&A, Capex, Sales & Marketing, etc.) are also valid metrics — keep their exact label.
-3. If a value applies to a future year (e.g. "Series C of $300M targeted for 2027"), include it under that year. Mark the metric clearly (e.g. "series_c_target") so it's not confused with realized data.
-4. Use null for fields not present. It is normal and expected for financial-overview PDFs to have many gaps — do NOT invent numbers to fill the schema.
-5. Extract any quarterly milestones with dollar amounts as separate facts where they fit a year (e.g. "Q3 2026" rolls up to year 2026 if no quarter granularity is needed).
-6. CRITICAL: numbers expressed as percentages (e.g. "30% gross margin", "EBITDA margin 19%") must use a label that includes "%" or "Margin" so they're not confused with dollar metrics. Keep each row label as written in the document.
+2. Common metrics to look for: capital raised (Series A/B/C amounts), revenue, ARR, EBITDA, gross margin, customer count, headcount/team size, runway. Use-of-funds line items (Team, R&D, G&A, Capex, Sales & Marketing, etc.) and chart-only series (e.g. "Headcount Q3 2025") are valid metrics — keep their exact label.
+3. For chart/graph data: read bar values as carefully as you can. If a chart has gridlines but no labels, estimate to the nearest whole unit and note "(estimated from bar height)" in the metric label. Quarterly chart data should be aggregated to year totals UNLESS the analyst likely needs the quarterly granularity (in which case use labels like "Headcount Q3 2026").
+4. If a value applies to a future year (e.g. "Series C of $300M targeted for 2027"), include it under that year. Mark with a clear suffix like "_target" or "_projected" so it's not confused with realized data.
+5. Use null for fields not present. Sparse output is fine and expected — do NOT invent numbers.
+6. CRITICAL: numbers expressed as percentages (e.g. "30% gross margin", "EBITDA margin 19%") must use a label that includes "%" or "Margin" so they're not confused with dollar metrics.
 7. Only include years between 2015 and 2040.
-8. The "notes" field should mention the company stage (pre-revenue / pre-Series A / etc.) if discernible, plus any caveat the analyst should know.
+8. The "notes" field should mention company stage (pre-revenue / pre-Series A / etc.), and which channel each major fact came from (e.g. "headcount projections from chart on page 9").
 
 PDF TEXT BEGINS:
-{text}
+{text or "(no extractable text — rely entirely on the page images below)"}
 PDF TEXT ENDS.
 
 Now produce the JSON object."""
+
+    # Build the multimodal user-message content: text first, then every page
+    # image (in order). Anthropic supports up to 100 images per request.
+    content_blocks: list[dict] = [{"type": "text", "text": prompt_text}]
+    for png in page_images:
+        content_blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": base64.standard_b64encode(png).decode(),
+            },
+        })
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model="claude-opus-4-6",
         max_tokens=8192,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": content_blocks}],
     )
 
     raw_text = response.content[0].text.strip()
@@ -410,6 +475,12 @@ Now produce the JSON object."""
             "unmapped_values": unmapped,
             "raw_years": years_raw,
             "pdf_text_chars": len(text),
+            "pdf_pages_rendered": len(page_images),
+            "extraction_channels": (
+                ["text", "vision"] if (text and page_images)
+                else ["vision"] if page_images
+                else ["text"]
+            ),
         },
     }
 

@@ -4697,9 +4697,10 @@ h2 .info-tip-body {
         border-radius: 0 !important;
     }
 
+    /* Disclaimer / TOC: break-BEFORE only. break-after creates a phantom
+       blank page when followed by another break-before element. */
     .memo-disclaimer-page {
         break-before: page;   page-break-before: always;
-        break-after: page;    page-break-after: always;
         border: none !important;
         border-radius: 0 !important;
         background: white !important;
@@ -4709,7 +4710,6 @@ h2 .info-tip-body {
 
     .memo-toc-page {
         break-before: page;   page-break-before: always;
-        break-after: page;    page-break-after: always;
         border: none !important;
         border-radius: 0 !important;
         background: white !important;
@@ -4729,12 +4729,8 @@ h2 .info-tip-body {
         page-break-inside: auto;
         margin-top: 0 !important;
     }
-    /* First section after TOC — TOC's break-after already opens a new page;
-       avoid doubling up with an extra blank page */
-    #memo-rendered .memo-section-wrapper:first-of-type {
-        break-before: avoid;
-        page-break-before: avoid;
-    }
+    /* Every section, including the first, opens its own page now that
+       the TOC no longer has break-after (which used to double-page). */
 
     /* Headings: never orphan a heading at the bottom of a page */
     #memo-rendered h2 { break-after: avoid; page-break-after: avoid; }

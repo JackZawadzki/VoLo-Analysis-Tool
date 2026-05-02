@@ -8300,27 +8300,15 @@ async function memoPrintPDF() {
         'sup[data-cite],.memo-citation-chip'
     ).forEach(el => el.remove());
 
-    // 3b. Inject hard page-break divs so Chrome actually honours section boundaries.
-    // CSS break-before on class selectors is unreliable in Chrome's print engine;
-    // physical zero-height divs with inline page-break-before are the reliable path.
-    //
-    // Front matter pages (cover, disclaimer, TOC) each get break-after.
-    clone.querySelectorAll('.memo-cover-page,.memo-disclaimer-page,.memo-toc-page')
-        .forEach(fm => {
-            fm.style.pageBreakAfter = 'always';
-            fm.style.breakAfter     = 'page';
-        });
-    // Every content section gets a break-before EXCEPT the very first one
-    // (the TOC's break-after already opens a fresh page for it).
-    const sectionWrappers = Array.from(clone.querySelectorAll('.memo-section-wrapper'));
-    sectionWrappers.forEach((wrapper, idx) => {
-        if (idx === 0) return;  // first section rides the TOC's break-after
-        const pb = document.createElement('div');
-        pb.setAttribute('aria-hidden', 'true');
-        pb.style.cssText = 'page-break-before:always;break-before:page;' +
-                           'height:0;margin:0;padding:0;border:none;display:block;';
-        wrapper.parentNode.insertBefore(pb, wrapper);
-    });
+    // 3b. Page-break strategy:
+    // We rely on the inline CSS rules below (.memo-cover-page break-after,
+    // .memo-disclaimer-page / .memo-toc-page / .memo-section-wrapper
+    // break-before). An earlier version also injected zero-height
+    // page-break divs from JS as a "Chrome reliability" hack — but in
+    // practice the redundant breaks doubled up with the CSS rules and
+    // produced an entirely blank page between every content section
+    // (visible in exports as "page 7 blank, page 8 content, page 9 blank,
+    // page 10 content, …"). Trusting the CSS alone yields a tight memo.
 
     const companyName = document.getElementById('memo-output-meta')
         ?.textContent?.split('·')[0]?.trim() || 'Investment Memo';
@@ -8380,24 +8368,23 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-cover-confidential{font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#dc2626;border:1px solid #dc2626;padding:5pt 14pt;border-radius:3pt;margin-bottom:24pt;font-weight:600}
 .memo-cover-footer{font-size:8pt;color:#666;line-height:1.5}
 
-/* Disclaimer page */
+/* Disclaimer page — break BEFORE only. break-after creates a phantom blank page when followed by another break-before element (TOC). */
 .memo-disclaimer-page{
   background:#fff;width:100%;
   padding:48pt 64pt 48pt 64pt;
-  break-before:page;page-break-before:always;
-  break-after:page;page-break-after:always}
+  break-before:page;page-break-before:always}
 .memo-disclaimer-inner{max-width:100%}
 .memo-disclaimer-title{font-size:15pt;font-weight:700;color:#1a1a1a;margin-bottom:16pt;padding-bottom:6pt;border-bottom:2px solid #5B7744}
 .memo-disclaimer-block{font-size:9pt;line-height:1.65;margin-bottom:9pt;text-align:justify}
 .memo-disclaimer-nonreliance{display:block;font-size:9pt;font-weight:700;line-height:1.65}
 .memo-disclaimer-date{font-size:8pt;color:#888;margin-top:18pt;border-top:1px solid #ddd;padding-top:6pt}
 
-/* TOC page */
+/* TOC page — break BEFORE only (same reasoning as disclaimer). The first
+   section's break-before:page handles the transition out. */
 .memo-toc-page{
   background:#fff;width:100%;
   padding:48pt 64pt 48pt 64pt;
-  break-before:page;page-break-before:always;
-  break-after:page;page-break-after:always}
+  break-before:page;page-break-before:always}
 .memo-toc-inner{max-width:100%;width:100%}
 .memo-toc-header{margin-bottom:24pt;border-bottom:2px solid #5B7744;padding-bottom:8pt}
 .memo-toc-header-company{font-size:10pt;color:#888;font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4pt}
@@ -8412,15 +8399,15 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-toc-note{font-size:8pt;color:#888;margin-top:16pt;font-style:italic}
 
 /* ── SECTION WRAPPERS ── */
-/* Each major section starts on a new page */
+/* Every major section starts on a fresh page, including the first one
+   (the TOC no longer has break-after, so the first section's break-before
+   is what opens its page). */
 .memo-section-wrapper{
   break-before:page;page-break-before:always;
   break-inside:auto;page-break-inside:auto;
   padding-top:0;margin-top:0}
 /* Body wrapper for the page area (after cover, has margins) */
 .memo-content-body{background:#fff;padding:0 .75in;width:8.5in}
-/* First section after TOC — TOC's break-after already opens the page */
-.memo-section-wrapper:first-of-type{break-before:avoid;page-break-before:avoid}
 
 /* ── SECTION CONTENT ── */
 .memo-section-content{display:block!important;visibility:visible!important}
