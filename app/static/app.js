@@ -7968,12 +7968,14 @@ function _memoInjectFrontMatter(rendered, data) {
     const coverDiv = document.createElement('div');
     coverDiv.className = 'memo-front-matter memo-cover-page';
     coverDiv.innerHTML = `
-        <div class="memo-cover-inner">
+        <div class="memo-cover-header">
             <div class="memo-cover-logo">
                 <div class="memo-cover-logo-text">VoLo Earth Ventures</div>
             </div>
             <div class="memo-cover-divider"></div>
             <div class="memo-cover-type">INVESTMENT MEMORANDUM</div>
+        </div>
+        <div class="memo-cover-inner">
             <div class="memo-cover-company">${_escHtml(companyName)}</div>
             ${entryStage ? `<div class="memo-cover-detail">${_escHtml(entryStage)}${archetype ? ' · ' + _escHtml(archetype) : ''}${checkM ? ' · ' + checkM : ''}</div>` : ''}
             <div class="memo-cover-date">${genDate}</div>
@@ -7981,10 +7983,10 @@ function _memoInjectFrontMatter(rendered, data) {
                 STRICTLY CONFIDENTIAL — FOR INTERNAL USE ONLY<br>
                 Not for Distribution Without Prior Written Consent
             </div>
-            <div class="memo-cover-footer">
-                VoLo Earth Ventures<br>
-                This document is subject to the Legal Disclaimer set out on the following page.
-            </div>
+        </div>
+        <div class="memo-cover-footer">
+            VoLo Earth Ventures<br>
+            This document is subject to the Legal Disclaimer set out on the following page.
         </div>
     `;
 
@@ -8387,25 +8389,33 @@ blockquote{border-left:3px solid #5B7744;margin:8pt 0 8pt 10pt;padding-left:10pt
 code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;border-radius:2pt}
 
 /* ── FRONT MATTER ── */
-/* Cover: fills first page edge-to-edge (no margin on @page:first) */
+/* Cover: fills first page edge-to-edge (no margin on @page:first).
+   Header + title cluster together near the top of the page (no
+   stretched-out empty space under the title card), footer anchored
+   to the bottom. */
 .memo-cover-page{
   background:#1e2d24;color:#fff;
-  width:100%;
-  display:flex;flex-direction:column;align-items:center;justify-content:center;
-  text-align:center;padding:56pt 48pt;
+  width:100%;min-height:11in;
+  display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
+  text-align:center;padding:96pt 48pt 56pt;
   break-after:page;page-break-after:always;
   -webkit-print-color-adjust:exact;print-color-adjust:exact}
-.memo-cover-inner{max-width:420pt;width:100%}
-.memo-cover-logo{display:flex;align-items:center;justify-content:center;gap:10pt;margin-bottom:28pt}
+/* Header sits right below top padding. */
+.memo-cover-header{display:flex;flex-direction:column;align-items:center;margin-bottom:48pt}
+/* Middle (title card) sits just below header — this is where the
+   "Thea Energy / Series B / Date / Confidential" block lives. */
+.memo-cover-inner{max-width:420pt;width:100%;display:flex;flex-direction:column;align-items:center}
+/* Footer pinned to bottom regardless of how short the title block is. */
+.memo-cover-footer{margin-top:auto;font-size:8pt;color:#888;line-height:1.5}
+.memo-cover-logo{display:flex;align-items:center;justify-content:center;gap:10pt;margin-bottom:18pt}
 .memo-cover-logo-mark{width:36pt;height:36pt;background:#5B7744;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14pt;font-weight:700;color:#fff;flex-shrink:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 .memo-cover-logo-text{font-size:12pt;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#8BA872}
-.memo-cover-divider{width:60pt;height:1pt;background:#5B7744;margin:0 auto 28pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.memo-cover-type{font-size:8.5pt;letter-spacing:.2em;text-transform:uppercase;color:#8BA872;margin-bottom:12pt;font-weight:600}
-.memo-cover-company{font-size:26pt;font-weight:700;color:#fff;line-height:1.15;margin-bottom:10pt}
-.memo-cover-detail{font-size:10pt;color:#aaa;margin-bottom:22pt}
-.memo-cover-date{font-size:9.5pt;color:#8BA872;margin-bottom:32pt}
-.memo-cover-confidential{font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#dc2626;border:1px solid #dc2626;padding:5pt 14pt;border-radius:3pt;margin-bottom:24pt;font-weight:600}
-.memo-cover-footer{font-size:8pt;color:#666;line-height:1.5}
+.memo-cover-divider{width:60pt;height:1pt;background:#5B7744;margin:0 auto 18pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.memo-cover-type{font-size:8.5pt;letter-spacing:.2em;text-transform:uppercase;color:#8BA872;margin-bottom:0;font-weight:600}
+.memo-cover-company{font-size:28pt;font-weight:700;color:#fff;line-height:1.15;margin-bottom:10pt}
+.memo-cover-detail{font-size:10pt;color:#aaa;margin-bottom:18pt}
+.memo-cover-date{font-size:9.5pt;color:#8BA872;margin-bottom:24pt}
+.memo-cover-confidential{font-size:7.5pt;letter-spacing:.12em;text-transform:uppercase;color:#dc2626;border:1px solid #dc2626;padding:5pt 14pt;border-radius:3pt;font-weight:600}
 
 /* Disclaimer page — break BEFORE only. break-after creates a phantom blank page when followed by another break-before element (TOC). Padding + line-height
    tightened so all ~10 disclaimer blocks fit on a single page (RISK
@@ -8485,31 +8495,35 @@ code{font-family:monospace;font-size:9pt;background:#f5f5f5;padding:1pt 3pt;bord
 .memo-chart-caption,.memo-chart-note{font-size:8.5pt;color:#666;margin:3pt 0}
 .memo-chart-row{display:flex;gap:12pt;break-inside:avoid;page-break-inside:avoid}
 .memo-chart-wrap{flex:1;overflow:hidden}
-/* Charts: cap height so a chart can fit on a partial page, but stay
-   tall enough that a typical 2:1 Chart.js render isn't heavily side-
-   letterboxed against a full-page-width container. 180pt ≈ 2.5in is
-   the sweet spot. object-fit:contain preserves aspect ratio — charts
-   are NEVER stretched or distorted, only scaled within the box. */
-.memo-chart-wrap img{width:100%;max-height:180pt;object-fit:contain}
-canvas{max-height:180pt!important;width:100%!important;object-fit:contain}
-/* Single-chart blocks center themselves at moderate width so a 2:1
-   chart fills the box edge-to-edge (no horizontal letterboxing). */
+/* Charts: be as big as possible without distortion. 220pt ≈ 3in for
+   single charts gives a typical 2:1 Chart.js render room to fill the
+   container edge-to-edge. object-fit:contain enforces aspect ratio —
+   charts are NEVER stretched, only scaled within the box. */
+.memo-chart-wrap img{width:100%;max-height:220pt;object-fit:contain}
+canvas{max-height:220pt!important;width:100%!important;object-fit:contain}
+/* Single-chart blocks center at moderate width so the chart isn't
+   side-letterboxed against the full text column. */
 .memo-chart-inline{max-width:6.4in;margin-left:auto;margin-right:auto}
-/* Two-charts-side-by-side: each child fills its half, aspect preserved. */
+/* Two-charts-side-by-side: each child fills its half. Cap a bit
+   shorter (180pt) so two halves don't stack to ~3.5in tall. */
 .memo-chart-row > .memo-chart-wrap{min-width:0}
 .memo-chart-row > .memo-chart-wrap canvas,
-.memo-chart-row > .memo-chart-wrap img{max-height:160pt!important}
+.memo-chart-row > .memo-chart-wrap img{max-height:180pt!important}
 /* Embedded data-room images (PNGs) keep their natural aspect ratio. */
 .memo-image-embed{max-width:100%;height:auto;object-fit:contain}
 /* Images */
 .memo-image-figure{break-inside:avoid;page-break-inside:avoid;max-width:60%;margin:10pt auto;text-align:center}
 .memo-image-embed{max-width:100%;height:auto}
 .memo-image-caption{font-size:8pt;color:#888;margin-top:3pt}
-/* Tables — allow long tables to break between rows, header repeats */
+/* Tables — allow long tables to break between rows, header repeats.
+   tr break-inside is "auto" so a row whose content is taller than the
+   page will break across pages instead of being clipped at the edge.
+   (Was "avoid" before — that caused the revenue/displacement-chain
+   table to lose its last cell mid-word at the page bottom.) */
 table{width:100%;border-collapse:collapse;font-size:9pt;margin:8pt 0;break-inside:auto;page-break-inside:auto}
 thead{display:table-header-group}
-tr{break-inside:avoid;page-break-inside:avoid}
-th,td{border:1px solid #ddd;padding:3.5pt 5pt;text-align:left}
+tr{break-inside:auto;page-break-inside:auto}
+th,td{border:1px solid #ddd;padding:3.5pt 5pt;text-align:left;vertical-align:top}
 th{background:#f5f5f5;font-weight:600;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 /* Variance / rpt table */
 .rpt-table td,.rpt-table th{border:1px solid #ddd;padding:3pt 5pt;font-size:9pt}

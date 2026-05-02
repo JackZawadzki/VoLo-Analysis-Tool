@@ -4810,7 +4810,7 @@ h2 .info-tip-body {
     #memo-rendered .memo-chart-wrap { flex: 1; overflow: hidden; }
     #memo-rendered canvas,
     #memo-rendered .memo-chart-wrap img {
-        max-height: 180pt !important;
+        max-height: 220pt !important;
         width: 100% !important;
         object-fit: contain;  /* preserves aspect ratio — never stretches */
     }
@@ -4818,7 +4818,7 @@ h2 .info-tip-body {
        half the page width. Keeps a 2:1 chart from overflowing height-wise. */
     #memo-rendered .memo-chart-row canvas,
     #memo-rendered .memo-chart-row img {
-        max-height: 160pt !important;
+        max-height: 180pt !important;
     }
 
     /* Images */
@@ -4842,13 +4842,16 @@ h2 .info-tip-body {
         page-break-inside: auto;
     }
     #memo-rendered thead { display: table-header-group; }
+    /* Allow rows to break across pages — a single row taller than the
+       page used to be silently clipped at the bottom edge. */
     #memo-rendered tr {
-        break-inside: avoid;
-        page-break-inside: avoid;
+        break-inside: auto;
+        page-break-inside: auto;
     }
     #memo-rendered th, #memo-rendered td {
         border: 1px solid #ddd;
         padding: 3.5pt 5pt;
+        vertical-align: top;
     }
 
     /* Cohort / displacement chain tables (often wide) */
