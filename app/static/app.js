@@ -1088,6 +1088,23 @@ function _libEscape(s) {
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Friendly label for a model id, used on IC memo cards so analysts can
+// tell at a glance which engine wrote a memo (Claude vs Refiant matters
+// for output character + speed). Returns "" for unknown / empty.
+function _libFriendlyModel(modelId) {
+    const m = String(modelId || '').trim().toLowerCase();
+    if (!m) return '';
+    if (m.includes('claude-haiku'))   return 'Claude Haiku';
+    if (m.includes('claude-sonnet'))  return 'Claude Sonnet';
+    if (m.includes('claude-opus'))    return 'Claude Opus';
+    if (m.includes('claude'))         return 'Claude';
+    if (m.includes('qwen-rfnt-long')) return 'Refiant (long context)';
+    if (m.includes('qwen-rfnt'))      return 'Refiant';
+    if (m.startsWith('qwen'))         return 'Refiant';
+    // Unknown id — still show the raw value rather than hide it.
+    return modelId;
+}
+
 // Parse a backend timestamp into a JS Date. Handles every shape we've
 // actually seen in the DB:
 //   "2026-04-28 04:32:08"               (SQLite datetime('now'), no tz)
@@ -1315,10 +1332,12 @@ function wizOpenFolder(idx) {
             const customTitle = (m.custom_title || '').trim();
             const titleText = customTitle || 'Investment Memo';
             const renamedPill = customTitle ? '<span class="lib-art-renamed-pill">Renamed</span>' : '';
-            // The model name ("claude-sonnet-4-20250514") used to live
-            // here — clutter most analysts don't care about. The author
-            // is what matters for picking which memo to open.
+            // Model is back on the subtitle now that Claude vs Refiant
+            // differs in output character — the analyst needs to know
+            // which engine wrote the memo without opening it.
             const subParts = [`By <strong>${_libEscape(m.owner_username)}</strong>`];
+            const modelLabel = _libFriendlyModel(m.model_used);
+            if (modelLabel) subParts.push(modelLabel);
             html.push(`
                 <div class="lib-art-item">
                     <div class="lib-art-icon lib-art-memo" onclick="wizOpenFolderMemo(${m.id})">&#128221;</div>
