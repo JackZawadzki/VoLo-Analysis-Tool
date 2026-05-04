@@ -44,10 +44,95 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Refiant context-window adaptation
+# ─────────────────────────────────────────────────────────────────────────────
+# Refiant / Qwen models have a smaller context window than Claude. The
+# default Claude path sends a single 600k-char corpus per section call;
+# Refiant can't fit that in one call.
+#
+# When the model is Refiant, we transparently switch to a map-reduce
+# pattern:
+#   • Split the corpus into smaller chunks (each fitting the Refiant
+#     budget).
+#   • For each chunk, ask Refiant: "extract every fact relevant to
+#     section X." Returns a bullet brief.
+#   • Combine all per-chunk briefs and ask Refiant once more: "write
+#     the section from this brief."
+#
+# Output quality stays close to the single-call cached path because the
+# model still sees every primary doc, just in pieces. Cost: N+1 calls
+# per section instead of 1 (where N = number of chunks). The pipeline
+# takes longer but produces a complete memo.
+#
+# CLAUDE PATH IS UNTOUCHED — these helpers fire only when the model id
+# starts with "qwen".
+
+# Per-call input budget for Refiant (chars in system + user prompt).
+# Default 100k chars ≈ 25k tokens, comfortable for any Qwen model with
+# a ≥32k token window. Override via env var if you know Refiant's actual
+# limit and want bigger chunks (faster) or smaller (safer).
+_REFIANT_INPUT_BUDGET_DEFAULT = 100_000
+
+
+def _is_refiant_model(model: str) -> bool:
+    """The pipeline only adapts when the user has explicitly chosen a
+    Refiant/Qwen model — Claude callers see exactly the legacy behavior."""
+    return (model or "").startswith("qwen")
+
+
+def _get_refiant_input_budget() -> int:
+    raw = (os.environ.get("VOLO_REFIANT_INPUT_BUDGET_CHARS") or "").strip()
+    if raw.isdigit():
+        n = int(raw)
+        if n >= 20_000:  # sanity floor — anything below 20k chars per
+                         # call is too small to do useful chunking
+            return n
+    return _REFIANT_INPUT_BUDGET_DEFAULT
+
+
+def _split_corpus_into_chunks(corpus: str, target_chars: int) -> list[str]:
+    """Split the corpus into chunks ≤ target_chars, preferring to break
+    at markdown section boundaries (## headings). A single section
+    larger than target_chars is hard-split mid-section. Empty input
+    returns []."""
+    if not corpus or not corpus.strip():
+        return []
+    if len(corpus) <= target_chars:
+        return [corpus]
+
+    # Find positions of major section headings (## ...) — these are the
+    # natural break points (one heading per primary doc / per region).
+    boundaries = [0]
+    for m in re.finditer(r"\n(?=##\s)", corpus):
+        boundaries.append(m.start() + 1)
+    boundaries.append(len(corpus))
+
+    chunks: list[str] = []
+    cursor = 0
+    for i in range(1, len(boundaries)):
+        next_pos = boundaries[i]
+        # If the current accumulated chunk plus the next section would
+        # exceed the budget, close the chunk at the last heading we hit.
+        if next_pos - cursor > target_chars and boundaries[i - 1] > cursor:
+            chunks.append(corpus[cursor:boundaries[i - 1]])
+            cursor = boundaries[i - 1]
+        # If even a single section is bigger than target, hard-split it
+        # by char count rather than dropping content.
+        while next_pos - cursor > target_chars:
+            cut = cursor + target_chars
+            chunks.append(corpus[cursor:cut] + "\n\n[...chunk continues in next part]")
+            cursor = cut
+    if cursor < len(corpus):
+        chunks.append(corpus[cursor:])
+    return [c for c in chunks if c.strip()]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -266,7 +351,15 @@ def _pass_manifest(client, model: str, raw_docs: list, memo_section_titles: list
     `_classify_default` so the rest of the pipeline still runs."""
 
     folder_tree = _build_folder_tree(raw_docs)
-    previews = _build_doc_previews(raw_docs, _MANIFEST_INPUT_BUDGET_CHARS)
+    # Refiant has a smaller window than Claude. Shrink the per-file preview
+    # budget so the manifest call fits — system prompt + schema + overhead
+    # claim ~12k chars, leaving the rest for previews. Claude path keeps
+    # the full 180k budget unchanged.
+    if _is_refiant_model(model):
+        manifest_budget = max(20_000, _get_refiant_input_budget() - 12_000)
+    else:
+        manifest_budget = _MANIFEST_INPUT_BUDGET_CHARS
+    previews = _build_doc_previews(raw_docs, manifest_budget)
     section_titles_str = "\n".join(f"- {t}" for t in memo_section_titles)
 
     user_msg = (
@@ -515,6 +608,157 @@ Rules:
 10. Connect every fact back to its investment implication — never leave data uninterpreted"""
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Refiant map-reduce section writer (smaller-window adaptation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_REFIANT_CHUNK_EXTRACT_SYSTEM = """You are a venture-capital diligence assistant.
+
+Your only job: extract every fact, quote, number, partnership, customer, risk, and quantitative datum that is RELEVANT to the named memo section.
+
+Output ONLY a bulleted list. No prose. No header. Each bullet:
+- starts with a citation [n] or [RVM]
+- states the fact concisely (one sentence)
+- includes the exact dollar amount, percentage, or date when present in the source
+
+If the chunk has nothing relevant to the section, output exactly:
+NOTHING_RELEVANT_IN_THIS_CHUNK"""
+
+
+def _refiant_extract_chunk_brief(
+    *, client, model: str, section: dict, chunk: str,
+    chunk_idx: int, total_chunks: int,
+    citation_legend: str, company_name: str,
+) -> tuple[str, int, int]:
+    """Map step: pull facts relevant to one section out of one chunk
+    of the data room. Returns (brief_text, tokens_in, tokens_out)."""
+    user_msg = (
+        f"You are reading PART {chunk_idx + 1} of {total_chunks} of the data "
+        f"room for {company_name or 'this company'}.\n\n"
+        f"# CITATION INDEX (use these numbers when citing)\n{citation_legend}\n\n"
+        f"# DATA ROOM CHUNK\n{chunk}\n\n"
+        f"# YOUR TASK\nExtract every fact relevant to writing the "
+        f"'{section['title']}' section.\n\n"
+        f"Section purpose: {section['guidance']}\n"
+    )
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=2000,
+            system=_REFIANT_CHUNK_EXTRACT_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        usage = resp.usage
+        t_in = (usage.input_tokens if usage else 0) or 0
+        t_out = (usage.output_tokens if usage else 0) or 0
+    except Exception as e:
+        logger.warning(
+            "Refiant chunk extract failed (section=%s, chunk=%d/%d): %s",
+            section["key"], chunk_idx + 1, total_chunks, e,
+        )
+        return "", 0, 0
+    if "NOTHING_RELEVANT_IN_THIS_CHUNK" in text.upper():
+        return "", t_in, t_out
+    return text, t_in, t_out
+
+
+def _pass_section_writer_refiant_chunked(
+    *, client, model: str, section: dict, corpus: str,
+    citation_legend: str, template_guidance: str, company_name: str,
+    links: list, additional_instructions: str,
+    progress_cb: Optional[Callable[[int, str], None]] = None,
+) -> dict:
+    """Refiant-only path: split the corpus into Refiant-sized chunks,
+    extract a per-chunk brief for the section, then write the section
+    from the consolidated brief. Same end output as the cached single-
+    call path, just N+1 calls instead of 1."""
+
+    budget = _get_refiant_input_budget()
+    # Reserve headroom for system prompt + per-chunk instructions + output.
+    chunk_target = max(20_000, budget - 12_000)
+    chunks = _split_corpus_into_chunks(corpus, chunk_target)
+    n_chunks = len(chunks)
+
+    briefs: list[str] = []
+    total_in, total_out = 0, 0
+    # NOTE: deliberately not emitting chunk-level progress updates here.
+    # The orchestrator sets the section-level pct right before calling
+    # this function; pushing intermediate updates with pct=0 would
+    # snap the progress bar back to 0% on every chunk. Users see the
+    # section-level message "Writing section: Market (5/14)" and the
+    # next one when this finishes — quiet but correct.
+    for i, chunk in enumerate(chunks):
+        brief, t_in, t_out = _refiant_extract_chunk_brief(
+            client=client, model=model, section=section, chunk=chunk,
+            chunk_idx=i, total_chunks=n_chunks,
+            citation_legend=citation_legend, company_name=company_name,
+        )
+        total_in += t_in
+        total_out += t_out
+        if brief:
+            briefs.append(f"### Brief from chunk {i + 1}/{n_chunks}\n{brief}")
+
+    consolidated_brief = (
+        "\n\n".join(briefs)
+        if briefs
+        else "(no relevant facts were extracted from the data room for this section)"
+    )
+
+    # Reduce step: write the section from the consolidated brief.
+    user_parts = [
+        f"# CITATION INDEX\n{citation_legend}",
+        f"# CONSOLIDATED BRIEF (facts extracted from the entire data room, relevant to '{section['title']}')\n{consolidated_brief}",
+        f"# SECTION TO WRITE: {section['title']}",
+        f"## Section Purpose\n{section['guidance']}",
+    ]
+    if template_guidance:
+        user_parts.append(f"## Template Guidance for This Section\n{template_guidance}")
+    if links:
+        user_parts.append("## Reference Links\n" + "\n".join(f"- {l}" for l in links))
+    if additional_instructions:
+        user_parts.append(f"## Additional Instructions From the Analyst\n{additional_instructions}")
+    user_parts.append(
+        f"\nWrite the '{section['title']}' section of the investment memo for "
+        f"{company_name or 'this company'}. Be thorough and data-driven. "
+        "Cite your sources using [n] notation. Use [RVM] for quantitative report data."
+    )
+    user_msg = "\n\n".join(user_parts)
+
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=_SECTION_MAX_TOKENS,
+            system=_SECTION_WRITER_SYSTEM_V2,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        usage = resp.usage
+        total_in += (usage.input_tokens if usage else 0) or 0
+        total_out += (usage.output_tokens if usage else 0) or 0
+        return {
+            "text": text,
+            "tokens_in": total_in,
+            "tokens_out": total_out,
+            "cache_creation": 0,
+            "cache_read": 0,
+            "_refiant_chunks": n_chunks,
+        }
+    except Exception as e:
+        logger.error(f"Refiant section synthesis failed for {section['key']}: {e}")
+        return {
+            "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
+            "tokens_in": total_in,
+            "tokens_out": total_out,
+            "cache_creation": 0,
+            "cache_read": 0,
+            "_refiant_chunks": n_chunks,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 def _pass_section_writer_cached(
     *,
     client,
@@ -526,12 +770,35 @@ def _pass_section_writer_cached(
     company_name: str,
     links: list,
     additional_instructions: str,
+    progress_cb: Optional[Callable[[int, str], None]] = None,
 ) -> dict:
     """Stage 3: Write a single memo section. The corpus is sent with
     cache_control so subsequent section calls hit the cache.
 
     Returns {text, tokens_in, tokens_out, cache_creation, cache_read}.
+
+    Refiant branch: when the model is Refiant/Qwen and the corpus
+    overflows its smaller context window, transparently switch to a
+    map-reduce path (extract per-chunk briefs, then synthesize).
+    Claude path is unchanged.
     """
+
+    # ── Refiant adaptation ──────────────────────────────────────────────
+    # Refiant has a smaller context window than Claude. If the corpus
+    # plus prompt scaffolding would exceed the configured Refiant budget,
+    # fall back to chunked map-reduce. Threshold uses 70% of the budget
+    # so we don't accidentally overflow on system prompt + suffix.
+    if _is_refiant_model(model):
+        refiant_budget = _get_refiant_input_budget()
+        if len(corpus) > int(refiant_budget * 0.7):
+            return _pass_section_writer_refiant_chunked(
+                client=client, model=model, section=section, corpus=corpus,
+                citation_legend=citation_legend,
+                template_guidance=template_guidance,
+                company_name=company_name, links=links,
+                additional_instructions=additional_instructions,
+                progress_cb=progress_cb,
+            )
 
     # The cached prefix is large and identical across all section calls.
     # The non-cached suffix is small and section-specific.
@@ -721,6 +988,7 @@ def run_memo_v2_pipeline(
             company_name=company_name,
             links=links,
             additional_instructions=additional_instructions,
+            progress_cb=progress_cb,
         )
         section_texts[sk] = result["text"]
         total_in += result["tokens_in"]
