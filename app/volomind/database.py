@@ -329,28 +329,30 @@ def _run_init_steps() -> None:
     # Step 1: base schema (CREATE TABLE IF NOT EXISTS — idempotent).
     with cursor() as c:
         c.executescript(_SCHEMA)
-    # Step 2: rename old labels to current canonical labels BEFORE dedup.
-    # Without this, a label rename in sources_config.py would orphan the
+    # Step 2: drop any stale unique index from a previous deploy attempt.
+    # We INTENTIONALLY do not enforce (source_id, label) uniqueness at the
+    # DB layer because Replit's auto-migration validator interprets the
+    # CREATE UNIQUE INDEX as a schema diff and tries to apply it BEFORE
+    # the app's dedup runs — which then fails with "could not create
+    # unique index" if production has any pre-existing duplicates. Pure
+    # application-side dedup works with no migration-validator collisions.
+    with cursor() as c:
+        c.execute("DROP INDEX IF EXISTS ix_cc_sources_source_label")
+    # Step 3: rename old labels to current canonical labels BEFORE dedup.
+    # Without this, a label change in sources_config.py would orphan the
     # old row (no longer matches config) and INSERT a new row, leaving
     # both in the UI.
     _migrate_old_labels()
-    # Step 3: collapse any pre-existing duplicates BEFORE creating the
-    # unique index. Required because rolling deploys before this fix could
-    # have created (source_id, label) dupes that would now block index
-    # creation.
+    # Step 4: collapse any duplicate (source_id, label) groups down to one
+    # row each. Picks the row with the most attached docs so we never
+    # lose ingested data.
     _dedup_all_sources()
-    # Step 4: enforce uniqueness at the DB layer. Future rolling-deploy
-    # races now fail fast on INSERT (IntegrityError) instead of silently
-    # creating duplicates that need cleanup later. Reconcile catches the
-    # exception and falls through to UPDATE, so the race is harmless.
-    with cursor() as c:
-        c.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cc_sources_source_label "
-            "ON cc_sources(source_id, label)"
-        )
-    # Step 5: reconcile config -> rows. Race-tolerant against the unique index.
+    # Step 5: reconcile config -> rows. Race-tolerant via try/except —
+    # if a concurrent rolling-deploy container did the INSERT first,
+    # we silently fall through to UPDATE (harmless duplicate INSERTs
+    # are caught and cleaned by the next dedup pass on next deploy).
     reconcile_sources_from_config()
-    # Step 6: housekeeping for orphan sync runs.
+    # Step 6: housekeeping for orphan sync runs from killed containers.
     _cleanup_stale_sync_runs()
 
 
