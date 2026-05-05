@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import io
 import os
+import threading
 from datetime import datetime
 from typing import Any, Iterable, Optional
 
@@ -55,6 +56,11 @@ _DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 
 class DriveAdminConnector(SourceConnector):
     source_id = "gdrive_admin"
+    # Marker read by the route handler. When True, the route uses
+    # iter_file_metadata + process_file inside a ThreadPoolExecutor for
+    # parallel ingestion. When False (or absent), the route falls back to
+    # sequential list_documents().
+    SUPPORTS_PARALLEL = True
 
     def __init__(self, *, config: dict[str, Any], cursor: Optional[str] = None):
         super().__init__(config=config, cursor=cursor)
@@ -70,21 +76,22 @@ class DriveAdminConnector(SourceConnector):
                 "(set by the route handler at sync time)"
             )
         self._latest_seen: Optional[str] = cursor
-        self._service = None
+        # Thread-local Drive service. googleapiclient services are NOT thread
+        # safe — each worker thread gets its own via _service(). The
+        # underlying Credentials object IS thread-safe (auto-refresh handled
+        # internally) and is shared.
+        self._creds = None
+        self._thread_local = threading.local()
+        # Guards _latest_seen updates from concurrent process_file calls.
+        self._latest_seen_lock = threading.Lock()
 
     # --- Auth via the host app's existing user_drive_credentials --------
 
-    def _build_service(self):
-        if self._service is not None:
-            return self._service
-        try:
-            from googleapiclient.discovery import build
-        except ImportError as e:
-            raise RuntimeError(
-                "google-api-python-client not installed. "
-                "pip install google-api-python-client google-auth"
-            ) from e
-
+    def _credentials(self):
+        """Build / cache the OAuth Credentials object. Shared across threads
+        (Credentials is documented thread-safe; auto-refresh internal lock)."""
+        if self._creds is not None:
+            return self._creds
         # Reuse the host app's OAuth credential loader. This pulls the admin's
         # encrypted refresh token from user_drive_credentials and rebuilds a
         # Credentials object using the same Fernet key as the IC memo flow.
@@ -97,8 +104,30 @@ class DriveAdminConnector(SourceConnector):
                 "Connect Drive via the IC Memo tab first, then retry the sync."
             )
         _touch_last_used(self._admin_user_id)
-        self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
-        return self._service
+        self._creds = creds
+        return creds
+
+    def _build_service(self):
+        """Return THIS thread's Drive service. Builds + caches lazily.
+
+        googleapiclient service objects are NOT thread-safe per Google's
+        docs ("An instance of a service object should not be used
+        concurrently by multiple threads"). With parallel ingestion we
+        need one per worker thread.
+        """
+        existing = getattr(self._thread_local, "service", None)
+        if existing is not None:
+            return existing
+        try:
+            from googleapiclient.discovery import build
+        except ImportError as e:
+            raise RuntimeError(
+                "google-api-python-client not installed. "
+                "pip install google-api-python-client google-auth"
+            ) from e
+        service = build("drive", "v3", credentials=self._credentials(), cache_discovery=False)
+        self._thread_local.service = service
+        return service
 
     # --- Listing --------------------------------------------------------
 
@@ -205,15 +234,20 @@ class DriveAdminConnector(SourceConnector):
 
     # --- Public interface ----------------------------------------------
 
-    def list_documents(self) -> Iterable[RawDocument]:
+    def iter_file_metadata(self) -> Iterable[dict]:
+        """Yield lightweight file-metadata payloads ordered by modifiedTime.
+
+        Each payload is a dict with the file metadata + a reference to the
+        shared folder_map. The folder_map is built once at the start (slow,
+        sequential) and is read-only after that, so it's safe to share
+        across worker threads. Pre-filters out unsupported MIME types and
+        oversized files cheaply, before any download.
+
+        Designed to feed a ThreadPoolExecutor running process_file().
+        """
         folder_map = self._build_folder_map()
-        # Limit the file query to descendants of the configured root by
-        # constraining to known folder ids.
         descendant_ids = {self._root_folder_id, *folder_map.keys()}
 
-        # Build a query that enumerates files whose parent is any descendant.
-        # Drive's `q` syntax limits the size of `in parents` clauses, so
-        # we batch the parents into chunks.
         for batch in _chunks(list(descendant_ids), 50):
             parent_clauses = " or ".join(f"'{pid}' in parents" for pid in batch)
             q_parts = [
@@ -226,9 +260,48 @@ class DriveAdminConnector(SourceConnector):
             q = " and ".join(q_parts)
 
             for f in self._list(q, order_by="modifiedTime"):
-                doc = self._file_to_raw(f, folder_map)
-                if doc is not None:
-                    yield doc
+                mime = f["mimeType"]
+                export_mime = _GDOC_EXPORT.get(mime, mime)
+                if not extractors.supported_mime(export_mime):
+                    continue
+                size_str = f.get("size")
+                size = int(size_str) if size_str else 0
+                if mime not in _GDOC_EXPORT and size > self._max_bytes:
+                    continue
+                yield {"file": f, "folder_map": folder_map}
+
+    def process_file(self, payload: dict) -> Optional[RawDocument]:
+        """Download + extract a single file. THREAD-SAFE. NEVER RAISES.
+
+        Builds (or reuses) a thread-local Drive service, downloads bytes,
+        runs the extractor, returns a RawDocument or None on
+        skip/failure. Updates self._latest_seen under a lock so concurrent
+        workers don't trample the cursor.
+
+        Exceptions are caught and logged here rather than propagated so a
+        single broken file doesn't crash ThreadPoolExecutor.map() iteration
+        and stall the entire sync. Net effect: the broken file is silently
+        skipped (returns None), counted in neither inserted nor errors.
+        """
+        try:
+            return self._file_to_raw(payload["file"], payload["folder_map"])
+        except Exception as e:
+            file_id = (payload.get("file") or {}).get("id", "?")
+            print(
+                f"[drive_admin] process_file failed for {file_id}: {e}",
+                flush=True,
+            )
+            return None
+
+    def list_documents(self) -> Iterable[RawDocument]:
+        """Sequential ingestion (backward-compat). The route handler uses
+        iter_file_metadata + process_file with a ThreadPoolExecutor when
+        SUPPORTS_PARALLEL is True; this method exists for the fallback
+        path and for tests."""
+        for payload in self.iter_file_metadata():
+            doc = self.process_file(payload)
+            if doc is not None:
+                yield doc
 
     def _file_to_raw(self, f: dict, folder_map: dict[str, dict[str, Any]]) -> Optional[RawDocument]:
         mime: str = f["mimeType"]
@@ -258,10 +331,13 @@ class DriveAdminConnector(SourceConnector):
         if owners:
             author = owners[0].get("emailAddress") or owners[0].get("displayName")
 
-        if modified_iso and (
-            self._latest_seen is None or modified_iso > self._latest_seen
-        ):
-            self._latest_seen = modified_iso
+        # Lock-protected check-and-set so concurrent workers don't race
+        # and accidentally regress the cursor (each worker sees its own
+        # value of _latest_seen if read unsynchronized).
+        if modified_iso:
+            with self._latest_seen_lock:
+                if self._latest_seen is None or modified_iso > self._latest_seen:
+                    self._latest_seen = modified_iso
 
         return RawDocument(
             source_doc_id=f["id"],

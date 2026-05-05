@@ -61,6 +61,9 @@ SOURCES: list[SourceDefinition] = [
         "config": {
             "root_folder_id": "0ABh0_KkvJonSUk9PVA",
             "co_type": "portfolio",
+            # Parallel sync workers (default 8). Higher = faster but heavier on
+            # Drive API quota. Bound to [1, 32] in routes.py.
+            "parallel_workers": 8,
         },
         "enabled": True,
         "description": "Volo's portfolio company dataroom.",

@@ -11,9 +11,10 @@ in this module.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import threading
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -121,6 +122,53 @@ _sync_lock = threading.Lock()
 # Persist progress every N docs so a container restart doesn't waste hours.
 _PROGRESS_FLUSH_EVERY = 50
 
+# Default thread-pool size for connectors that opt into parallel ingestion
+# via SUPPORTS_PARALLEL = True. Override per-source via config.parallel_workers.
+# 8 workers is a sweet spot for I/O-bound Drive sync: enough to overlap
+# downloads with extraction, low enough to stay under Drive's per-user
+# rate limits and to bound peak memory (≤ 8 in-flight files at ~5MB each).
+_DEFAULT_PARALLEL_WORKERS = 8
+
+
+def _iter_documents(connector, cfg: dict[str, Any]) -> Iterable:
+    """Yield RawDocuments from a connector. Uses ThreadPoolExecutor for
+    connectors that opt in via SUPPORTS_PARALLEL = True; falls back to
+    the connector's sequential list_documents() otherwise.
+
+    Order preservation: executor.map() yields results in input order.
+    Combined with iter_file_metadata() returning files sorted by
+    modifiedTime ASC, the cursor advances monotonically — flushing the
+    cursor at every Nth doc is safe because all prior files are already
+    consumed by the time we observe doc N.
+    """
+    if not getattr(connector, "SUPPORTS_PARALLEL", False):
+        # Granola, future Notion/Slack connectors etc. that don't (yet)
+        # split into iter_metadata + process_file.
+        for raw in connector.list_documents():
+            yield raw
+        return
+
+    max_workers = int(cfg.get("parallel_workers", _DEFAULT_PARALLEL_WORKERS))
+    max_workers = max(1, min(max_workers, 32))  # sane bounds
+
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers,
+        thread_name_prefix="volomind-sync-worker",
+    )
+    try:
+        # executor.map preserves input ordering, so the consumer sees docs
+        # in the same modifiedTime ASC order they were yielded by
+        # iter_file_metadata. None results (skipped files) are filtered.
+        for raw in executor.map(
+            connector.process_file,
+            connector.iter_file_metadata(),
+        ):
+            if raw is None:
+                continue
+            yield raw
+    finally:
+        executor.shutdown(wait=True)
+
 
 def _create_sync_run(source_pk: int, started_by: int) -> int:
     with database.cursor() as c:
@@ -188,7 +236,7 @@ def _run_sync_in_thread(source_pk: int, run_id: int, admin_user_id: int) -> None
         errors: list[str] = []
 
         try:
-            for raw in connector.list_documents():
+            for raw in _iter_documents(connector, cfg):
                 fetched += 1
                 try:
                     _, changed = normalize.upsert_document(
