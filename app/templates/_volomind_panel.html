@@ -1,0 +1,123 @@
+{# VoLo Mind — Beta tab content. Included by index.html when the feature is on. #}
+<div id="tab-volomind" class="tab-content">
+    <div class="beta-banner" role="note">
+        <span class="beta-banner-tag">BETA</span>
+        <span class="beta-banner-text">
+            <strong>VoLo Mind is in development.</strong> Chat over VoLo's shared internal corpus
+            (Granola notes + Drive). Outputs may be incomplete or change without notice.
+        </span>
+    </div>
+
+    <div id="vm-unavailable" class="vm-unavailable" hidden>
+        <div class="vm-unavailable-icon">⚠</div>
+        <h3>VoLo Mind is temporarily unavailable</h3>
+        <p>The chatbot service is down or not configured. The rest of the underwriting tool is unaffected.</p>
+        <p class="vm-unavailable-detail" id="vm-unavailable-detail"></p>
+    </div>
+
+    <div id="vm-main" class="vm-main">
+        <aside class="vm-sidebar">
+            <section class="vm-side-section">
+                <header class="vm-side-header">
+                    <h3>Sources</h3>
+                    <span class="vm-admin-badge" id="vm-admin-badge" hidden>admin</span>
+                </header>
+                <ul class="vm-source-list" id="vm-source-list">
+                    <li class="vm-muted">No sources connected yet.</li>
+                </ul>
+                <div class="vm-admin-only" id="vm-admin-controls" hidden>
+                    <button class="vm-btn vm-btn-secondary" id="vm-add-source-btn">+ Add source</button>
+                </div>
+            </section>
+
+            <section class="vm-side-section">
+                <header class="vm-side-header">
+                    <h3>Conversations</h3>
+                    <button class="vm-link-btn" id="vm-new-thread-btn">+ new</button>
+                </header>
+                <ul class="vm-thread-list" id="vm-thread-list">
+                    <li class="vm-muted">No conversations yet.</li>
+                </ul>
+            </section>
+        </aside>
+
+        <section class="vm-main-panel">
+            <div class="vm-scope-card">
+                <header class="vm-scope-head">
+                    <h2>Scope</h2>
+                    <p class="vm-scope-sub">Filter the corpus this conversation can see. Within a row = OR. Across rows = AND.</p>
+                    <button class="vm-link-btn" id="vm-clear-scope-btn">Clear all</button>
+                </header>
+                <div class="vm-scope-rows" id="vm-scope-rows">
+                    <p class="vm-muted">No tags yet — sync a source to populate filters.</p>
+                </div>
+                <div class="vm-bundle-info" id="vm-bundle-info" hidden>
+                    <span id="vm-bundle-docs">0 docs</span>
+                    <span id="vm-bundle-tokens">0 tokens</span>
+                </div>
+            </div>
+
+            <div class="vm-chat-card">
+                <div class="vm-chat-messages" id="vm-chat-messages">
+                    <div class="vm-chat-empty">
+                        Start a new conversation to ask questions over VoLo's corpus.
+                    </div>
+                </div>
+                <div class="vm-chat-input-row">
+                    <textarea
+                        id="vm-chat-input"
+                        class="vm-chat-input"
+                        rows="2"
+                        placeholder="Ask a question about VoLo's portfolio, deal flow, or research…"
+                        disabled
+                    ></textarea>
+                    <button class="vm-btn vm-btn-primary" id="vm-chat-send-btn" disabled>Send</button>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    {# Add-source modal — admin only #}
+    <div class="vm-modal" id="vm-source-modal" hidden>
+        <div class="vm-modal-card">
+            <header class="vm-modal-head">
+                <h3>Add Source</h3>
+                <button class="vm-modal-close" id="vm-source-modal-close">×</button>
+            </header>
+            <div class="vm-modal-body">
+                <div class="vm-form-row">
+                    <label>Source type</label>
+                    <select id="vm-source-type">
+                        <option value="granola">Granola — meeting notes (Enterprise API)</option>
+                        <option value="gdrive_admin">Google Drive — Volo internal folders</option>
+                    </select>
+                </div>
+                <div class="vm-form-row">
+                    <label>Label</label>
+                    <input type="text" id="vm-source-label" placeholder="e.g. Volo earth team Granola" />
+                </div>
+                <div class="vm-form-row" id="vm-granola-config-row">
+                    <p class="vm-form-hint">
+                        Uses <code>GRANOLA_API_KEY</code> from Replit Secrets. Set an Enterprise API key
+                        before syncing — Personal keys can't see team workspace notes.
+                    </p>
+                </div>
+                <div class="vm-form-row" id="vm-drive-config-row" hidden>
+                    <label>Drive folder ID</label>
+                    <input type="text" id="vm-drive-folder-id" placeholder="0AB... (from drive.google.com/drive/folders/<ID>)" />
+                    <label style="margin-top: 8px">Co-type</label>
+                    <select id="vm-drive-co-type">
+                        <option value="">(none)</option>
+                        <option value="portfolio">Portfolio</option>
+                        <option value="potential">Potential / Deal Flow</option>
+                    </select>
+                    <p class="vm-form-hint" id="vm-drive-status-hint">Checking Drive connection…</p>
+                </div>
+            </div>
+            <footer class="vm-modal-foot">
+                <button class="vm-btn vm-btn-ghost" id="vm-source-modal-cancel">Cancel</button>
+                <button class="vm-btn vm-btn-primary" id="vm-source-create-btn">Create</button>
+            </footer>
+        </div>
+    </div>
+</div>

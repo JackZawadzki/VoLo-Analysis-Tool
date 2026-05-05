@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="/static/styles.css?v=110">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
+    <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
+    <link rel="stylesheet" href="/static/volomind.css?v=1">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -102,6 +104,7 @@
                 -->
                 <div class="nav-beta-group" title="These tabs are still in development. Outputs may be incomplete or change without notice.">
                     <span class="nav-beta-tag">BETA · In Development</span>
+                    <a href="#" class="nav-link nav-link-beta" data-tab="volomind">VoLo Mind</a>
                     <a href="#" class="nav-link nav-link-beta" data-tab="ddanalysis">DD Financial Analysis</a>
                     <a href="#" class="nav-link nav-link-beta" data-tab="funddeployment">Fund II Deployment</a>
                 </div>
@@ -2366,6 +2369,11 @@
 
 </div><!-- /tab-funddeployment -->
 
+    {# VoLo Mind (Beta) — isolated tab content. Renders even if the feature
+       flag is off (the JS will then fail the /health check and show a
+       "temporarily unavailable" panel rather than the full UI). #}
+    {% include "_volomind_panel.html" %}
+
     </main>
 
     <footer class="site-footer">
@@ -2392,6 +2400,8 @@
     </div>
 
     <script src="/static/app.js?v=178"></script>
+    <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
+    <script src="/static/volomind.js?v=1"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

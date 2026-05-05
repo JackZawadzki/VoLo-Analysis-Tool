@@ -1,0 +1,227 @@
+/* VoLo Mind — Beta tab styles. All selectors prefixed `vm-` to avoid
+   collisions with the host app's stylesheet. */
+
+/* Nav-bar fit: compensating for the additional Beta tab. Slightly tighter
+   nav-link sizing across ALL tabs so 9 items + brand + user badge stay on
+   one line on standard laptop screens. Removing /static/volomind.css
+   reverts to the original 7px/0.81rem sizing. */
+.nav-link {
+    padding: 6px 10px !important;
+    font-size: 0.78rem !important;
+    letter-spacing: -0.005em !important;
+}
+.nav-beta-group .nav-link-beta {
+    padding: 6px 10px !important;
+    font-size: 0.76rem !important;
+}
+@media (max-width: 1280px) {
+    .nav-link { padding: 5px 8px !important; font-size: 0.75rem !important; }
+    .nav-beta-group .nav-link-beta { padding: 5px 8px !important; font-size: 0.73rem !important; }
+}
+
+#tab-volomind { padding: 1.5rem; }
+
+.vm-unavailable {
+    text-align: center;
+    padding: 4rem 2rem;
+    color: #666;
+}
+.vm-unavailable-icon { font-size: 3rem; margin-bottom: 1rem; }
+.vm-unavailable h3 { margin: 0 0 0.5rem; color: #444; }
+.vm-unavailable-detail { font-size: 0.85rem; color: #999; margin-top: 1rem; }
+
+.vm-main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+/* Sidebar */
+.vm-sidebar { display: flex; flex-direction: column; gap: 1.5rem; }
+.vm-side-section {
+    background: #fff;
+    border: 1px solid #e0e8e3;
+    border-radius: 10px;
+    padding: 1rem;
+}
+.vm-side-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 0.75rem;
+}
+.vm-side-header h3 {
+    margin: 0; font-size: 0.85rem; font-weight: 600;
+    color: #1a472a; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.vm-admin-badge {
+    background: #1a472a; color: #fff; font-size: 0.65rem;
+    padding: 2px 6px; border-radius: 3px; text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.vm-source-list, .vm-thread-list {
+    list-style: none; padding: 0; margin: 0;
+}
+.vm-source-row, .vm-thread-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.5rem; border-radius: 6px;
+    cursor: pointer;
+}
+.vm-source-row:hover, .vm-thread-row:hover { background: #f4f8f5; }
+.vm-source-info, .vm-thread-row > div { flex: 1; min-width: 0; }
+.vm-source-label, .vm-thread-title {
+    font-size: 0.88rem; color: #1a1a1a; font-weight: 500;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vm-source-meta, .vm-thread-meta {
+    font-size: 0.72rem; color: #888; margin-top: 2px;
+}
+.vm-thread-active { background: #eef7f1; }
+.vm-source-actions { display: flex; gap: 0.25rem; }
+.vm-row-btn {
+    border: 1px solid #c0d8c8; background: #fff; color: #1a472a;
+    font-size: 0.7rem; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+}
+.vm-row-btn:hover { background: #eef7f1; }
+.vm-row-btn-danger { color: #b00020; border-color: #f0c0c0; }
+.vm-row-btn-danger:hover { background: #fcecec; }
+
+.vm-muted { color: #888; font-size: 0.85rem; padding: 0.5rem; }
+
+/* Admin controls */
+.vm-admin-only { margin-top: 0.75rem; }
+
+/* Buttons */
+.vm-btn {
+    border: none; padding: 0.55rem 1rem; border-radius: 6px;
+    font-weight: 500; cursor: pointer; font-size: 0.85rem;
+}
+.vm-btn-primary { background: #1a472a; color: #fff; }
+.vm-btn-primary:hover { background: #0f2d1a; }
+.vm-btn-primary:disabled { background: #b0c8b8; cursor: not-allowed; }
+.vm-btn-secondary {
+    background: #fff; color: #1a472a; border: 1px solid #c0d8c8; width: 100%;
+}
+.vm-btn-secondary:hover { background: #eef7f1; }
+.vm-btn-ghost { background: transparent; color: #666; }
+.vm-btn-ghost:hover { background: #f4f4f4; }
+.vm-link-btn {
+    background: none; border: none; color: #2d5f3f; font-size: 0.78rem;
+    cursor: pointer; padding: 2px 4px; text-decoration: underline;
+}
+.vm-link-btn:hover { color: #1a472a; }
+
+/* Main panel */
+.vm-main-panel { display: flex; flex-direction: column; gap: 1.5rem; min-width: 0; }
+
+/* Scope card */
+.vm-scope-card {
+    background: #fff; border: 1px solid #e0e8e3; border-radius: 10px;
+    padding: 1.25rem;
+}
+.vm-scope-head { position: relative; margin-bottom: 1rem; }
+.vm-scope-head h2 { margin: 0; font-size: 1rem; color: #1a472a; }
+.vm-scope-sub { font-size: 0.78rem; color: #666; margin: 4px 0 0; }
+.vm-scope-head .vm-link-btn { position: absolute; top: 0; right: 0; }
+
+.vm-scope-rows { display: flex; flex-direction: column; gap: 0.75rem; }
+.vm-scope-row { display: flex; align-items: flex-start; gap: 0.75rem; }
+.vm-scope-label {
+    flex: 0 0 100px; font-size: 0.78rem; font-weight: 600;
+    color: #555; padding-top: 6px;
+}
+.vm-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 1; }
+.vm-chip {
+    background: #fff; border: 1px solid #c0d8c8; color: #555;
+    padding: 4px 12px; border-radius: 14px; font-size: 0.78rem;
+    cursor: pointer; transition: all 0.15s;
+}
+.vm-chip:hover { background: #eef7f1; }
+.vm-chip-active {
+    background: #1a472a; color: #fff; border-color: #1a472a;
+}
+
+.vm-bundle-info {
+    margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #e0e8e3;
+    display: flex; gap: 1.5rem; font-size: 0.78rem; color: #666;
+}
+
+/* Chat card */
+.vm-chat-card {
+    background: #fff; border: 1px solid #e0e8e3; border-radius: 10px;
+    display: flex; flex-direction: column; min-height: 400px;
+}
+.vm-chat-messages {
+    flex: 1; padding: 1rem; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 0.75rem;
+    max-height: 500px;
+}
+.vm-chat-empty { color: #999; text-align: center; padding: 2rem; font-size: 0.9rem; }
+.vm-msg {
+    padding: 0.75rem 1rem; border-radius: 8px; max-width: 80%;
+}
+.vm-msg-user {
+    background: #1a472a; color: #fff; align-self: flex-end;
+}
+.vm-msg-assistant {
+    background: #eef7f1; color: #1a1a1a; align-self: flex-start;
+}
+.vm-msg-role {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 4px; opacity: 0.7;
+}
+.vm-msg-content { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; }
+
+.vm-chat-input-row {
+    display: flex; gap: 0.5rem; padding: 0.75rem;
+    border-top: 1px solid #e0e8e3;
+}
+.vm-chat-input {
+    flex: 1; padding: 0.5rem 0.75rem; border: 1px solid #c0d8c8;
+    border-radius: 6px; font-size: 0.9rem; resize: none;
+    font-family: inherit;
+}
+.vm-chat-input:focus { outline: none; border-color: #1a472a; }
+
+/* Modal */
+.vm-modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+}
+.vm-modal-card {
+    background: #fff; border-radius: 10px; width: 480px; max-width: 90vw;
+    max-height: 90vh; display: flex; flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+.vm-modal-head {
+    padding: 1rem 1.25rem; border-bottom: 1px solid #e0e8e3;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.vm-modal-head h3 { margin: 0; font-size: 1rem; color: #1a472a; }
+.vm-modal-close {
+    background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #999;
+}
+.vm-modal-body { padding: 1.25rem; overflow-y: auto; }
+.vm-modal-foot {
+    padding: 0.75rem 1.25rem; border-top: 1px solid #e0e8e3;
+    display: flex; justify-content: flex-end; gap: 0.5rem;
+}
+
+.vm-form-row { margin-bottom: 1rem; }
+.vm-form-row label {
+    display: block; font-size: 0.78rem; font-weight: 600;
+    color: #555; margin-bottom: 4px;
+}
+.vm-form-row input, .vm-form-row select {
+    width: 100%; padding: 0.5rem 0.75rem; border: 1px solid #c0d8c8;
+    border-radius: 6px; font-size: 0.85rem; font-family: inherit;
+}
+.vm-form-hint {
+    font-size: 0.75rem; color: #666; margin-top: 6px; line-height: 1.4;
+}
+.vm-form-hint code {
+    background: #f4f8f5; padding: 1px 4px; border-radius: 3px; font-size: 0.7rem;
+}
+.vm-hint-ok { color: #2d5f3f; }
+.vm-hint-warn { color: #b06000; }

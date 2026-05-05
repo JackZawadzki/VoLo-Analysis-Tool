@@ -85,6 +85,23 @@ app.include_router(dd_analysis_router)
 app.include_router(fund_deployment_router)
 app.include_router(ddr_router)
 
+# ── VoLo Mind (Beta) — feature-flagged, isolated, fail-soft ─────────────
+# Mounts only when VOLOMIND_ENABLED=true. Any failure here is logged and
+# swallowed so the host app boots normally even if volomind is broken.
+try:
+    from . import volomind as _volomind
+    if _volomind.is_enabled():
+        _vm_router = _volomind.get_router()
+        if _vm_router is not None:
+            app.include_router(_vm_router)
+            print("[VoLo Engine] VoLo Mind (Beta) mounted at /api/volomind", flush=True)
+        else:
+            print("[VoLo Engine] VoLo Mind enabled but router build failed — feature disabled", flush=True)
+    else:
+        print("[VoLo Engine] VoLo Mind disabled (set VOLOMIND_ENABLED=true to enable)", flush=True)
+except Exception as _vm_e:
+    print(f"[VoLo Engine] WARN: VoLo Mind import failed (feature disabled): {_vm_e}", flush=True)
+
 # Load data on startup
 DATA_STORE = {}
 
@@ -94,6 +111,15 @@ async def startup():
     from .database import startup as db_startup
     db_startup()
     print("[VoLo Engine] RVM database initialized")
+
+    # VoLo Mind has its own DB file. Init is fail-soft — a schema problem
+    # there must NOT block the host app from booting.
+    try:
+        from . import volomind as _volomind
+        if _volomind.is_enabled() and _volomind.init():
+            print("[VoLo Engine] VoLo Mind DB initialized", flush=True)
+    except Exception as _e:
+        print(f"[VoLo Engine] WARN: VoLo Mind DB init failed: {_e}", flush=True)
 
     DATA_STORE.update(load_all())
     print(f"[VoLo Engine] Data loaded: {len(DATA_STORE.get('carta_rounds', {}))} sectors, "
