@@ -29,8 +29,6 @@ from .models import (
     ChatThread,
     ChatThreadCreate,
     ScopeFilter,
-    SourceCreate,
-    SourceOut,
     SyncOut,
 )
 from ..auth import CurrentUser, get_current_user, require_admin
@@ -61,9 +59,16 @@ async def health():
 
 # --- Sources ---------------------------------------------------------------
 
-@router.get("/sources", response_model=list[SourceOut])
+@router.get("/sources")
 async def list_sources(user: CurrentUser = Depends(get_current_user)):
-    out: list[SourceOut] = []
+    """Return active sources (DB rows + counts) and coming-soon sources
+    (from sources_config.py). Source management is config-file-driven —
+    there is no add/delete via the UI. Edit app/volomind/sources_config.py
+    + redeploy to add a source.
+    """
+    from . import sources_config
+
+    active = []
     with database.cursor() as c:
         c.execute("SELECT * FROM cc_sources ORDER BY id")
         rows = c.fetchall()
@@ -73,50 +78,29 @@ async def list_sources(user: CurrentUser = Depends(get_current_user)):
                 (row["id"],),
             )
             n = c.fetchone()["n"] or 0
-            out.append(SourceOut(
-                id=row["id"],
-                source_id=row["source_id"],
-                label=row["label"],
-                cursor=row["cursor"],
-                last_synced_at=row["last_synced_at"],
-                document_count=n,
-            ))
-    return out
+            # Pull description from config if present
+            definition = sources_config.find_by_label(row["label"])
+            description = definition.get("description", "") if definition else ""
+            active.append({
+                "id": row["id"],
+                "source_id": row["source_id"],
+                "label": row["label"],
+                "cursor": row["cursor"],
+                "last_synced_at": row["last_synced_at"],
+                "document_count": n,
+                "description": description,
+                "status": "active",
+            })
 
+    # Roadmap entries — aspirational future sources, no connector yet.
+    roadmap = []
+    for item in sources_config.get_roadmap():
+        roadmap.append({
+            "label": item["label"],
+            "description": item.get("description", ""),
+        })
 
-@router.post("/sources", response_model=SourceOut)
-async def create_source(payload: SourceCreate, user: CurrentUser = Depends(require_admin)):
-    try:
-        get_connector(payload.source_id)  # validate
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    with database.cursor() as c:
-        c.execute(
-            """
-            INSERT INTO cc_sources (source_id, label, config_json)
-            VALUES (?, ?, ?)
-            """,
-            (payload.source_id, payload.label, json.dumps(payload.config)),
-        )
-        new_id = c.lastrowid
-
-    return SourceOut(
-        id=new_id,
-        source_id=payload.source_id,
-        label=payload.label,
-        cursor=None,
-        last_synced_at=None,
-        document_count=0,
-    )
-
-
-@router.delete("/sources/{source_pk}", status_code=204)
-async def delete_source(source_pk: int, user: CurrentUser = Depends(require_admin)):
-    with database.cursor() as c:
-        c.execute("DELETE FROM cc_sources WHERE id = ?", (source_pk,))
-        if c.rowcount == 0:
-            raise HTTPException(status_code=404, detail="source not found")
+    return {"active": active, "roadmap": roadmap}
 
 
 @router.post("/sources/{source_pk}/sync", response_model=SyncOut)

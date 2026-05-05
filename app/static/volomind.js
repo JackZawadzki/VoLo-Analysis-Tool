@@ -56,7 +56,8 @@
         unavailable: false,
         chatConfigured: false,
         isAdmin: false,
-        sources: [],
+        active: [],          // active sources (DB rows + counts)
+        roadmap: [],      // coming-soon sources (config-only)
         threads: [],
         activeThreadId: null,
         messages: [],
@@ -113,7 +114,8 @@
         } catch (_) { /* non-fatal — assume non-admin */ }
 
         document.getElementById('vm-admin-badge').hidden = !state.isAdmin;
-        document.getElementById('vm-admin-controls').hidden = !state.isAdmin;
+        const footnote = document.getElementById('vm-source-footnote');
+        if (footnote) footnote.hidden = state.isAdmin;  // show only to non-admins
 
         await Promise.all([
             refreshSources(),
@@ -137,9 +139,12 @@
 
     async function refreshSources() {
         try {
-            state.sources = await vmGet('/api/volomind/sources');
+            const resp = await vmGet('/api/volomind/sources');
+            state.active = resp.active || [];
+            state.roadmap = resp.roadmap || [];
         } catch (e) {
-            state.sources = [];
+            state.active = [];
+            state.roadmap = [];
         }
         renderSources();
     }
@@ -147,26 +152,22 @@
     function renderSources() {
         const list = document.getElementById('vm-source-list');
         if (!list) return;
-        if (!state.sources.length) {
-            list.innerHTML = '<li class="vm-muted">No sources connected yet.</li>';
+        const sections = [];
+
+        if (!state.active.length && !state.roadmap.length) {
+            list.innerHTML = '<li class="vm-muted">No sources configured yet.</li>';
             return;
         }
-        list.innerHTML = state.sources.map(s => `
-            <li class="vm-source-row">
-                <div class="vm-source-info">
-                    <div class="vm-source-label">${escapeHtml(s.label)}</div>
-                    <div class="vm-source-meta">
-                        ${escapeHtml(s.source_id)} · ${s.document_count} docs${s.last_synced_at ? ' · synced ' + relTime(s.last_synced_at) : ''}
-                    </div>
-                </div>
-                ${state.isAdmin ? `
-                    <div class="vm-source-actions">
-                        <button class="vm-row-btn" data-act="sync" data-id="${s.id}">sync</button>
-                        <button class="vm-row-btn vm-row-btn-danger" data-act="delete" data-id="${s.id}">×</button>
-                    </div>
-                ` : ''}
-            </li>
-        `).join('');
+
+        if (state.active.length) {
+            sections.push('<li class="vm-source-section-label">ACTIVE</li>');
+            sections.push(...state.active.map(renderActiveSource));
+        }
+        if (state.roadmap.length) {
+            sections.push('<li class="vm-source-section-label">COMING SOON</li>');
+            sections.push(...state.roadmap.map(renderRoadmapItem));
+        }
+        list.innerHTML = sections.join('');
 
         list.querySelectorAll('[data-act="sync"]').forEach(btn => {
             btn.addEventListener('click', async () => {
@@ -185,88 +186,36 @@
                 }
             });
         });
-
-        list.querySelectorAll('[data-act="delete"]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                if (!confirm('Delete this source and all its synced data?')) return;
-                try {
-                    await vmDelete(`/api/volomind/sources/${btn.dataset.id}`);
-                    await refreshSources();
-                    await refreshDimensions();
-                } catch (e) {
-                    toast('Delete failed: ' + e.message, 'err');
-                }
-            });
-        });
     }
 
-    // ------------------------- Source modal -----------------------------
-
-    function openSourceModal() {
-        document.getElementById('vm-source-modal').hidden = false;
-        document.getElementById('vm-source-type').value = 'granola';
-        document.getElementById('vm-source-label').value = '';
-        document.getElementById('vm-drive-folder-id').value = '';
-        document.getElementById('vm-drive-co-type').value = '';
-        toggleSourceConfigRows();
-        // Check Drive connection status for the admin
-        refreshDriveStatus();
+    function renderActiveSource(s) {
+        return `
+            <li class="vm-source-row">
+                <div class="vm-source-info">
+                    <div class="vm-source-label">${escapeHtml(s.label)}</div>
+                    <div class="vm-source-meta">
+                        ${escapeHtml(s.source_id)} · ${s.document_count} docs${s.last_synced_at ? ' · synced ' + relTime(s.last_synced_at) : ' · never synced'}
+                    </div>
+                </div>
+                ${state.isAdmin ? `
+                    <div class="vm-source-actions">
+                        <button class="vm-row-btn" data-act="sync" data-id="${s.id}">sync</button>
+                    </div>
+                ` : ''}
+            </li>
+        `;
     }
 
-    function closeSourceModal() {
-        document.getElementById('vm-source-modal').hidden = true;
-    }
-
-    function toggleSourceConfigRows() {
-        const t = document.getElementById('vm-source-type').value;
-        document.getElementById('vm-granola-config-row').hidden = (t !== 'granola');
-        document.getElementById('vm-drive-config-row').hidden = (t !== 'gdrive_admin');
-    }
-
-    async function refreshDriveStatus() {
-        const hint = document.getElementById('vm-drive-status-hint');
-        if (!hint) return;
-        try {
-            const status = await vmGet('/api/volomind/admin/drive-status');
-            if (status.connected) {
-                hint.textContent = `✓ Drive connected as ${status.google_email}. Sync will use these credentials.`;
-                hint.className = 'vm-form-hint vm-hint-ok';
-            } else {
-                hint.textContent = '⚠ Connect Google Drive in the IC Memo tab first — VoLo Mind reuses those credentials.';
-                hint.className = 'vm-form-hint vm-hint-warn';
-            }
-        } catch (e) {
-            hint.textContent = 'Drive status check failed: ' + e.message;
-            hint.className = 'vm-form-hint vm-hint-warn';
-        }
-    }
-
-    async function createSource() {
-        const t = document.getElementById('vm-source-type').value;
-        const label = document.getElementById('vm-source-label').value.trim();
-        if (!label) { toast('Label required', 'err'); return; }
-        const cfg = {};
-        if (t === 'gdrive_admin') {
-            const fid = document.getElementById('vm-drive-folder-id').value.trim();
-            if (!fid) { toast('Drive folder ID required', 'err'); return; }
-            cfg.root_folder_id = parseDriveFolderId(fid);
-            const ct = document.getElementById('vm-drive-co-type').value;
-            if (ct) cfg.co_type = ct;
-        }
-        try {
-            await vmPost('/api/volomind/sources', { source_id: t, label, config: cfg });
-            closeSourceModal();
-            await refreshSources();
-            toast('Source created. Click "sync" to ingest.');
-        } catch (e) {
-            toast('Create failed: ' + e.message, 'err');
-        }
-    }
-
-    function parseDriveFolderId(input) {
-        const m = input.match(/folders\/([a-zA-Z0-9_-]+)/);
-        if (m) return m[1];
-        return input.trim();
+    function renderRoadmapItem(item) {
+        return `
+            <li class="vm-source-row vm-source-coming-soon">
+                <div class="vm-source-info">
+                    <div class="vm-source-label">${escapeHtml(item.label)}</div>
+                    <div class="vm-source-meta">${escapeHtml(item.description || '')}</div>
+                </div>
+                <span class="vm-coming-soon-pill">soon</span>
+            </li>
+        `;
     }
 
     // ------------------------- Scope picker -----------------------------
@@ -476,16 +425,9 @@
             const el = document.getElementById(id);
             if (el) el.addEventListener('click', fn);
         };
-        onClick('vm-add-source-btn', openSourceModal);
-        onClick('vm-source-modal-close', closeSourceModal);
-        onClick('vm-source-modal-cancel', closeSourceModal);
-        onClick('vm-source-create-btn', createSource);
         onClick('vm-clear-scope-btn', clearScope);
         onClick('vm-new-thread-btn', newThread);
         onClick('vm-chat-send-btn', sendMessage);
-
-        const typeSel = document.getElementById('vm-source-type');
-        if (typeSel) typeSel.addEventListener('change', toggleSourceConfigRows);
 
         const inp = document.getElementById('vm-chat-input');
         if (inp) inp.addEventListener('keydown', (e) => {

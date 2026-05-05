@@ -103,6 +103,33 @@
 
 .vm-muted { color: #888; font-size: 0.85rem; padding: 0.5rem; }
 
+/* Section labels in the source list (ACTIVE / COMING SOON) */
+.vm-source-section-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #999;
+    padding: 0.5rem 0.5rem 0.25rem;
+    list-style: none;
+    border-top: 1px solid #f0f0f0;
+    margin-top: 0.25rem;
+}
+.vm-source-section-label:first-child { border-top: none; margin-top: 0; }
+
+.vm-source-coming-soon { opacity: 0.75; cursor: default; }
+.vm-source-coming-soon:hover { background: transparent; }
+.vm-coming-soon-pill {
+    background: #f0f0f0; color: #888;
+    font-size: 0.65rem; padding: 2px 8px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+    align-self: center;
+}
+
+.vm-side-footnote {
+    font-size: 0.7rem; color: #999; margin: 0.5rem 0 0;
+    line-height: 1.4; padding: 0 0.25rem;
+}
+
 /* Admin controls */
 .vm-admin-only { margin-top: 0.75rem; }
 

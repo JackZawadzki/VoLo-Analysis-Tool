@@ -179,6 +179,41 @@ def cursor() -> Iterator[sqlite3.Cursor]:
 
 
 def init() -> None:
-    """Run all CREATE TABLE IF NOT EXISTS statements. Idempotent."""
+    """Run all CREATE TABLE IF NOT EXISTS statements + reconcile sources from
+    the config file. Idempotent — safe to run on every startup.
+    """
     with cursor() as c:
         c.executescript(_SCHEMA)
+    reconcile_sources_from_config()
+
+
+def reconcile_sources_from_config() -> None:
+    """Ensure every status='active' entry in sources_config.py has a matching
+    cc_sources row. Looks up by (source_id, label). Updates config_json if it
+    changed. Never deletes — removing entries from the config file just hides
+    them from the UI; the DB row and its data persist.
+    """
+    import json
+    from . import sources_config
+
+    with cursor() as c:
+        for definition in sources_config.get_enabled():
+            source_id = definition["source_id"]
+            label = definition["label"]
+            config_json = json.dumps(definition.get("config") or {})
+
+            row = c.execute(
+                "SELECT id, config_json FROM cc_sources WHERE source_id = ? AND label = ?",
+                (source_id, label),
+            ).fetchone()
+
+            if row is None:
+                c.execute(
+                    "INSERT INTO cc_sources (source_id, label, config_json) VALUES (?, ?, ?)",
+                    (source_id, label, config_json),
+                )
+            elif row["config_json"] != config_json:
+                c.execute(
+                    "UPDATE cc_sources SET config_json = ? WHERE id = ?",
+                    (config_json, row["id"]),
+                )
