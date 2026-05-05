@@ -19,10 +19,13 @@ from .models import BundleDocSummary, BundlePreview, ScopeFilter
 
 _DIM_MAP: dict[str, str] = {
     "verticals": "vertical",
-    "sectors": "sector",
     "stages": "stage",
-    "co_types": "co_type",
+    "company_types": "company_type",
     "value_chains": "value_chain",
+    "technologies": "technology",
+    # Secondary / advanced filters (not in main scope UI)
+    "sectors": "sector",
+    "co_types": "co_type",
     "companies": "company",
     "meeting_types": "meeting_type",
     "document_types": "document_type",

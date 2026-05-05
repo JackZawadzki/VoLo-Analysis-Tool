@@ -89,9 +89,20 @@
 
     function emptyScope() {
         return {
-            verticals: [], sectors: [], stages: [], co_types: [],
-            value_chains: [], companies: [], meeting_types: [],
-            document_types: [], sources: [],
+            // Primary investor-scoping dimensions (Tier 2 LLM tags)
+            verticals: [],
+            stages: [],
+            company_types: [],
+            value_chains: [],
+            technologies: [],
+            // Secondary / legacy fields kept on the object so API calls
+            // serialize cleanly. Not surfaced in the main scope card UI.
+            sectors: [],
+            co_types: [],
+            companies: [],
+            meeting_types: [],
+            document_types: [],
+            sources: [],
         };
     }
 
@@ -151,17 +162,33 @@
         try {
             state.taxonomy = await vmGet('/api/volomind/scope/taxonomy');
         } catch (e) {
-            // Fallback hardcoded so the UI still works if the endpoint fails
+            // Fallback hardcoded so the UI still works if the endpoint fails.
+            // Mirror the server-side VOLO_TAXONOMY in tier2_tagger.py.
             state.taxonomy = {
                 verticals: ['Energy', 'Buildings', 'Industry', 'Mobility'],
-                sectors: {
-                    Energy: ['Solar', 'Wind', 'Storage', 'Hydrogen', 'Geothermal', 'Nuclear / SMR', 'Grid / Transmission', 'Biofuels', 'Carbon Capture'],
-                    Buildings: ['HVAC', 'Envelope / Insulation', 'Lighting', 'Smart Building / Controls', 'Heat Pumps', 'Embodied Carbon'],
-                    Industry: ['Steel', 'Cement', 'Chemicals', 'Plastics', 'Mining / Metals', 'Process Heat', 'Industrial AI', 'Direct Air Capture'],
-                    Mobility: ['EV / Powertrains', 'Charging Infra', 'Batteries', 'Aviation', 'Maritime', 'Rail', 'Logistics', 'Autonomy', 'Micromobility'],
-                },
-                stages: ['Pre-Seed', 'Seed', 'Series A', 'Series B', 'Series C', 'Series D', 'Series E+', 'Growth', 'Public', 'Acquired'],
-                value_chains: ['Upstream', 'Midstream', 'Downstream', 'Cross-cutting'],
+                stages: ['Pre-Seed', 'Seed', 'Series A', 'Series B', 'Series C', 'Growth', 'Public / Incumbent'],
+                company_types: [
+                    'Software', 'Hardware', 'Hardware-Enabled Software', 'Materials',
+                    'Infrastructure / Project Developer', 'Marketplace / Network',
+                    'Financing / Insurance', 'Services',
+                ],
+                value_chains: [
+                    'Raw Materials', 'Materials Processing / Refining',
+                    'Component / Equipment Manufacturing', 'System Integration',
+                    'Project Development / Deployment', 'Operations & Maintenance',
+                    'Monitoring / Measurement / Verification',
+                    'Optimization / Control Software', 'Asset Management',
+                    'Market / Grid / System Operations', 'Financing / Risk / Insurance',
+                    'Carbon Accounting / Reporting',
+                    'Circularity / Recycling / End-of-Life', 'Workforce / Services',
+                ],
+                technologies: [
+                    'Electrification', 'Grid', 'Storage', 'Renewables', 'Nuclear',
+                    'Hydrogen', 'Carbon Management', 'Critical Minerals',
+                    'Industrial Decarbonization', 'Building Efficiency',
+                    'Heat Pumps / HVAC', 'EVs / Charging', 'Fleet / Logistics',
+                    'Circular Economy', 'Climate Adaptation',
+                ],
             };
         }
     }
@@ -382,45 +409,31 @@
         await refreshBundle();
     }
 
-    // FIXED taxonomy dimensions (rendered always from state.taxonomy)
+    // The five primary investor-scoping rows. All always rendered from the
+    // hardcoded taxonomy (single source of truth lives server-side in
+    // tier2_tagger.VOLO_TAXONOMY; the frontend caches a copy for offline
+    // robustness and to avoid an extra round-trip per render).
+    //
+    // Company / meeting type / doc type / co_type are NOT in this list —
+    // they're "advanced filters" that the main scope UI does not surface.
+    // They remain on the ScopeFilter API contract for future use.
     const FIXED_DIMS = [
-        { dim: 'vertical', scope: 'verticals', label: 'Vertical', taxonomyKey: 'verticals' },
-        { dim: 'sector', scope: 'sectors', label: 'Sector', taxonomyKey: 'sectors' /* nested by vertical */ },
-        { dim: 'stage', scope: 'stages', label: 'Stage', taxonomyKey: 'stages' },
-        { dim: 'value_chain', scope: 'value_chains', label: 'Value chain', taxonomyKey: 'value_chains' },
-    ];
-
-    // DYNAMIC dimensions (only render if data exists in state.dimensions)
-    const DYNAMIC_DIMS = [
-        { dim: 'co_type', scope: 'co_types', label: 'Co-type' },
-        { dim: 'company', scope: 'companies', label: 'Company' },
-        { dim: 'meeting_type', scope: 'meeting_types', label: 'Meeting type' },
-        { dim: 'document_type', scope: 'document_types', label: 'Doc type' },
+        { scope: 'verticals',     label: 'Vertical',         taxonomyKey: 'verticals' },
+        { scope: 'stages',        label: 'Stage',            taxonomyKey: 'stages' },
+        { scope: 'company_types', label: 'Company type',     taxonomyKey: 'company_types' },
+        { scope: 'value_chains',  label: 'Value chain',      taxonomyKey: 'value_chains' },
+        { scope: 'technologies',  label: 'Technology / theme', taxonomyKey: 'technologies' },
     ];
 
     function renderScopeRows() {
         const container = document.getElementById('vm-scope-rows');
         if (!container) return;
         const taxonomy = state.taxonomy || {};
-        const dims = state.dimensions || {};
         const rows = [];
 
-        // Always render Vertical / Stage / Value chain.
-        // Sector row CASCADES from vertical — only appears when at least one
-        // vertical is selected, then shows that vertical's sectors only.
-        // Selecting two verticals merges both sector lists.
-        const selectedVerticals = state.scope.verticals || [];
         for (const f of FIXED_DIMS) {
-            let values;
-            if (f.dim === 'sector') {
-                if (!selectedVerticals.length) {
-                    continue;  // hide sector row entirely — pick a vertical first
-                }
-                const sectorMap = taxonomy.sectors || {};
-                values = selectedVerticals.flatMap(v => sectorMap[v] || []);
-            } else {
-                values = taxonomy[f.taxonomyKey] || [];
-            }
+            const values = taxonomy[f.taxonomyKey] || [];
+            if (!values.length) continue;
             const selected = new Set(state.scope[f.scope] || []);
             const chips = values.map(v => `
                 <button class="vm-chip ${selected.has(v) ? 'vm-chip-active' : ''}"
@@ -431,25 +444,6 @@
             rows.push(`
                 <div class="vm-scope-row">
                     <label class="vm-scope-label">${f.label}</label>
-                    <div class="vm-chips">${chips || '<span class="vm-muted">—</span>'}</div>
-                </div>
-            `);
-        }
-
-        // Render dynamic rows only when corpus has data for them.
-        for (const d of DYNAMIC_DIMS) {
-            const values = dims[d.dim];
-            if (!values || !values.length) continue;
-            const selected = new Set(state.scope[d.scope] || []);
-            const chips = values.map(v => `
-                <button class="vm-chip ${selected.has(v) ? 'vm-chip-active' : ''}"
-                        data-scope="${d.scope}" data-value="${escapeHtml(v)}">
-                    ${escapeHtml(v)}
-                </button>
-            `).join('');
-            rows.push(`
-                <div class="vm-scope-row">
-                    <label class="vm-scope-label">${d.label}</label>
                     <div class="vm-chips">${chips}</div>
                 </div>
             `);
@@ -465,18 +459,10 @@
                 const idx = list.indexOf(value);
                 if (idx >= 0) list.splice(idx, 1);
                 else list.push(value);
-                // Cascade: when a vertical changes, prune sectors that no
-                // longer belong to any selected vertical. Otherwise an
-                // invisible sector filter would silently affect results.
-                if (scopeKey === 'verticals') {
-                    const sectorMap = (state.taxonomy || {}).sectors || {};
-                    const validSectors = new Set(
-                        (state.scope.verticals || []).flatMap(v => sectorMap[v] || [])
-                    );
-                    state.scope.sectors = (state.scope.sectors || [])
-                        .filter(s => validSectors.has(s));
-                }
-                renderScopeRows();
+                // Within-row toggle is OR; across rows is AND. The chip's
+                // visual state updates next render. Refresh the bundle
+                // preview so the doc/token counts reflect the new scope.
+                btn.classList.toggle('vm-chip-active');
                 refreshBundle();
             });
         });

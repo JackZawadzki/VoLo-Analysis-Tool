@@ -29,35 +29,72 @@ from typing import Any, Optional
 from . import database
 
 
-TAGGER_VERSION = "tier2-v1"
+TAGGER_VERSION = "tier2-v2"  # bumped from v1 — taxonomy redesigned
 
 
 # Volo Earth Ventures investment taxonomy. Single source of truth.
+#
+# Designed for INVESTOR-relevant scoping, not document-metadata filtering.
+# Each dimension answers a question an investor would actually ask:
+#   - Vertical: which corner of the climate-tech universe?
+#   - Stage:    where in the funding lifecycle?
+#   - Company Type: what kind of business model?
+#   - Value Chain / Position: where in the production-to-deployment chain?
+#   - Technology / Theme: which cross-cutting climate-tech theme?
+#
+# Values must be stable — Tier 2 LLM tags every knowledge object (companies,
+# memos, meeting notes, patents, market maps) into these exact strings, so
+# renaming a value invalidates all prior tags. Add new values freely;
+# rename existing ones only if you're prepared to re-run Tier 2.
 VOLO_TAXONOMY: dict[str, Any] = {
     "verticals": ["Energy", "Buildings", "Industry", "Mobility"],
-    "sectors": {
-        "Energy": [
-            "Solar", "Wind", "Storage", "Hydrogen", "Geothermal",
-            "Nuclear / SMR", "Grid / Transmission", "Biofuels", "Carbon Capture",
-        ],
-        "Buildings": [
-            "HVAC", "Envelope / Insulation", "Lighting",
-            "Smart Building / Controls", "Heat Pumps", "Embodied Carbon",
-        ],
-        "Industry": [
-            "Steel", "Cement", "Chemicals", "Plastics", "Mining / Metals",
-            "Process Heat", "Industrial AI", "Direct Air Capture",
-        ],
-        "Mobility": [
-            "EV / Powertrains", "Charging Infra", "Batteries", "Aviation",
-            "Maritime", "Rail", "Logistics", "Autonomy", "Micromobility",
-        ],
-    },
     "stages": [
         "Pre-Seed", "Seed", "Series A", "Series B", "Series C",
-        "Series D", "Series E+", "Growth", "Public", "Acquired",
+        "Growth", "Public / Incumbent",
     ],
-    "value_chains": ["Upstream", "Midstream", "Downstream", "Cross-cutting"],
+    "company_types": [
+        "Software",
+        "Hardware",
+        "Hardware-Enabled Software",
+        "Materials",
+        "Infrastructure / Project Developer",
+        "Marketplace / Network",
+        "Financing / Insurance",
+        "Services",
+    ],
+    "value_chains": [
+        "Raw Materials",
+        "Materials Processing / Refining",
+        "Component / Equipment Manufacturing",
+        "System Integration",
+        "Project Development / Deployment",
+        "Operations & Maintenance",
+        "Monitoring / Measurement / Verification",
+        "Optimization / Control Software",
+        "Asset Management",
+        "Market / Grid / System Operations",
+        "Financing / Risk / Insurance",
+        "Carbon Accounting / Reporting",
+        "Circularity / Recycling / End-of-Life",
+        "Workforce / Services",
+    ],
+    "technologies": [
+        "Electrification",
+        "Grid",
+        "Storage",
+        "Renewables",
+        "Nuclear",
+        "Hydrogen",
+        "Carbon Management",
+        "Critical Minerals",
+        "Industrial Decarbonization",
+        "Building Efficiency",
+        "Heat Pumps / HVAC",
+        "EVs / Charging",
+        "Fleet / Logistics",
+        "Circular Economy",
+        "Climate Adaptation",
+    ],
 }
 
 
@@ -74,41 +111,61 @@ _DOC_TYPE_PRIORITY = [
 # --- Prompt ----------------------------------------------------------------
 
 def _build_prompt(company_name: str, docs_text: str) -> str:
-    sectors_block = "\n".join(
-        f"  {v}: {', '.join(VOLO_TAXONOMY['sectors'][v])}"
-        for v in VOLO_TAXONOMY["verticals"]
-    )
-    return f"""You are classifying a portfolio company for VoLo Earth Ventures, a climate-tech VC.
+    return f"""You are classifying a knowledge object for VoLo Earth Ventures, a climate-tech VC. The classification will be used by an investor to scope diligence questions.
 
-Company name: {company_name}
+Company / object name: {company_name}
 
-Documents about this company (excerpts from IC memos, decks, meeting notes,
-and other materials):
+Documents about this object (excerpts from IC memos, decks, meeting notes, market maps, etc.):
 
 {docs_text}
 
-Classify this company into VoLo's taxonomy. Return ONLY valid JSON, no preamble:
+Classify into VoLo's taxonomy. Return ONLY valid JSON, no preamble:
 
 {{
-  "vertical": "Energy" | "Buildings" | "Industry" | "Mobility" | null,
-  "sectors": [list of sector strings from the chosen vertical, max 3],
+  "verticals": [1-2 entries from {VOLO_TAXONOMY['verticals']}],
   "stage": one of {VOLO_TAXONOMY['stages']} or null,
-  "value_chains": [subset of {VOLO_TAXONOMY['value_chains']}, max 2],
-  "confidence_vertical": 0.0-1.0,
-  "confidence_stage": 0.0-1.0,
+  "company_types": [1-2 entries from the company_type values],
+  "value_chains": [max 4 entries from the value_chain values],
+  "technologies": [max 4 entries from the technology values],
   "rationale": "one short sentence explaining the classification"
 }}
 
-Valid sectors per vertical:
-{sectors_block}
+Valid company_types:
+{', '.join(VOLO_TAXONOMY['company_types'])}
+
+Valid value_chain positions:
+{', '.join(VOLO_TAXONOMY['value_chains'])}
+
+Valid technology / theme tags:
+{', '.join(VOLO_TAXONOMY['technologies'])}
+
+CLASSIFICATION PHILOSOPHY: Reasonably inclusive — tag any category the company
+genuinely operates in or has clear evidence supporting, but don't tag for
+tangential or speculative connections. The goal is that an investor scoping
+"Energy + Storage + Series A" finds every company that genuinely fits, not
+every company with a passing mention.
+
+Per-dimension guidance:
+- "verticals" — usually 1. Tag two only when the company genuinely spans
+  (e.g. industrial mobility, building-integrated PV). Default to one.
+- "stage" — most recent confirmed funding round. Null if unclear.
+- "company_types" — usually 1. Tag two when the business model genuinely
+  spans both (e.g. hardware company with a substantial SaaS revenue stream
+  = "Hardware" AND "Hardware-Enabled Software"). Don't tag both for a
+  hardware company that merely has a companion app.
+- "value_chains" — tag every position the company DIRECTLY operates in,
+  not adjacent positions. A battery cell maker is "Component / Equipment
+  Manufacturing" (and "Materials Processing / Refining" if they refine
+  their own cathode/anode) — but NOT "System Integration" unless they
+  actually pack and sell modules. Be precise: where does revenue come from?
+- "technologies" — tag themes the company directly addresses. A heat-pump
+  SaaS = "Heat Pumps / HVAC" + "Building Efficiency". Add "Electrification"
+  only if it's an explicit positioning angle, not because heat pumps run on
+  electricity. Add "Grid" only if there's actual grid-services functionality.
 
 Rules:
-- Use ONLY the exact strings listed above. Do not invent values.
-- "vertical" must be exactly one of the four, or null if genuinely unclear.
-- "sectors" must all belong to the chosen vertical's list.
-- If the company is dual-vertical (e.g. "industrial mobility"), pick the
-  primary one based on revenue model.
-- "stage" reflects the most recent confirmed funding round; null if unclear.
+- Use ONLY the exact strings from the lists above. Do not invent values.
+- Empty lists are fine when nothing fits. Don't force-tag if there's no signal.
 - Return ONLY the JSON object. No markdown fences. No explanatory text outside.
 """
 
@@ -182,34 +239,41 @@ def _parse_json_response(text: str) -> Optional[dict]:
 def _validate_classification(result: dict) -> dict:
     """Filter result down to values that exactly match VoLo's taxonomy.
     Drops anything outside the allowed lists. Returns a clean dict.
+
+    Backward-compatible with single-value LLM outputs: if the LLM returns
+    "vertical" instead of "verticals", we accept it as a one-element list.
     """
     out: dict[str, Any] = {}
 
-    # Vertical
-    v = result.get("vertical")
-    if v in VOLO_TAXONOMY["verticals"]:
-        out["vertical"] = v
-    else:
-        out["vertical"] = None
+    def _multi(val, allowed: list, cap: int) -> list:
+        """Coerce val to a list filtered against allowed values, capped."""
+        if isinstance(val, str):
+            val = [val]
+        if not isinstance(val, list):
+            val = []
+        return [v for v in val if v in allowed][:cap]
 
-    # Sectors (must belong to chosen vertical)
-    sectors = result.get("sectors") or []
-    if not isinstance(sectors, list):
-        sectors = []
-    valid_sectors = VOLO_TAXONOMY["sectors"].get(out["vertical"], []) if out["vertical"] else []
-    out["sectors"] = [s for s in sectors if s in valid_sectors][:3]
+    # Verticals (multi, max 2). Accept legacy "vertical" key too.
+    verticals = result.get("verticals") if "verticals" in result else result.get("vertical")
+    out["verticals"] = _multi(verticals, VOLO_TAXONOMY["verticals"], 2)
 
-    # Stage
+    # Stage (single)
     stage = result.get("stage")
     out["stage"] = stage if stage in VOLO_TAXONOMY["stages"] else None
 
-    # Value chains
-    value_chains = result.get("value_chains") or []
-    if not isinstance(value_chains, list):
-        value_chains = []
-    out["value_chains"] = [
-        vc for vc in value_chains if vc in VOLO_TAXONOMY["value_chains"]
-    ][:2]
+    # Company types (multi, max 2). Accept legacy "company_type" key too.
+    cts = result.get("company_types") if "company_types" in result else result.get("company_type")
+    out["company_types"] = _multi(cts, VOLO_TAXONOMY["company_types"], 2)
+
+    # Value chains (multi, max 4)
+    out["value_chains"] = _multi(
+        result.get("value_chains"), VOLO_TAXONOMY["value_chains"], 4,
+    )
+
+    # Technologies (multi, max 4)
+    out["technologies"] = _multi(
+        result.get("technologies"), VOLO_TAXONOMY["technologies"], 4,
+    )
 
     out["rationale"] = result.get("rationale", "")
     return out
@@ -267,14 +331,16 @@ def _write_tags_for_company(company_name: str, classification: dict) -> int:
 
     written = 0
     pairs: list[tuple[str, str]] = []
-    if classification.get("vertical"):
-        pairs.append(("vertical", classification["vertical"]))
-    for sector in classification.get("sectors", []):
-        pairs.append(("sector", sector))
+    for v in classification.get("verticals", []):
+        pairs.append(("vertical", v))
     if classification.get("stage"):
         pairs.append(("stage", classification["stage"]))
+    for ct in classification.get("company_types", []):
+        pairs.append(("company_type", ct))
     for vc in classification.get("value_chains", []):
         pairs.append(("value_chain", vc))
+    for tech in classification.get("technologies", []):
+        pairs.append(("technology", tech))
 
     if not pairs:
         return 0

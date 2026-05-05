@@ -27,11 +27,17 @@ class RawDocument(BaseModel):
 
 class ScopeFilter(BaseModel):
     """Within a list = OR. Across lists = AND. Empty list = no filter on that dimension."""
+    # Primary investor-scoping dimensions (Tier 2 LLM populates these)
     verticals: list[str] = Field(default_factory=list)
-    sectors: list[str] = Field(default_factory=list)
     stages: list[str] = Field(default_factory=list)
-    co_types: list[str] = Field(default_factory=list)
+    company_types: list[str] = Field(default_factory=list)
     value_chains: list[str] = Field(default_factory=list)
+    technologies: list[str] = Field(default_factory=list)
+    # Secondary / advanced filters (Tier 1 rules populate these). Kept on
+    # the schema so power users can filter by them via the API; the main
+    # scope card UI does not surface them.
+    sectors: list[str] = Field(default_factory=list)
+    co_types: list[str] = Field(default_factory=list)
     companies: list[str] = Field(default_factory=list)
     meeting_types: list[str] = Field(default_factory=list)
     document_types: list[str] = Field(default_factory=list)
