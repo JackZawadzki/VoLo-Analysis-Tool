@@ -29,7 +29,7 @@ from typing import Any, Optional
 from . import database
 
 
-TAGGER_VERSION = "tier2-v2"  # bumped from v1 — taxonomy redesigned
+TAGGER_VERSION = "tier2-v3"  # bumped — added sector cascade + simplified themes
 
 
 # Volo Earth Ventures investment taxonomy. Single source of truth.
@@ -78,22 +78,41 @@ VOLO_TAXONOMY: dict[str, Any] = {
         "Circularity / Recycling / End-of-Life",
         "Workforce / Services",
     ],
-    "technologies": [
+    # Sectors are CASCADING per vertical — what specific kind of company
+    # within that vertical. Tier 2 picks 1-3 sectors that match the chosen
+    # vertical(s). UI shows sector chips only when a vertical is selected.
+    "sectors": {
+        "Energy": [
+            "Solar", "Wind", "Geothermal", "Hydropower",
+            "Storage / Batteries", "Hydrogen", "Nuclear / SMR",
+            "Grid / Transmission", "Biofuels / Bioenergy",
+            "Carbon Capture", "Fusion",
+        ],
+        "Buildings": [
+            "HVAC", "Heat Pumps", "Insulation / Envelope",
+            "Lighting / Controls", "Smart Building", "Embodied Carbon",
+            "Building-Integrated Renewables",
+        ],
+        "Industry": [
+            "Steel", "Cement / Concrete", "Chemicals", "Plastics",
+            "Mining / Metals", "Process Heat", "Industrial Hydrogen",
+            "Direct Air Capture", "Industrial AI",
+        ],
+        "Mobility": [
+            "EVs / Powertrains", "Charging Infrastructure", "Batteries",
+            "Aviation", "Maritime / Shipping", "Rail", "Logistics / Freight",
+            "Autonomy", "Micromobility", "Hydrogen Fuel Cells",
+        ],
+    },
+    # Cross-cutting climate-tech themes — span multiple verticals. Always
+    # shown, regardless of which vertical(s) are selected.
+    "themes": [
         "Electrification",
-        "Grid",
-        "Storage",
-        "Renewables",
-        "Nuclear",
-        "Hydrogen",
         "Carbon Management",
         "Critical Minerals",
-        "Industrial Decarbonization",
-        "Building Efficiency",
-        "Heat Pumps / HVAC",
-        "EVs / Charging",
-        "Fleet / Logistics",
         "Circular Economy",
         "Climate Adaptation",
+        "Industrial Decarbonization",
     ],
 }
 
@@ -111,6 +130,10 @@ _DOC_TYPE_PRIORITY = [
 # --- Prompt ----------------------------------------------------------------
 
 def _build_prompt(company_name: str, docs_text: str) -> str:
+    sectors_block = "\n".join(
+        f"  {v}: {', '.join(VOLO_TAXONOMY['sectors'][v])}"
+        for v in VOLO_TAXONOMY["verticals"]
+    )
     return f"""You are classifying a knowledge object for VoLo Earth Ventures, a climate-tech VC. The classification will be used by an investor to scope diligence questions.
 
 Company / object name: {company_name}
@@ -126,7 +149,8 @@ Classify into VoLo's taxonomy. Return ONLY valid JSON, no preamble:
   "stage": one of {VOLO_TAXONOMY['stages']} or null,
   "company_types": [1-2 entries from the company_type values],
   "value_chains": [max 4 entries from the value_chain values],
-  "technologies": [max 4 entries from the technology values],
+  "sectors": [max 3 entries — must belong to one of the chosen verticals],
+  "themes": [max 3 entries from the theme values],
   "rationale": "one short sentence explaining the classification"
 }}
 
@@ -136,13 +160,16 @@ Valid company_types:
 Valid value_chain positions:
 {', '.join(VOLO_TAXONOMY['value_chains'])}
 
-Valid technology / theme tags:
-{', '.join(VOLO_TAXONOMY['technologies'])}
+Valid sectors (must belong to chosen vertical):
+{sectors_block}
+
+Valid cross-cutting themes:
+{', '.join(VOLO_TAXONOMY['themes'])}
 
 CLASSIFICATION PHILOSOPHY: Reasonably inclusive — tag any category the company
 genuinely operates in or has clear evidence supporting, but don't tag for
 tangential or speculative connections. The goal is that an investor scoping
-"Energy + Storage + Series A" finds every company that genuinely fits, not
+"Energy + Solar + Series A" finds every company that genuinely fits, not
 every company with a passing mention.
 
 Per-dimension guidance:
@@ -151,17 +178,18 @@ Per-dimension guidance:
 - "stage" — most recent confirmed funding round. Null if unclear.
 - "company_types" — usually 1. Tag two when the business model genuinely
   spans both (e.g. hardware company with a substantial SaaS revenue stream
-  = "Hardware" AND "Hardware-Enabled Software"). Don't tag both for a
-  hardware company that merely has a companion app.
-- "value_chains" — tag every position the company DIRECTLY operates in,
-  not adjacent positions. A battery cell maker is "Component / Equipment
-  Manufacturing" (and "Materials Processing / Refining" if they refine
-  their own cathode/anode) — but NOT "System Integration" unless they
-  actually pack and sell modules. Be precise: where does revenue come from?
-- "technologies" — tag themes the company directly addresses. A heat-pump
-  SaaS = "Heat Pumps / HVAC" + "Building Efficiency". Add "Electrification"
-  only if it's an explicit positioning angle, not because heat pumps run on
-  electricity. Add "Grid" only if there's actual grid-services functionality.
+  = "Hardware" AND "Hardware-Enabled Software").
+- "value_chains" — tag every position the company DIRECTLY operates in.
+  A battery cell maker = "Component / Equipment Manufacturing" (and
+  "Materials Processing / Refining" if they refine their own cathode/anode).
+  Be precise: where does revenue come from?
+- "sectors" — pick the SPECIFIC sector(s) within the chosen vertical(s).
+  A solar developer = ["Solar"]. A heat-pump SaaS = ["Heat Pumps"].
+  An EV battery maker spanning Mobility + Industry = ["Batteries",
+  "Mining / Metals"]. Sectors must belong to one of the chosen verticals.
+- "themes" — cross-cutting climate-tech themes that touch the company.
+  A solar developer that sells residential systems = ["Electrification"]
+  (since it electrifies homes). Skip a theme if no clear connection.
 
 Rules:
 - Use ONLY the exact strings from the lists above. Do not invent values.
@@ -270,9 +298,15 @@ def _validate_classification(result: dict) -> dict:
         result.get("value_chains"), VOLO_TAXONOMY["value_chains"], 4,
     )
 
-    # Technologies (multi, max 4)
-    out["technologies"] = _multi(
-        result.get("technologies"), VOLO_TAXONOMY["technologies"], 4,
+    # Sectors (multi, max 3) — must belong to one of the chosen verticals
+    valid_sector_pool = []
+    for v in out["verticals"]:
+        valid_sector_pool.extend(VOLO_TAXONOMY["sectors"].get(v, []))
+    out["sectors"] = _multi(result.get("sectors"), valid_sector_pool, 3)
+
+    # Themes (multi, max 3) — cross-cutting, no vertical dependency
+    out["themes"] = _multi(
+        result.get("themes"), VOLO_TAXONOMY["themes"], 3,
     )
 
     out["rationale"] = result.get("rationale", "")
@@ -339,8 +373,10 @@ def _write_tags_for_company(company_name: str, classification: dict) -> int:
         pairs.append(("company_type", ct))
     for vc in classification.get("value_chains", []):
         pairs.append(("value_chain", vc))
-    for tech in classification.get("technologies", []):
-        pairs.append(("technology", tech))
+    for s in classification.get("sectors", []):
+        pairs.append(("sector", s))
+    for th in classification.get("themes", []):
+        pairs.append(("theme", th))
 
     if not pairs:
         return 0

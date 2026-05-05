@@ -20,13 +20,26 @@ from .models import ScopeFilter
 
 _DEFAULT_TOKEN_BUDGET = 500_000
 
+# Sensible defaults for the Refiant API_BASE and MODEL, so admins only need
+# to set REFIANT_API_KEY in Replit Secrets. These match the values the host
+# app's IC-memo Deal Agent uses; the .env.example documents both. If
+# Refiant ever changes their endpoint/model, override here or via env var.
+_DEFAULT_REFIANT_API_BASE = "https://api.refiant.ai/v1"
+_DEFAULT_REFIANT_MODEL = "qwen-rfnt"
+
+
+def _refiant_api_base() -> str:
+    return (os.environ.get("REFIANT_API_BASE") or _DEFAULT_REFIANT_API_BASE).strip()
+
+
+def _refiant_model() -> str:
+    return (os.environ.get("REFIANT_MODEL") or _DEFAULT_REFIANT_MODEL).strip()
+
 
 def is_configured() -> bool:
-    return bool(
-        os.environ.get("REFIANT_API_KEY", "").strip()
-        and os.environ.get("REFIANT_API_BASE", "").strip()
-        and os.environ.get("REFIANT_MODEL", "").strip()
-    )
+    """Only REFIANT_API_KEY is strictly required — BASE and MODEL fall back
+    to constants if unset. Mirrors the host app's IC-memo chat behavior."""
+    return bool(os.environ.get("REFIANT_API_KEY", "").strip())
 
 
 def _client():
@@ -37,12 +50,12 @@ def _client():
             "openai SDK not installed. pip install openai"
         ) from e
     api_key = os.environ.get("REFIANT_API_KEY", "").strip()
-    api_base = os.environ.get("REFIANT_API_BASE", "").strip()
-    if not api_key or not api_base:
+    if not api_key:
         raise RuntimeError(
-            "REFIANT_API_KEY and REFIANT_API_BASE must be set in the host environment."
+            "REFIANT_API_KEY is not set in Replit Secrets. The Deal Agent "
+            "(IC-memo chat) uses the same secret — if that works, this should too."
         )
-    return OpenAI(api_key=api_key, base_url=api_base)
+    return OpenAI(api_key=api_key, base_url=_refiant_api_base())
 
 
 def _format_doc_block(row) -> str:

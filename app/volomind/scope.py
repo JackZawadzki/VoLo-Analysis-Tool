@@ -22,9 +22,13 @@ _DIM_MAP: dict[str, str] = {
     "stages": "stage",
     "company_types": "company_type",
     "value_chains": "value_chain",
-    "technologies": "technology",
-    # Secondary / advanced filters (not in main scope UI)
     "sectors": "sector",
+    "themes": "theme",
+    # Legacy alias — old threads may filter on 'technologies'; map to theme
+    # so they don't 0-out on us. v2 tag rows are deleted in init() anyway,
+    # so this is mostly cosmetic for stale scope_json.
+    "technologies": "theme",
+    # Secondary / advanced filters (not in main scope UI)
     "co_types": "co_type",
     "companies": "company",
     "meeting_types": "meeting_type",

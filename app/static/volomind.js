@@ -94,10 +94,11 @@
             stages: [],
             company_types: [],
             value_chains: [],
-            technologies: [],
+            sectors: [],            // cascades from vertical
+            themes: [],             // cross-cutting climate-tech themes
+            technologies: [],       // legacy alias of themes (v2 compat)
             // Secondary / legacy fields kept on the object so API calls
             // serialize cleanly. Not surfaced in the main scope card UI.
-            sectors: [],
             co_types: [],
             companies: [],
             meeting_types: [],
@@ -182,13 +183,13 @@
                     'Carbon Accounting / Reporting',
                     'Circularity / Recycling / End-of-Life', 'Workforce / Services',
                 ],
-                technologies: [
-                    'Electrification', 'Grid', 'Storage', 'Renewables', 'Nuclear',
-                    'Hydrogen', 'Carbon Management', 'Critical Minerals',
-                    'Industrial Decarbonization', 'Building Efficiency',
-                    'Heat Pumps / HVAC', 'EVs / Charging', 'Fleet / Logistics',
-                    'Circular Economy', 'Climate Adaptation',
-                ],
+                sectors: {
+                    Energy: ['Solar', 'Wind', 'Geothermal', 'Hydropower', 'Storage / Batteries', 'Hydrogen', 'Nuclear / SMR', 'Grid / Transmission', 'Biofuels / Bioenergy', 'Carbon Capture', 'Fusion'],
+                    Buildings: ['HVAC', 'Heat Pumps', 'Insulation / Envelope', 'Lighting / Controls', 'Smart Building', 'Embodied Carbon', 'Building-Integrated Renewables'],
+                    Industry: ['Steel', 'Cement / Concrete', 'Chemicals', 'Plastics', 'Mining / Metals', 'Process Heat', 'Industrial Hydrogen', 'Direct Air Capture', 'Industrial AI'],
+                    Mobility: ['EVs / Powertrains', 'Charging Infrastructure', 'Batteries', 'Aviation', 'Maritime / Shipping', 'Rail', 'Logistics / Freight', 'Autonomy', 'Micromobility', 'Hydrogen Fuel Cells'],
+                },
+                themes: ['Electrification', 'Carbon Management', 'Critical Minerals', 'Circular Economy', 'Climate Adaptation', 'Industrial Decarbonization'],
             };
         }
     }
@@ -215,10 +216,22 @@
         const t = state.tier2 || {};
         if (t.status === 'running') {
             el.hidden = false;
-            el.textContent = `Classifying ${t.done}/${t.total} companies… ${t.current ? '(' + t.current + ')' : ''}`;
+            // Determinate progress bar — we know done/total. Cap at 99%
+            // until the run actually flips to 'complete' so the bar
+            // doesn't sit at 100% while the last company is in flight.
+            const total = Math.max(1, t.total || 1);
+            const pct = Math.min(99, Math.round(((t.done || 0) / total) * 100));
+            const text = `Classifying ${t.done}/${t.total} companies… ${t.current ? '(' + t.current + ')' : ''}`;
+            el.innerHTML = `
+                <div>${escapeHtml(text)}</div>
+                <div class="vm-progress-bar"><div class="vm-progress-bar-fill" style="width: ${pct}%"></div></div>
+            `;
         } else if (t.status === 'complete' && t.stats) {
             el.hidden = false;
-            el.textContent = `Classified ${t.stats.classified} new, skipped ${t.stats.skipped_already_classified} already-tagged.`;
+            el.innerHTML = `
+                <div>Classified ${t.stats.classified} new, skipped ${t.stats.skipped_already_classified} already-tagged.</div>
+                <div class="vm-progress-bar"><div class="vm-progress-bar-fill" style="width: 100%"></div></div>
+            `;
             setTimeout(() => { el.hidden = true; }, 8000);
         } else if (t.status === 'error') {
             el.hidden = false;
@@ -362,8 +375,16 @@
         const lastSyncedLabel = isRunning
             ? 'syncing now'
             : (s.last_synced_at ? 'synced ' + relTime(s.last_synced_at) : 'never synced');
-        const progressLine = isRunning
-            ? `<div class="vm-source-progress">syncing… ${status.fetched || 0} fetched, ${status.inserted || 0} new</div>`
+        // Sync uses an indeterminate bar — total file count isn't known
+        // until after the folder walk completes (which happens mid-sync),
+        // and once files start coming in we don't have a reliable total
+        // estimate either. Animated stripe signals active work without
+        // faking a completion percentage.
+        const progressBlock = isRunning
+            ? `
+                <div class="vm-source-progress">syncing… ${status.fetched || 0} fetched, ${status.inserted || 0} new</div>
+                <div class="vm-progress-bar vm-progress-indeterminate"><div class="vm-progress-bar-fill"></div></div>
+            `
             : '';
         const buttonLabel = isRunning ? '…' : 'sync';
         const buttonAttr = isRunning ? 'disabled' : '';
@@ -374,7 +395,7 @@
                     <div class="vm-source-meta">
                         ${escapeHtml(s.source_id)} · ${liveDocCount} docs · ${lastSyncedLabel}
                     </div>
-                    ${progressLine}
+                    ${progressBlock}
                 </div>
                 ${state.isAdmin ? `
                     <div class="vm-source-actions">
@@ -409,30 +430,38 @@
         await refreshBundle();
     }
 
-    // The five primary investor-scoping rows. All always rendered from the
-    // hardcoded taxonomy (single source of truth lives server-side in
-    // tier2_tagger.VOLO_TAXONOMY; the frontend caches a copy for offline
-    // robustness and to avoid an extra round-trip per render).
-    //
+    // The six primary investor-scoping rows.
+    // Sector cascades from vertical: hidden until a vertical is selected,
+    // then shows only the selected vertical(s)' sectors.
+    // Theme is cross-cutting (always shown).
     // Company / meeting type / doc type / co_type are NOT in this list —
     // they're "advanced filters" that the main scope UI does not surface.
-    // They remain on the ScopeFilter API contract for future use.
     const FIXED_DIMS = [
-        { scope: 'verticals',     label: 'Vertical',         taxonomyKey: 'verticals' },
-        { scope: 'stages',        label: 'Stage',            taxonomyKey: 'stages' },
-        { scope: 'company_types', label: 'Company type',     taxonomyKey: 'company_types' },
-        { scope: 'value_chains',  label: 'Value chain',      taxonomyKey: 'value_chains' },
-        { scope: 'technologies',  label: 'Technology / theme', taxonomyKey: 'technologies' },
+        { scope: 'verticals',     label: 'Vertical',     taxonomyKey: 'verticals' },
+        { scope: 'sectors',       label: 'Sector',       taxonomyKey: 'sectors', cascadesFrom: 'verticals' },
+        { scope: 'stages',        label: 'Stage',        taxonomyKey: 'stages' },
+        { scope: 'company_types', label: 'Company type', taxonomyKey: 'company_types' },
+        { scope: 'value_chains',  label: 'Value chain',  taxonomyKey: 'value_chains' },
+        { scope: 'themes',        label: 'Theme',        taxonomyKey: 'themes' },
     ];
 
     function renderScopeRows() {
         const container = document.getElementById('vm-scope-rows');
         if (!container) return;
         const taxonomy = state.taxonomy || {};
+        const selectedVerticals = state.scope.verticals || [];
         const rows = [];
 
         for (const f of FIXED_DIMS) {
-            const values = taxonomy[f.taxonomyKey] || [];
+            let values;
+            if (f.scope === 'sectors') {
+                // Cascading row — hidden until a vertical is selected.
+                if (!selectedVerticals.length) continue;
+                const sectorMap = taxonomy.sectors || {};
+                values = selectedVerticals.flatMap(v => sectorMap[v] || []);
+            } else {
+                values = taxonomy[f.taxonomyKey] || [];
+            }
             if (!values.length) continue;
             const selected = new Set(state.scope[f.scope] || []);
             const chips = values.map(v => `
@@ -459,10 +488,21 @@
                 const idx = list.indexOf(value);
                 if (idx >= 0) list.splice(idx, 1);
                 else list.push(value);
-                // Within-row toggle is OR; across rows is AND. The chip's
-                // visual state updates next render. Refresh the bundle
-                // preview so the doc/token counts reflect the new scope.
-                btn.classList.toggle('vm-chip-active');
+                // Cascade: when verticals change, prune sectors that no
+                // longer belong to any selected vertical (avoids invisible
+                // filters silently affecting bundle counts).
+                if (scopeKey === 'verticals') {
+                    const sectorMap = (state.taxonomy || {}).sectors || {};
+                    const validSectors = new Set(
+                        (state.scope.verticals || []).flatMap(v => sectorMap[v] || [])
+                    );
+                    state.scope.sectors = (state.scope.sectors || [])
+                        .filter(s => validSectors.has(s));
+                    // Re-render so the sector row appears/disappears/refreshes
+                    renderScopeRows();
+                } else {
+                    btn.classList.toggle('vm-chip-active');
+                }
                 refreshBundle();
             });
         });
@@ -521,8 +561,16 @@
     }
 
     async function newThread() {
-        const title = prompt('Conversation title:', `Chat ${new Date().toLocaleDateString()}`);
-        if (!title) return;
+        // Auto-generate a title from the selected scope chips. Falls back
+        // to a date stamp if no chips are selected.
+        const parts = [];
+        for (const f of FIXED_DIMS) {
+            const sel = state.scope[f.scope] || [];
+            if (sel.length) parts.push(sel.join('/'));
+        }
+        const title = parts.length
+            ? parts.join(' · ')
+            : `Chat ${new Date().toLocaleDateString()}`;
         try {
             const t = await vmPost('/api/volomind/chat/threads', {
                 title,
@@ -602,7 +650,7 @@
             if (el) el.addEventListener('click', fn);
         };
         onClick('vm-clear-scope-btn', clearScope);
-        onClick('vm-new-thread-btn', newThread);
+        onClick('vm-scope-chat-btn', newThread);
         onClick('vm-chat-send-btn', sendMessage);
         onClick('vm-tier2-run-btn', () => triggerTier2(false));
 

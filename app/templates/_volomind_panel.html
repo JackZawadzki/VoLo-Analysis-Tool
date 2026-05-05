@@ -40,10 +40,9 @@
             <section class="vm-side-section">
                 <header class="vm-side-header">
                     <h3>Conversations</h3>
-                    <button class="vm-link-btn" id="vm-new-thread-btn">+ new</button>
                 </header>
                 <ul class="vm-thread-list" id="vm-thread-list">
-                    <li class="vm-muted">No conversations yet.</li>
+                    <li class="vm-muted">No conversations yet.<br>Pick a scope and click <em>Chat about this scope</em> to begin.</li>
                 </ul>
             </section>
         </aside>
@@ -58,9 +57,14 @@
                 <div class="vm-scope-rows" id="vm-scope-rows">
                     <p class="vm-muted">No tags yet — sync a source to populate filters.</p>
                 </div>
-                <div class="vm-bundle-info" id="vm-bundle-info" hidden>
-                    <span id="vm-bundle-docs">0 docs</span>
-                    <span id="vm-bundle-tokens">0 tokens</span>
+                <div class="vm-scope-footer">
+                    <div class="vm-bundle-info" id="vm-bundle-info" hidden>
+                        <span id="vm-bundle-docs">0 docs</span>
+                        <span id="vm-bundle-tokens">0 tokens</span>
+                    </div>
+                    <button class="vm-btn vm-btn-primary" id="vm-scope-chat-btn">
+                        Chat about this scope →
+                    </button>
                 </div>
             </div>
 

@@ -140,6 +140,30 @@
     50% { opacity: 1; }
 }
 
+/* Progress bar — track + fill, used by both sync (indeterminate) and
+   Tier 2 (determinate %). Visual is a thin forest-green bar over a
+   light track, matching the rest of the brand palette. */
+.vm-progress-bar {
+    width: 100%; height: 4px; background: #e0e8e3;
+    border-radius: 2px; overflow: hidden; margin-top: 5px;
+    position: relative;
+}
+.vm-progress-bar-fill {
+    height: 100%; background: #2d5f3f; border-radius: 2px;
+    transition: width 0.4s ease-out;
+}
+/* Indeterminate variant — used while sync's total is unknown (the folder
+   walk happens before any file count exists). Animated stripe moves
+   left-to-right repeatedly, signaling active work without faking an ETA. */
+.vm-progress-bar.vm-progress-indeterminate .vm-progress-bar-fill {
+    width: 35% !important;
+    animation: vm-progress-slide 1.4s ease-in-out infinite;
+}
+@keyframes vm-progress-slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(370%); }
+}
+
 .vm-side-footnote {
     font-size: 0.7rem; color: #999; margin: 0.5rem 0 0;
     line-height: 1.4; padding: 0 0.25rem;
@@ -149,6 +173,10 @@
     font-size: 0.72rem; color: #2d5f3f; margin-top: 0.5rem;
     line-height: 1.4; padding: 0.4rem 0.5rem;
     background: #eef7f1; border-radius: 4px;
+}
+.vm-tier2-status .vm-progress-bar {
+    background: #d8e7df;  /* slightly darker track over green-tinted bg */
+    margin-top: 6px;
 }
 
 /* Admin controls */
@@ -205,8 +233,18 @@
 }
 
 .vm-bundle-info {
-    margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #e0e8e3;
     display: flex; gap: 1.5rem; font-size: 0.78rem; color: #666;
+}
+
+/* Footer of the scope card: bundle preview on the left, "Chat about this
+   scope" CTA on the right. Replaces the old per-source "+ new" button. */
+.vm-scope-footer {
+    margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid #e0e8e3;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem;
+}
+.vm-scope-footer .vm-btn-primary {
+    padding: 0.55rem 1.1rem; font-size: 0.9rem; white-space: nowrap;
 }
 
 /* Chat card */

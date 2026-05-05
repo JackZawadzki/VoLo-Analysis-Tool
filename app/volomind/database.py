@@ -347,13 +347,16 @@ def _run_init_steps() -> None:
     # row each. Picks the row with the most attached docs so we never
     # lose ingested data.
     _dedup_all_sources()
-    # Step 4.5: clean up Tier 2 v1 tags. The taxonomy was redesigned in v2
-    # (added company_type/technology, removed sector, replaced value_chain
-    # values, slimmed stages). Old v1 values like sector='Solar' would
-    # never match the new UI's chip values. Idempotent — running on a DB
-    # without v1 tags is a no-op.
+    # Step 4.5: clean up old Tier 2 tags. The taxonomy has evolved —
+    # v1 had sector cascade, v2 dropped sector for flat technology row,
+    # v3 reintroduced cascading sectors with deeper specifications and
+    # split technology into a smaller cross-cutting "theme" set. Tags
+    # from older versions reference values that no longer exist in the
+    # current UI's chip vocabulary, so they get removed. Idempotent.
     with cursor() as c:
-        c.execute("DELETE FROM cc_tags WHERE tagger_version = 'tier2-v1'")
+        c.execute(
+            "DELETE FROM cc_tags WHERE tagger_version IN ('tier2-v1', 'tier2-v2')"
+        )
     # Step 5: reconcile config -> rows. Race-tolerant via try/except —
     # if a concurrent rolling-deploy container did the INSERT first,
     # we silently fall through to UPDATE (harmless duplicate INSERTs
