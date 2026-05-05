@@ -54,14 +54,11 @@ async def health():
     try:
         with database.cursor() as c:
             c.execute("SELECT 1")
-        db_path_str = str(database.DB_PATH)
         return JSONResponse(content={
             "ok": True,
             "chat_configured": chat_engine.is_configured(),
-            "db_path": db_path_str,
-            "persistent": db_path_str.startswith("/home/runner/")
-                          or db_path_str.startswith("/data/")
-                          or "/.volo/" in db_path_str,
+            "backend": database.backend_label(),
+            "persistent": database.is_persistent(),
         })
     except Exception as e:
         return JSONResponse(

@@ -1,19 +1,31 @@
-"""VoLo Mind — separate SQLite database.
+"""VoLo Mind database — uses the host app's database backend.
 
-Isolated from the host app's rvm.db on purpose:
-- A schema-migration bug in this file can never touch production tables.
-- Catastrophic data loss recovery is a single `rm` of the db file.
-- WAL/lock contention is isolated.
+Critical persistence note:
+    Replit Autoscale / Cloud Run deployments DO NOT persist local
+    filesystem across redeploys. /home/runner/.volo/volomind.db gets
+    wiped on every container restart, the same way data/volomind.db
+    does. The host app sidesteps this by using a managed Postgres
+    database via DATABASE_URL when set; SQLite is the local-dev fallback.
+    VoLo Mind now mirrors that pattern instead of trying to maintain
+    its own SQLite file.
 
-Path resolution mirrors the host app's VOLO_DB_PATH pattern so Replit
-Reserved-VM redeploys can persist data outside the source tree:
-- Default: <repo>/data/volomind.db
-- Override: VOLOMIND_DB_PATH=/home/runner/.volo/volomind.db (any absolute path)
+Behavior:
+    - Production (DATABASE_URL set, e.g. Cloud Run with managed Postgres):
+        cc_* tables live in the SAME Postgres database as the host app's
+        rvm tables. Persistence is handled by the managed Postgres service.
+    - Local dev / SQLite (no DATABASE_URL):
+        cc_* tables live in the SAME SQLite file as the host app
+        (default data/rvm.db, override via VOLO_DB_PATH).
 
-Tables are prefixed `cc_` for legacy compatibility with the standalone
-volo-context-chat repo this code is ported from. The schema is built fresh
-here — no shared FKs to host-app tables. user_id columns are soft integer
-references (no FK) since they point at users in a different database.
+cc_* prefix: all VoLo Mind tables are prefixed `cc_` so they coexist
+cleanly with the host app's tables in the same backend. No FK references
+across the prefix boundary — soft `user_id` integer references only.
+
+Concurrency:
+    - Postgres: handled by transaction isolation. Multiple workers calling
+      init() with CREATE TABLE IF NOT EXISTS serialize cleanly.
+    - SQLite: file-lock around init() so --workers 2 doesn't race on a
+      fresh DB. Same pattern as before, just with the host's path.
 """
 
 from __future__ import annotations
@@ -21,41 +33,22 @@ from __future__ import annotations
 import os
 import sqlite3
 from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_DB = _REPO_ROOT / "data" / "volomind.db"
-
-
-def _resolve_db_path() -> Path:
-    """Pure path resolution — no filesystem side effects.
-
-    Previously this also did p.parent.mkdir() at module import time. That
-    runs BEFORE main.py's try/except wrapper can catch a PermissionError /
-    OSError, so any write-permission issue on the deploy target (Cloud Run,
-    Replit Reserved VM, etc.) would crash the whole app at import. The
-    mkdir now lives inside init() instead, where main.py's try/except can
-    log the failure and degrade gracefully without taking the host app down.
-    """
-    env = os.environ.get("VOLOMIND_DB_PATH", "").strip()
-    if env:
-        return Path(env)
-    return _DEFAULT_DB
-
-
-DB_PATH: Path = _resolve_db_path()
+# Single source of truth for connection + backend selection. We piggyback on
+# the host app's exact persistence mechanism so cc_* tables get the same
+# durability guarantees as the IC-memo data.
+from .. import database as host_database
 
 
 _SCHEMA = """
 -- Sources: registered data sources (granola, gdrive_admin, ...)
 CREATE TABLE IF NOT EXISTS cc_sources (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_id       TEXT NOT NULL,            -- 'granola' | 'gdrive_admin'
-    label           TEXT NOT NULL,            -- human label, e.g. 'Volo earth team Granola'
+    source_id       TEXT NOT NULL,
+    label           TEXT NOT NULL,
     config_json     TEXT NOT NULL DEFAULT '{}',
-    cursor          TEXT,                     -- incremental sync cursor (source-defined)
+    cursor          TEXT,
     last_synced_at  TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -64,8 +57,8 @@ CREATE TABLE IF NOT EXISTS cc_sources (
 CREATE TABLE IF NOT EXISTS cc_companies (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     name            TEXT NOT NULL,
-    co_type         TEXT,                     -- 'portfolio' | 'potential' | NULL
-    drive_folder_id TEXT,                     -- top-level Drive folder id when source=gdrive
+    co_type         TEXT,
+    drive_folder_id TEXT,
     source_pk       INTEGER REFERENCES cc_sources(id) ON DELETE SET NULL,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(name)
@@ -134,14 +127,14 @@ CREATE TABLE IF NOT EXISTS cc_tag_overrides (
     dimension           TEXT NOT NULL,
     add_values_json     TEXT NOT NULL DEFAULT '[]',
     remove_values_json  TEXT NOT NULL DEFAULT '[]',
-    set_by              INTEGER NOT NULL,    -- soft user_id ref into rvm.db
+    set_by              INTEGER NOT NULL,
     set_at              TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Chat threads: keep owner_id (soft user_id ref) for per-user thread history.
 CREATE TABLE IF NOT EXISTS cc_chat_threads (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner_id        INTEGER NOT NULL,        -- soft user_id ref into rvm.db
+    owner_id        INTEGER NOT NULL,
     title           TEXT NOT NULL,
     scope_json      TEXT NOT NULL,
     bundle_hash     TEXT,
@@ -154,7 +147,7 @@ CREATE INDEX IF NOT EXISTS ix_cc_threads_owner ON cc_chat_threads(owner_id);
 CREATE TABLE IF NOT EXISTS cc_chat_messages (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     thread_id       INTEGER NOT NULL REFERENCES cc_chat_threads(id) ON DELETE CASCADE,
-    role            TEXT NOT NULL,           -- 'user' | 'assistant' | 'system'
+    role            TEXT NOT NULL,
     content         TEXT NOT NULL,
     tokens_in       INTEGER,
     tokens_out      INTEGER,
@@ -162,14 +155,11 @@ CREATE TABLE IF NOT EXISTS cc_chat_messages (
 );
 CREATE INDEX IF NOT EXISTS ix_cc_messages_thread ON cc_chat_messages(thread_id);
 
--- Sync runs: track background ingestion jobs. Long syncs (e.g. 36K-file
--- Drive walk) run in a daemon thread that updates this row every ~50 docs
--- so the frontend can poll for progress without keeping an HTTP request
--- open. status: 'running' | 'complete' | 'error' | 'interrupted'.
+-- Sync runs: track background ingestion jobs.
 CREATE TABLE IF NOT EXISTS cc_sync_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     source_pk       INTEGER NOT NULL REFERENCES cc_sources(id) ON DELETE CASCADE,
-    started_by      INTEGER NOT NULL,        -- soft user_id ref into rvm.db
+    started_by      INTEGER NOT NULL,
     status          TEXT NOT NULL DEFAULT 'running',
     fetched         INTEGER NOT NULL DEFAULT 0,
     inserted        INTEGER NOT NULL DEFAULT 0,
@@ -184,55 +174,136 @@ CREATE INDEX IF NOT EXISTS ix_cc_sync_runs_source ON cc_sync_runs(source_pk);
 """
 
 
-def connect() -> sqlite3.Connection:
-    # timeout=30 sets SQLite's busy_timeout. Without it, default is ~5s and
-    # any concurrent writer (e.g. another worker, or a background sync thread
-    # writing while the request thread reads metadata) can fail with
-    # "database is locked". 30s gives schema/reconcile under contention plenty
-    # of headroom; idempotent CREATE/UPSERT means the wait never deadlocks.
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+# --- Backend / persistence reporting -------------------------------------
+
+def backend_label() -> str:
+    """Human-readable description of the backend in use, for /health."""
+    if host_database.USE_POSTGRES:
+        return "Postgres (DATABASE_URL — persistent)"
+    return f"SQLite ({host_database.DB_PATH})"
+
+
+def is_persistent() -> bool:
+    """True if the configured backend persists across redeploys.
+
+    Postgres → always persistent.
+    SQLite → only if the path is outside the source tree (host's VOLO_DB_PATH
+    pattern). On Cloud Run, even /home/runner/ is ephemeral, so this is a
+    best-effort heuristic — managed Postgres is the only safe option there.
+    """
+    if host_database.USE_POSTGRES:
+        return True
+    path = str(host_database.DB_PATH)
+    if "/data/" in path and "/.volo/" not in path:
+        return False  # likely in-source-tree
+    if path.startswith("/home/runner/.volo/") or path.startswith("/data/"):
+        return True
+    return False
+
+
+# DB_PATH retained for /health endpoint backward-compat. In Postgres mode
+# it reflects the managed-DB-style host path (string only — never opened).
+DB_PATH = host_database.DB_PATH
+
+
+# --- Connection wrapper that works for both backends ---------------------
+
+class _UniversalCursor:
+    """Wraps either a sqlite3.Connection or the host app's _PgConnection,
+    exposing the cursor-style API our codebase expects.
+
+    Why: my existing code is written `with cursor() as c: c.execute(...);
+    c.fetchone()`. SQLite cursors expose all those methods on one object,
+    but the host's _PgConnection.execute() returns a separate _PgCursor.
+    This wrapper lets both work identically: c.execute() always delegates
+    to the connection (returning a fresh cursor each time), and fetch
+    methods read from the most recently produced cursor.
+    """
+
+    __slots__ = ("_conn", "_last_cursor")
+
+    def __init__(self, conn: Any):
+        self._conn = conn
+        self._last_cursor: Any = None
+
+    def execute(self, sql: str, params: tuple = ()):
+        cur = self._conn.execute(sql, params)
+        self._last_cursor = cur
+        return cur
+
+    def executescript(self, script: str) -> None:
+        self._conn.executescript(script)
+
+    def fetchone(self):
+        if self._last_cursor is None:
+            return None
+        return self._last_cursor.fetchone()
+
+    def fetchall(self):
+        if self._last_cursor is None:
+            return []
+        return self._last_cursor.fetchall()
+
+    @property
+    def rowcount(self) -> int:
+        return getattr(self._last_cursor, "rowcount", 0) or 0
+
+    @property
+    def lastrowid(self):
+        return getattr(self._last_cursor, "lastrowid", None)
+
+    def __iter__(self):
+        if self._last_cursor is None:
+            return iter([])
+        return iter(self._last_cursor)
+
+
+def connect():
+    """Return a backend-appropriate connection. Wraps the host's get_db()."""
+    return host_database.get_db()
 
 
 @contextmanager
-def cursor() -> Iterator[sqlite3.Cursor]:
+def cursor() -> Iterator[_UniversalCursor]:
+    """Context manager yielding a _UniversalCursor. Commits on success,
+    rolls back on exception, always closes."""
     conn = connect()
+    wrapper = _UniversalCursor(conn)
     try:
-        yield conn.cursor()
-        conn.commit()
+        yield wrapper
+        try:
+            conn.commit()
+        except Exception:
+            pass
     except Exception:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
+
+# --- Init / reconcile / cleanup ------------------------------------------
 
 def init() -> None:
-    """Run all CREATE TABLE IF NOT EXISTS statements + reconcile sources from
-    the config file + clean up stale sync runs. Idempotent.
+    """Create cc_* tables + reconcile sources + cleanup. Idempotent.
 
-    Multi-worker safety: serialized across uvicorn workers on the same host
-    via POSIX flock. Without this, --workers 2+ both call init() in parallel
-    on a fresh container and one can crash on SQLite write-lock contention
-    before Cloud Run's health check responds → Promote step fails. With the
-    lock + busy_timeout in connect(), the second worker either waits for
-    the lock or sees idempotent no-ops and proceeds normally.
-
-    Filesystem side effects (mkdir, lock-file create) live here, not at
-    module import time, so main.py's try/except can catch failures without
-    crashing the host app at startup.
+    Postgres: schema creation serializes naturally via transaction isolation.
+    SQLite: protected by a /tmp file lock so --workers 2 can't race on a
+    fresh DB.
     """
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if host_database.USE_POSTGRES:
+        _run_init_steps()
+        return
     _serialized_init()
 
 
 def _serialized_init() -> None:
-    """Run schema + reconcile + cleanup, holding a host-wide flock so two
-    workers on the same machine don't race. Falls back to direct execution
-    on platforms without fcntl (e.g. Windows local dev).
-    """
     try:
         import fcntl
     except ImportError:
@@ -261,27 +332,10 @@ def _run_init_steps() -> None:
     _cleanup_stale_sync_runs()
 
 
-def _cleanup_stale_sync_runs() -> None:
-    """Mark any cc_sync_runs left in 'running' state as 'interrupted'.
-
-    Daemon threads die when the container restarts, leaving orphan rows.
-    On boot we reconcile so the UI can show "interrupted — click sync to
-    resume" instead of stale "running" forever.
-    """
-    with cursor() as c:
-        c.execute(
-            "UPDATE cc_sync_runs "
-            "SET status = 'interrupted', last_error = 'container restart', "
-            "    completed_at = datetime('now') "
-            "WHERE status = 'running'"
-        )
-
-
 def reconcile_sources_from_config() -> None:
     """Ensure every status='active' entry in sources_config.py has a matching
-    cc_sources row. Looks up by (source_id, label). Updates config_json if it
-    changed. Never deletes — removing entries from the config file just hides
-    them from the UI; the DB row and its data persist.
+    cc_sources row. Idempotent. Removing entries from the config file does
+    NOT delete the DB row; the source just stops appearing in the UI.
     """
     import json
     from . import sources_config
@@ -292,10 +346,11 @@ def reconcile_sources_from_config() -> None:
             label = definition["label"]
             config_json = json.dumps(definition.get("config") or {})
 
-            row = c.execute(
+            c.execute(
                 "SELECT id, config_json FROM cc_sources WHERE source_id = ? AND label = ?",
                 (source_id, label),
-            ).fetchone()
+            )
+            row = c.fetchone()
 
             if row is None:
                 c.execute(
@@ -307,3 +362,19 @@ def reconcile_sources_from_config() -> None:
                     "UPDATE cc_sources SET config_json = ? WHERE id = ?",
                     (config_json, row["id"]),
                 )
+
+
+def _cleanup_stale_sync_runs() -> None:
+    """Mark any cc_sync_runs left in 'running' state as 'interrupted'.
+
+    Daemon threads die when the container restarts, leaving orphan rows.
+    On boot we reconcile so the UI can show 'interrupted' instead of stale
+    'running' forever.
+    """
+    with cursor() as c:
+        c.execute(
+            "UPDATE cc_sync_runs "
+            "SET status = 'interrupted', last_error = 'container restart', "
+            "    completed_at = datetime('now') "
+            "WHERE status = 'running'"
+        )
