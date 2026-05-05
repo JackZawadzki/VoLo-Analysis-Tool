@@ -254,6 +254,15 @@
     function renderActiveSource(s) {
         const status = state.syncStatus[s.id];
         const isRunning = status && status.status === 'running';
+        // During a live sync, prefer the in-flight insert count (truth) over
+        // the page-load cached document_count (stale). Once the sync ends and
+        // refreshSources runs, document_count catches up.
+        const liveDocCount = isRunning && (status.inserted || 0) > s.document_count
+            ? status.inserted
+            : s.document_count;
+        const lastSyncedLabel = isRunning
+            ? 'syncing now'
+            : (s.last_synced_at ? 'synced ' + relTime(s.last_synced_at) : 'never synced');
         const progressLine = isRunning
             ? `<div class="vm-source-progress">syncing… ${status.fetched || 0} fetched, ${status.inserted || 0} new</div>`
             : '';
@@ -264,7 +273,7 @@
                 <div class="vm-source-info">
                     <div class="vm-source-label">${escapeHtml(s.label)}</div>
                     <div class="vm-source-meta">
-                        ${escapeHtml(s.source_id)} · ${s.document_count} docs${s.last_synced_at ? ' · synced ' + relTime(s.last_synced_at) : ' · never synced'}
+                        ${escapeHtml(s.source_id)} · ${liveDocCount} docs · ${lastSyncedLabel}
                     </div>
                     ${progressLine}
                 </div>
