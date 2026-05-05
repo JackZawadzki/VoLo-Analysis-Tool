@@ -43,13 +43,25 @@ router = APIRouter(prefix="/api/volomind", tags=["volomind"])
 @router.get("/health")
 async def health():
     """Cheap liveness check used by the frontend tab to decide whether to
-    render normally or show a 'temporarily unavailable' fallback."""
+    render normally or show a 'temporarily unavailable' fallback.
+
+    Exposes the resolved DB path + a `persistent` boolean so the admin
+    can verify the running container is writing to a path that survives
+    redeploys (anything under /home/runner/ on Replit Reserved-VM is safe;
+    anything inside the source tree gets wiped). Lets us avoid surprises
+    like the one that wiped 250 synced docs last redeploy.
+    """
     try:
         with database.cursor() as c:
             c.execute("SELECT 1")
+        db_path_str = str(database.DB_PATH)
         return JSONResponse(content={
             "ok": True,
             "chat_configured": chat_engine.is_configured(),
+            "db_path": db_path_str,
+            "persistent": db_path_str.startswith("/home/runner/")
+                          or db_path_str.startswith("/data/")
+                          or "/.volo/" in db_path_str,
         })
     except Exception as e:
         return JSONResponse(
