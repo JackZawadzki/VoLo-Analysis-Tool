@@ -30,13 +30,19 @@ _DEFAULT_DB = _REPO_ROOT / "data" / "volomind.db"
 
 
 def _resolve_db_path() -> Path:
+    """Pure path resolution — no filesystem side effects.
+
+    Previously this also did p.parent.mkdir() at module import time. That
+    runs BEFORE main.py's try/except wrapper can catch a PermissionError /
+    OSError, so any write-permission issue on the deploy target (Cloud Run,
+    Replit Reserved VM, etc.) would crash the whole app at import. The
+    mkdir now lives inside init() instead, where main.py's try/except can
+    log the failure and degrade gracefully without taking the host app down.
+    """
     env = os.environ.get("VOLOMIND_DB_PATH", "").strip()
     if env:
-        p = Path(env)
-    else:
-        p = _DEFAULT_DB
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+        return Path(env)
+    return _DEFAULT_DB
 
 
 DB_PATH: Path = _resolve_db_path()
@@ -179,7 +185,12 @@ CREATE INDEX IF NOT EXISTS ix_cc_sync_runs_source ON cc_sync_runs(source_pk);
 
 
 def connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    # timeout=30 sets SQLite's busy_timeout. Without it, default is ~5s and
+    # any concurrent writer (e.g. another worker, or a background sync thread
+    # writing while the request thread reads metadata) can fail with
+    # "database is locked". 30s gives schema/reconcile under contention plenty
+    # of headroom; idempotent CREATE/UPSERT means the wait never deadlocks.
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -201,7 +212,49 @@ def cursor() -> Iterator[sqlite3.Cursor]:
 def init() -> None:
     """Run all CREATE TABLE IF NOT EXISTS statements + reconcile sources from
     the config file + clean up stale sync runs. Idempotent.
+
+    Multi-worker safety: serialized across uvicorn workers on the same host
+    via POSIX flock. Without this, --workers 2+ both call init() in parallel
+    on a fresh container and one can crash on SQLite write-lock contention
+    before Cloud Run's health check responds → Promote step fails. With the
+    lock + busy_timeout in connect(), the second worker either waits for
+    the lock or sees idempotent no-ops and proceeds normally.
+
+    Filesystem side effects (mkdir, lock-file create) live here, not at
+    module import time, so main.py's try/except can catch failures without
+    crashing the host app at startup.
     """
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _serialized_init()
+
+
+def _serialized_init() -> None:
+    """Run schema + reconcile + cleanup, holding a host-wide flock so two
+    workers on the same machine don't race. Falls back to direct execution
+    on platforms without fcntl (e.g. Windows local dev).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        fcntl = None  # type: ignore[assignment]
+
+    if fcntl is None:
+        _run_init_steps()
+        return
+
+    lock_path = "/tmp/volomind_init.lock"
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            _run_init_steps()
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+def _run_init_steps() -> None:
     with cursor() as c:
         c.executescript(_SCHEMA)
     reconcile_sources_from_config()
