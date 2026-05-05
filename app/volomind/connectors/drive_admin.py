@@ -106,7 +106,13 @@ class DriveAdminConnector(SourceConnector):
         service = self._build_service()
         page_token: Optional[str] = None
         while True:
+            # corpora="allDrives" is REQUIRED to find Shared Drive content.
+            # Default `corpora=user` only sees My Drive items even with
+            # includeItemsFromAllDrives=True. Per Google Drive API docs:
+            # to search across My Drive AND all shared drives the user can
+            # access, both flags must be set together.
             req = service.files().list(
+                corpora="allDrives",
                 includeItemsFromAllDrives=True,
                 supportsAllDrives=True,
                 q=q,
