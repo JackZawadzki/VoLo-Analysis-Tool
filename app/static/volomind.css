@@ -1,6 +1,21 @@
 /* VoLo Mind — Beta tab styles. All selectors prefixed `vm-` to avoid
    collisions with the host app's stylesheet. */
 
+/* Respect the HTML5 [hidden] attribute on our elements that explicitly set
+   `display:` below. Without this rule, `.vm-modal { display: flex }` would
+   override the user-agent stylesheet's `[hidden] { display: none }` because
+   the class selector wins the cascade tie. Result: the modal would render
+   open on page load. Same applies to other vm- elements with display: set. */
+.vm-modal[hidden],
+.vm-main[hidden],
+.vm-bundle-info[hidden],
+.vm-unavailable[hidden],
+.vm-form-row[hidden],
+.vm-admin-only[hidden],
+.vm-admin-badge[hidden] {
+    display: none !important;
+}
+
 /* Nav-bar fit: compensating for the additional Beta tab. Slightly tighter
    nav-link sizing across ALL tabs so 9 items + brand + user badge stay on
    one line on standard laptop screens. Removing /static/volomind.css
