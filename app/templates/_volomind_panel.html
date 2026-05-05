@@ -42,7 +42,7 @@
                     <h3>Conversations</h3>
                 </header>
                 <ul class="vm-thread-list" id="vm-thread-list">
-                    <li class="vm-muted">No conversations yet.<br>Pick a scope and click <em>Chat about this scope</em> to begin.</li>
+                    <li class="vm-muted">No conversations yet.<br>Pick a scope and click <em>Start scoped chat</em> to begin.</li>
                 </ul>
             </section>
         </aside>
@@ -63,12 +63,16 @@
                         <span id="vm-bundle-tokens">0 tokens</span>
                     </div>
                     <button class="vm-btn vm-btn-primary" id="vm-scope-chat-btn">
-                        Chat about this scope →
+                        Start scoped chat →
                     </button>
                 </div>
             </div>
 
             <div class="vm-chat-card">
+                <div class="vm-chat-scope-bar" id="vm-chat-scope-bar" hidden>
+                    <span class="vm-chat-scope-label">Scope:</span>
+                    <span class="vm-chat-scope-text" id="vm-chat-scope-text"></span>
+                </div>
                 <div class="vm-chat-messages" id="vm-chat-messages">
                     <div class="vm-chat-empty">
                         Start a new conversation to ask questions over VoLo's corpus.
@@ -89,4 +93,35 @@
     </div>
 
     {# Sources are managed via app/volomind/sources_config.py — no UI modal #}
+
+    {# Name-this-chat modal. Opens when user clicks "Start scoped chat".
+       Default name is generated from the selected scope chips (or
+       "Unscoped VoLo Mind Chat" when no chips picked). User can edit
+       or accept and click Create. #}
+    <div id="vm-name-modal" class="vm-modal" hidden>
+        <div class="vm-modal-card">
+            <div class="vm-modal-head">
+                <h3>Name this chat</h3>
+                <button class="vm-modal-close" id="vm-name-modal-close" aria-label="close">×</button>
+            </div>
+            <div class="vm-modal-body">
+                <div class="vm-form-row">
+                    <label for="vm-name-input">Chat name</label>
+                    <input type="text" id="vm-name-input" maxlength="200"
+                           placeholder="Unscoped VoLo Mind Chat" />
+                    <p class="vm-form-hint">
+                        We've prefilled a name based on your scope. Edit it or accept it.
+                    </p>
+                </div>
+                <div class="vm-form-row">
+                    <label>Scope this chat will use</label>
+                    <p class="vm-form-hint" id="vm-name-scope-summary"></p>
+                </div>
+            </div>
+            <div class="vm-modal-foot">
+                <button class="vm-btn vm-btn-ghost" id="vm-name-cancel">Cancel</button>
+                <button class="vm-btn vm-btn-primary" id="vm-name-create">Create chat</button>
+            </div>
+        </div>
+    </div>
 </div>

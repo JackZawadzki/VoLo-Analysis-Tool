@@ -11,10 +11,18 @@ byte-identical bundles run-to-run.
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import Any
 
 from . import database
 from .models import BundleDocSummary, BundlePreview, ScopeFilter
+
+
+# Mirror of chat_engine._DEFAULT_TOKEN_BUDGET so the preview the user sees
+# in the scope card matches what actually gets stuffed into the system
+# prompt. Linked: bumping one without the other causes a confusing
+# "12 of 24 docs included" mismatch between preview and chat.
+_DEFAULT_PREVIEW_TOKEN_BUDGET = int(os.environ.get("VOLOMIND_TOKEN_BUDGET", "200000"))
 
 
 _DIM_MAP: dict[str, str] = {
@@ -77,7 +85,7 @@ def _build_query(scope: ScopeFilter) -> tuple[str, list[Any]]:
     return sql, params
 
 
-def preview(scope: ScopeFilter, *, token_budget: int = 500_000) -> BundlePreview:
+def preview(scope: ScopeFilter, *, token_budget: int = _DEFAULT_PREVIEW_TOKEN_BUDGET) -> BundlePreview:
     sql, params = _build_query(scope)
     docs: list[BundleDocSummary] = []
     per_source: dict[str, int] = {}

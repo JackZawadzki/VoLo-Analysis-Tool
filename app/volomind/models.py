@@ -86,6 +86,12 @@ class ChatThread(BaseModel):
     created_at: str
 
 
+class ChatThreadUpdate(BaseModel):
+    """Title-only update. Scope, messages, model_key intentionally not editable
+    via this endpoint — opening an old thread restores the locked-in scope."""
+    title: str
+
+
 class ChatMessageIn(BaseModel):
     content: str
 

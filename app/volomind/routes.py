@@ -30,6 +30,7 @@ from .models import (
     ChatMessageIn,
     ChatThread,
     ChatThreadCreate,
+    ChatThreadUpdate,
     ScopeFilter,
 )
 from ..auth import CurrentUser, get_current_user, require_admin
@@ -562,8 +563,36 @@ async def create_thread(payload: ChatThreadCreate, user: CurrentUser = Depends(g
         return _row_to_thread(c.fetchone())
 
 
+@router.patch("/chat/threads/{thread_id}", response_model=ChatThread)
+async def update_thread(
+    thread_id: int,
+    payload: ChatThreadUpdate,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Rename a thread. Owner-gated. Scope, messages, model_key untouched —
+    only the display title changes. Returns the updated thread."""
+    title = (payload.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title cannot be empty")
+    if len(title) > 200:
+        title = title[:200]
+    with database.cursor() as c:
+        c.execute(
+            "UPDATE cc_chat_threads SET title = ?, updated_at = datetime('now') "
+            "WHERE id = ? AND owner_id = ?",
+            (title, thread_id, user.id),
+        )
+        if c.rowcount == 0:
+            raise HTTPException(status_code=404, detail="thread not found")
+        c.execute("SELECT * FROM cc_chat_threads WHERE id = ?", (thread_id,))
+        return _row_to_thread(c.fetchone())
+
+
 @router.delete("/chat/threads/{thread_id}", status_code=204)
 async def delete_thread(thread_id: int, user: CurrentUser = Depends(get_current_user)):
+    """Delete a thread + cascade its messages. Owner-gated. Shared corpus
+    (cc_documents/cc_tags/cc_companies) is untouched — only this user's
+    chat history disappears."""
     with database.cursor() as c:
         c.execute(
             "DELETE FROM cc_chat_threads WHERE id = ? AND owner_id = ?",

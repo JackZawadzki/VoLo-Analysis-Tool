@@ -64,6 +64,23 @@
         return true;
     }
 
+    async function vmPatch(path, body) {
+        const r = await fetch(path, {
+            method: 'PATCH',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', ...vmAuthHeaders() },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        if (!r.ok) {
+            let detail = await r.text();
+            try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
+            const err = new Error(`${r.status}: ${detail}`);
+            err.status = r.status;
+            throw err;
+        }
+        return r.json();
+    }
+
     // ------------------------- State ------------------------------------
 
     const state = {
@@ -216,26 +233,47 @@
         const t = state.tier2 || {};
         if (t.status === 'running') {
             el.hidden = false;
-            // Determinate progress bar — we know done/total. Cap at 99%
-            // until the run actually flips to 'complete' so the bar
-            // doesn't sit at 100% while the last company is in flight.
+            el.classList.remove('vm-tier2-complete', 'vm-tier2-error');
+            // Determinate bar — we know done/total. Cap at 99% until the
+            // run actually flips to 'complete' so the bar doesn't sit at
+            // 100% while the last company is in flight.
+            //
+            // Stage label: pre-fetch ("starting…") shows before the
+            // company list is loaded, then transitions to per-company.
             const total = Math.max(1, t.total || 1);
-            const pct = Math.min(99, Math.round(((t.done || 0) / total) * 100));
-            const text = `Classifying ${t.done}/${t.total} companies… ${t.current ? '(' + t.current + ')' : ''}`;
+            const pct = t.total
+                ? Math.min(99, Math.round(((t.done || 0) / total) * 100))
+                : 5;
+            const stage = t.total
+                ? `Step 2 of 2 — Classifying ${t.done}/${t.total} companies`
+                : 'Step 1 of 2 — Loading company list…';
+            const detail = t.current ? `Currently: ${t.current}` : '';
             el.innerHTML = `
-                <div>${escapeHtml(text)}</div>
+                <div class="vm-stage-label">${escapeHtml(stage)}</div>
                 <div class="vm-progress-bar"><div class="vm-progress-bar-fill" style="width: ${pct}%"></div></div>
+                ${detail ? `<div class="vm-stage-detail">${escapeHtml(detail)}</div>` : ''}
             `;
         } else if (t.status === 'complete' && t.stats) {
+            // Persistent completion state — does NOT auto-hide. User
+            // dismisses it by clicking sync again or refreshing. This is
+            // the explicit "you're done" signal you asked for.
             el.hidden = false;
+            el.classList.add('vm-tier2-complete');
+            el.classList.remove('vm-tier2-error');
+            const s = t.stats;
             el.innerHTML = `
-                <div>Classified ${t.stats.classified} new, skipped ${t.stats.skipped_already_classified} already-tagged.</div>
+                <div class="vm-stage-label">✓ Classification complete</div>
                 <div class="vm-progress-bar"><div class="vm-progress-bar-fill" style="width: 100%"></div></div>
+                <div class="vm-stage-detail">Classified ${s.classified} new · skipped ${s.skipped_already_classified} already-tagged${s.failed ? ' · ' + s.failed + ' failed' : ''}</div>
             `;
-            setTimeout(() => { el.hidden = true; }, 8000);
         } else if (t.status === 'error') {
             el.hidden = false;
-            el.textContent = `Tier 2 error: ${t.error || 'unknown'}`;
+            el.classList.add('vm-tier2-error');
+            el.classList.remove('vm-tier2-complete');
+            el.innerHTML = `
+                <div class="vm-stage-label">✗ Classification failed</div>
+                <div class="vm-stage-detail">${escapeHtml(t.error || 'unknown error')} — ANTHROPIC_API_KEY in Replit Secrets?</div>
+            `;
         } else {
             el.hidden = true;
         }
@@ -363,9 +401,55 @@
         state.syncPolls[sourcePk] = setInterval(tick, 3000);
     }
 
+    // Derive a human-readable stage label + bar mode from a sync run row.
+    // Backend doesn't report explicit stages — we infer from fetched/inserted
+    // transitions: nothing fetched yet = "Connecting / listing", fetched > 0
+    // but no inserts = "Downloading", inserts climbing = "Processing".
+    function syncStageFromStatus(status) {
+        if (!status) return null;
+        if (status.status === 'running') {
+            const fetched = status.fetched || 0;
+            const inserted = status.inserted || 0;
+            if (fetched === 0) {
+                return { stage: 'Connecting & listing documents…', detail: '' };
+            }
+            if (inserted === 0) {
+                return {
+                    stage: 'Downloading documents…',
+                    detail: `${fetched} fetched`,
+                };
+            }
+            return {
+                stage: 'Processing & saving…',
+                detail: `${fetched} fetched · ${inserted} new`,
+            };
+        }
+        if (status.status === 'complete') {
+            return {
+                stage: '✓ Sync complete',
+                detail: `${status.fetched || 0} fetched · ${status.inserted || 0} new${status.last_error ? ' · with errors' : ''}`,
+            };
+        }
+        if (status.status === 'error') {
+            return {
+                stage: '✗ Sync failed',
+                detail: status.last_error || 'unknown error',
+            };
+        }
+        if (status.status === 'interrupted') {
+            return {
+                stage: '⚠ Sync interrupted',
+                detail: 'Container restarted. Click sync to resume from last checkpoint.',
+            };
+        }
+        return null;
+    }
+
     function renderActiveSource(s) {
         const status = state.syncStatus[s.id];
         const isRunning = status && status.status === 'running';
+        const isComplete = status && status.status === 'complete';
+        const isError = status && (status.status === 'error' || status.status === 'interrupted');
         // During a live sync, prefer the in-flight insert count (truth) over
         // the page-load cached document_count (stale). Once the sync ends and
         // refreshSources runs, document_count catches up.
@@ -377,15 +461,29 @@
             : (s.last_synced_at ? 'synced ' + relTime(s.last_synced_at) : 'never synced');
         // Sync uses an indeterminate bar — total file count isn't known
         // until after the folder walk completes (which happens mid-sync),
-        // and once files start coming in we don't have a reliable total
-        // estimate either. Animated stripe signals active work without
-        // faking a completion percentage.
-        const progressBlock = isRunning
-            ? `
-                <div class="vm-source-progress">syncing… ${status.fetched || 0} fetched, ${status.inserted || 0} new</div>
+        // and even once files come in we don't have a reliable total
+        // estimate. Animated stripe signals active work; on completion we
+        // show a persistent filled bar so the user can clearly see "done".
+        const stageInfo = syncStageFromStatus(status);
+        let progressBlock = '';
+        if (isRunning && stageInfo) {
+            progressBlock = `
+                <div class="vm-stage-label">${escapeHtml(stageInfo.stage)}</div>
                 <div class="vm-progress-bar vm-progress-indeterminate"><div class="vm-progress-bar-fill"></div></div>
-            `
-            : '';
+                ${stageInfo.detail ? `<div class="vm-stage-detail">${escapeHtml(stageInfo.detail)}</div>` : ''}
+            `;
+        } else if (isComplete && stageInfo) {
+            progressBlock = `
+                <div class="vm-stage-label vm-stage-complete">${escapeHtml(stageInfo.stage)}</div>
+                <div class="vm-progress-bar"><div class="vm-progress-bar-fill" style="width: 100%"></div></div>
+                <div class="vm-stage-detail">${escapeHtml(stageInfo.detail)}</div>
+            `;
+        } else if (isError && stageInfo) {
+            progressBlock = `
+                <div class="vm-stage-label vm-stage-error">${escapeHtml(stageInfo.stage)}</div>
+                <div class="vm-stage-detail">${escapeHtml(stageInfo.detail)}</div>
+            `;
+        }
         const buttonLabel = isRunning ? '…' : 'sync';
         const buttonAttr = isRunning ? 'disabled' : '';
         return `
@@ -541,6 +639,28 @@
         renderThreads();
     }
 
+    // Build a display string from a scope object. Used by:
+    //   - default chat name generator
+    //   - in-modal scope summary
+    //   - chat header breadcrumb
+    // Format: "Energy / Solar / Series A" — slashes between dimensions,
+    // commas inside multi-select. Empty scope returns null so callers can
+    // pick the right "unscoped" wording for their context.
+    function formatScopeSummary(scope) {
+        if (!scope) return null;
+        const parts = [];
+        for (const f of FIXED_DIMS) {
+            const sel = scope[f.scope] || [];
+            if (sel.length) parts.push(sel.join(', '));
+        }
+        return parts.length ? parts.join(' / ') : null;
+    }
+
+    function defaultChatName(scope) {
+        const summary = formatScopeSummary(scope);
+        return summary || 'Unscoped VoLo Mind Chat';
+    }
+
     function renderThreads() {
         const list = document.getElementById('vm-thread-list');
         if (!list) return;
@@ -548,34 +668,83 @@
             list.innerHTML = '<li class="vm-muted">No conversations yet.</li>';
             return;
         }
-        list.innerHTML = state.threads.map(t => `
-            <li class="vm-thread-row ${t.id === state.activeThreadId ? 'vm-thread-active' : ''}"
-                data-id="${t.id}">
-                <div class="vm-thread-title">${escapeHtml(t.title)}</div>
-                <div class="vm-thread-meta">${relTime(t.created_at)}</div>
-            </li>
-        `).join('');
-        list.querySelectorAll('.vm-thread-row').forEach(row => {
-            row.addEventListener('click', () => openThread(parseInt(row.dataset.id)));
+        list.innerHTML = state.threads.map(t => {
+            const summary = formatScopeSummary(t.scope);
+            const subtitle = summary || 'Unscoped';
+            return `
+                <li class="vm-thread-row ${t.id === state.activeThreadId ? 'vm-thread-active' : ''}"
+                    data-id="${t.id}">
+                    <div class="vm-thread-main" data-act="open" data-id="${t.id}">
+                        <div class="vm-thread-title" title="${escapeHtml(t.title)}">${escapeHtml(t.title)}</div>
+                        <div class="vm-thread-meta">
+                            <span class="vm-thread-scope" title="${escapeHtml(subtitle)}">${escapeHtml(subtitle)}</span>
+                            <span> · ${relTime(t.created_at)}</span>
+                        </div>
+                    </div>
+                    <div class="vm-thread-actions">
+                        <button class="vm-icon-btn" data-act="rename" data-id="${t.id}" title="Rename">✎</button>
+                        <button class="vm-icon-btn vm-icon-btn-danger" data-act="delete" data-id="${t.id}" title="Delete">×</button>
+                    </div>
+                </li>
+            `;
+        }).join('');
+
+        // Click handler — clicks on the title area open the thread; clicks
+        // on the per-row buttons fire their own actions and stop propagation
+        // so they don't also open the thread underneath.
+        list.querySelectorAll('[data-act="open"]').forEach(el => {
+            el.addEventListener('click', () => openThread(parseInt(el.dataset.id)));
+        });
+        list.querySelectorAll('[data-act="rename"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                renameThread(parseInt(btn.dataset.id));
+            });
+        });
+        list.querySelectorAll('[data-act="delete"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteThread(parseInt(btn.dataset.id));
+            });
         });
     }
 
-    async function newThread() {
-        // Auto-generate a title from the selected scope chips. Falls back
-        // to a date stamp if no chips are selected.
-        const parts = [];
-        for (const f of FIXED_DIMS) {
-            const sel = state.scope[f.scope] || [];
-            if (sel.length) parts.push(sel.join('/'));
+    // ─────────────── Naming modal — opens on "Start scoped chat" ────────────
+    // Captures the scope at modal-open time so subsequent chip changes don't
+    // affect the chat that's about to be created. Esc + outside-click + close
+    // button all dismiss it; Enter creates.
+    let _pendingScope = null;
+
+    function openNameModal() {
+        _pendingScope = JSON.parse(JSON.stringify(state.scope));
+        const input = document.getElementById('vm-name-input');
+        const summaryEl = document.getElementById('vm-name-scope-summary');
+        const modal = document.getElementById('vm-name-modal');
+        if (!input || !modal) return;
+        input.value = defaultChatName(_pendingScope);
+        if (summaryEl) {
+            const summary = formatScopeSummary(_pendingScope);
+            summaryEl.textContent = summary || 'No filters selected — chat will see the full corpus.';
         }
-        const title = parts.length
-            ? parts.join(' · ')
-            : `Chat ${new Date().toLocaleDateString()}`;
+        modal.hidden = false;
+        // setTimeout so the focus call happens after the browser paints the
+        // unhidden element; otherwise focus() can no-op on display:none.
+        setTimeout(() => { input.focus(); input.select(); }, 0);
+    }
+
+    function closeNameModal() {
+        const modal = document.getElementById('vm-name-modal');
+        if (modal) modal.hidden = true;
+        _pendingScope = null;
+    }
+
+    async function confirmCreateThread() {
+        const input = document.getElementById('vm-name-input');
+        const scope = _pendingScope || state.scope;
+        const title = (input && input.value.trim()) || defaultChatName(scope);
         try {
-            const t = await vmPost('/api/volomind/chat/threads', {
-                title,
-                scope: state.scope,
-            });
+            const t = await vmPost('/api/volomind/chat/threads', { title, scope });
+            closeNameModal();
             await refreshThreads();
             await openThread(t.id);
         } catch (e) {
@@ -583,9 +752,69 @@
         }
     }
 
+    async function renameThread(id) {
+        const thread = state.threads.find(x => x.id === id);
+        if (!thread) return;
+        const next = window.prompt('Rename chat:', thread.title);
+        if (next === null) return;          // user hit Cancel
+        const trimmed = next.trim();
+        if (!trimmed || trimmed === thread.title) return;
+        try {
+            const updated = await vmPatch(`/api/volomind/chat/threads/${id}`, { title: trimmed });
+            // Patch local state so the UI updates immediately without
+            // an extra round-trip. refreshThreads() runs anyway for safety.
+            const idx = state.threads.findIndex(x => x.id === id);
+            if (idx >= 0) state.threads[idx] = updated;
+            renderThreads();
+            renderChatScopeBar();
+        } catch (e) {
+            toast('Rename failed: ' + e.message, 'err');
+        }
+    }
+
+    async function deleteThread(id) {
+        const thread = state.threads.find(x => x.id === id);
+        const label = thread ? thread.title : 'this chat';
+        if (!window.confirm(`Delete "${label}"? This removes only your chat history. Synced documents and tags are unaffected.`)) {
+            return;
+        }
+        try {
+            await vmDelete(`/api/volomind/chat/threads/${id}`);
+            state.threads = state.threads.filter(x => x.id !== id);
+            if (state.activeThreadId === id) {
+                state.activeThreadId = null;
+                state.messages = [];
+                renderMessages();
+                renderChatScopeBar();
+            }
+            renderThreads();
+        } catch (e) {
+            toast('Delete failed: ' + e.message, 'err');
+        }
+    }
+
     async function openThread(id) {
         state.activeThreadId = id;
+        // Restore the scope chips to the thread's saved scope so the user
+        // can see exactly what filters this conversation is using. This is
+        // visual-only — sending a message in this thread always uses the
+        // thread's locked-in scope (see chat_engine._prepare_call), not
+        // the live chip state. Editing chips while an old thread is open
+        // affects only the *next* "Start scoped chat" you create.
+        const thread = state.threads.find(t => t.id === id);
+        if (thread && thread.scope) {
+            // Deep-clone — shallow spread would alias the inner arrays
+            // (e.g. state.scope.verticals === thread.scope.verticals), so
+            // a subsequent chip click would silently mutate the cached
+            // thread's subtitle in the sidebar. The thread's actual scope
+            // is frozen server-side at creation.
+            const cloned = JSON.parse(JSON.stringify(thread.scope));
+            state.scope = { ...emptyScope(), ...cloned };
+            renderScopeRows();
+            refreshBundle();
+        }
         renderThreads();
+        renderChatScopeBar();
         try {
             state.messages = await vmGet(`/api/volomind/chat/threads/${id}/messages`);
         } catch (e) {
@@ -596,22 +825,65 @@
         document.getElementById('vm-chat-send-btn').disabled = !state.chatConfigured;
     }
 
+    function renderChatScopeBar() {
+        const bar = document.getElementById('vm-chat-scope-bar');
+        const txt = document.getElementById('vm-chat-scope-text');
+        if (!bar || !txt) return;
+        if (!state.activeThreadId) {
+            bar.hidden = true;
+            return;
+        }
+        const thread = state.threads.find(t => t.id === state.activeThreadId);
+        if (!thread) {
+            bar.hidden = true;
+            return;
+        }
+        const summary = formatScopeSummary(thread.scope);
+        bar.hidden = false;
+        txt.textContent = summary || 'Unscoped — full corpus';
+    }
+
     function renderMessages() {
         const box = document.getElementById('vm-chat-messages');
         if (!box) return;
         if (!state.messages.length) {
             box.innerHTML = state.chatConfigured
                 ? '<div class="vm-chat-empty">Send a message to begin the conversation.</div>'
-                : '<div class="vm-chat-empty">Refiant chat client not configured. Set REFIANT_API_KEY/BASE/MODEL in Replit Secrets.</div>';
+                : '<div class="vm-chat-empty">Refiant chat client not configured. An admin must set REFIANT_API_KEY in Replit Secrets.</div>';
             return;
         }
-        box.innerHTML = state.messages.map(m => `
-            <div class="vm-msg vm-msg-${m.role}">
-                <div class="vm-msg-role">${m.role}</div>
-                <div class="vm-msg-content">${escapeHtml(m.content)}</div>
-            </div>
-        `).join('');
+        box.innerHTML = state.messages.map(m => {
+            // 'system' role is reserved for inline error bubbles — show
+            // "error" as the visible label so it's not confusing.
+            const label = m.role === 'system' ? 'error' : m.role;
+            return `
+                <div class="vm-msg vm-msg-${m.role}">
+                    <div class="vm-msg-role">${escapeHtml(label)}</div>
+                    <div class="vm-msg-content">${escapeHtml(m.content)}</div>
+                </div>
+            `;
+        }).join('');
         box.scrollTop = box.scrollHeight;
+    }
+
+    function friendlySendError(e) {
+        // Map the various ways a Refiant call can fail to clear, actionable
+        // messages. Status comes from vmPost's err.status.
+        const status = e && e.status;
+        const detail = (e && e.message) || 'unknown error';
+        if (status === 501) {
+            return 'Refiant chat client not configured. An admin must set REFIANT_API_KEY in Replit Secrets.';
+        }
+        if (status === 400) {
+            return `Chat config issue: ${detail}`;
+        }
+        if (status === 404) {
+            return 'This conversation no longer exists. Refresh the page.';
+        }
+        if (status === 502) {
+            return `Refiant API call failed — ${detail}. Try again in a moment, or refine your scope to fit the model context window.`;
+        }
+        return `Send failed: ${detail}`;
     }
 
     async function sendMessage() {
@@ -631,9 +903,24 @@
             state.messages.push(reply);
             renderMessages();
         } catch (e) {
-            toast('Send failed: ' + e.message, 'err');
+            const msg = friendlySendError(e);
+            toast(msg, 'err');
+            // Remove the optimistically added user bubble and surface the
+            // error inline so the chat history shows what just happened
+            // (toasts can be missed if the page scrolls or the user blinks).
             state.messages.pop();
+            state.messages.push({
+                id: -2, role: 'system',
+                content: msg,
+                created_at: new Date().toISOString(),
+            });
             renderMessages();
+            // Drop the inline error after the next successful send so it
+            // doesn't pollute chat history persistently.
+            setTimeout(() => {
+                state.messages = state.messages.filter(m => m.id !== -2);
+                renderMessages();
+            }, 12000);
         } finally {
             state.sending = false;
             input.disabled = false;
@@ -650,9 +937,34 @@
             if (el) el.addEventListener('click', fn);
         };
         onClick('vm-clear-scope-btn', clearScope);
-        onClick('vm-scope-chat-btn', newThread);
+        onClick('vm-scope-chat-btn', openNameModal);
         onClick('vm-chat-send-btn', sendMessage);
         onClick('vm-tier2-run-btn', () => triggerTier2(false));
+
+        // Naming modal wiring
+        onClick('vm-name-modal-close', closeNameModal);
+        onClick('vm-name-cancel', closeNameModal);
+        onClick('vm-name-create', confirmCreateThread);
+        const modal = document.getElementById('vm-name-modal');
+        if (modal) {
+            // Click on the overlay (but not the card) closes.
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeNameModal();
+            });
+        }
+        const nameInput = document.getElementById('vm-name-input');
+        if (nameInput) {
+            nameInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); confirmCreateThread(); }
+                if (e.key === 'Escape') { e.preventDefault(); closeNameModal(); }
+            });
+        }
+        // Global Escape handler — closes whichever modal is open.
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape') return;
+            const m = document.getElementById('vm-name-modal');
+            if (m && !m.hidden) closeNameModal();
+        });
 
         const inp = document.getElementById('vm-chat-input');
         if (inp) inp.addEventListener('keydown', (e) => {

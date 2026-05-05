@@ -18,7 +18,18 @@ from . import database, scope as scope_mod
 from .models import ScopeFilter
 
 
-_DEFAULT_TOKEN_BUDGET = 500_000
+# Token budget for the in-scope corpus stuffed into the system prompt.
+#
+# Math: Refiant's qwen-rfnt currently exposes a ~250K-token context window.
+# We reserve ~50K for: chat history (grows over a session), the new user
+# message, and the model's reply. That leaves ~200K for the in-scope
+# corpus. When VoLo gets the 1M-token Refiant tier, bump this via env var
+# (no code change needed). 500K — the prior default — silently rejected at
+# the API layer because it overflowed the 250K context.
+#
+# The same default is mirrored in scope.py preview() so the bundle preview
+# the user sees in the scope card matches what actually gets stuffed.
+_DEFAULT_TOKEN_BUDGET = int(os.environ.get("VOLOMIND_TOKEN_BUDGET", "200000"))
 
 # Sensible defaults for the Refiant API_BASE and MODEL, so admins only need
 # to set REFIANT_API_KEY in Replit Secrets. These match the values the host
@@ -136,9 +147,17 @@ def _prepare_call(thread_id: int, owner_id: int, user_message: str):
         if thread is None:
             raise LookupError("thread not found")
         scope = ScopeFilter(**json.loads(thread["scope_json"]))
-        model = thread["model_key"] or os.environ.get("REFIANT_MODEL", "").strip()
+        # Per-thread override wins; otherwise fall through to the helper that
+        # honors REFIANT_MODEL env var or the constant default. Without this
+        # default, threads created without an explicit model_key (i.e. all of
+        # them in current usage) 400'd because os.environ.get(...) was empty
+        # — even though the API client itself defaults the same way.
+        model = thread["model_key"] or _refiant_model()
         if not model:
-            raise RuntimeError("REFIANT_MODEL not configured")
+            raise RuntimeError(
+                "Refiant model not configured. Set REFIANT_MODEL in Replit "
+                "Secrets, or rely on the built-in default."
+            )
 
     system_prompt, _included, _est = build_system_prompt(scope)
     history = _load_history(thread_id)

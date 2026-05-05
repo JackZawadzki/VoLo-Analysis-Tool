@@ -101,6 +101,45 @@
 .vm-row-btn-danger { color: #b00020; border-color: #f0c0c0; }
 .vm-row-btn-danger:hover { background: #fcecec; }
 
+/* Thread row layout: title block (clickable to open) + per-row icon buttons
+   (rename / delete). Buttons fade in on hover so the resting state stays
+   clean — same convention as the host app's deal-pipeline rows. */
+.vm-thread-row {
+    gap: 0.5rem;
+}
+.vm-thread-main {
+    flex: 1; min-width: 0;
+}
+.vm-thread-meta {
+    display: flex; align-items: center; gap: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vm-thread-scope {
+    font-style: italic; max-width: 60%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vm-thread-actions {
+    display: flex; gap: 2px; opacity: 0;
+    transition: opacity 0.12s ease-in;
+    flex-shrink: 0;
+}
+.vm-thread-row:hover .vm-thread-actions { opacity: 1; }
+.vm-thread-active .vm-thread-actions { opacity: 1; }
+.vm-icon-btn {
+    background: transparent; border: 1px solid transparent;
+    color: #666; width: 22px; height: 22px;
+    border-radius: 4px; cursor: pointer;
+    font-size: 0.85rem; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0;
+}
+.vm-icon-btn:hover {
+    background: #fff; border-color: #c0d8c8; color: #1a472a;
+}
+.vm-icon-btn-danger:hover {
+    background: #fff; border-color: #f0c0c0; color: #b00020;
+}
+
 .vm-muted { color: #888; font-size: 0.85rem; padding: 0.5rem; }
 
 /* Section labels in the source list (ACTIVE / COMING SOON) */
@@ -171,12 +210,35 @@
 
 .vm-tier2-status {
     font-size: 0.72rem; color: #2d5f3f; margin-top: 0.5rem;
-    line-height: 1.4; padding: 0.4rem 0.5rem;
+    line-height: 1.4; padding: 0.5rem 0.6rem;
     background: #eef7f1; border-radius: 4px;
+    border: 1px solid transparent;
 }
 .vm-tier2-status .vm-progress-bar {
     background: #d8e7df;  /* slightly darker track over green-tinted bg */
     margin-top: 6px;
+}
+/* State-specific tinting on the Tier 2 status panel — green when
+   complete, red when failed, default forest-green tint while running. */
+.vm-tier2-status.vm-tier2-complete {
+    background: #e8f5ed; border-color: #b8d8c5;
+}
+.vm-tier2-status.vm-tier2-error {
+    background: #fdecec; border-color: #f0c0c0; color: #b00020;
+}
+
+/* Stage-based progress labels — used by both sync (in vm-source-row)
+   and Tier 2 (in vm-tier2-status). Bigger + bolder than the body text
+   so the user can scan and tell what's happening at a glance. */
+.vm-stage-label {
+    font-size: 0.78rem; font-weight: 600; color: #1a472a;
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 4px;
+}
+.vm-stage-label.vm-stage-complete { color: #1a6e3a; }
+.vm-stage-label.vm-stage-error    { color: #b00020; }
+.vm-stage-detail {
+    font-size: 0.7rem; color: #666; margin-top: 2px;
 }
 
 /* Admin controls */
@@ -252,6 +314,29 @@
     background: #fff; border: 1px solid #e0e8e3; border-radius: 10px;
     display: flex; flex-direction: column; min-height: 400px;
 }
+/* Scope breadcrumb — shows above the message list whenever a thread is
+   open, so the user can see exactly which filters this conversation is
+   locked into. Editing the chips below doesn't affect the open thread
+   (scope is frozen at thread creation), but the breadcrumb makes that
+   asymmetry obvious. */
+.vm-chat-scope-bar {
+    padding: 0.5rem 1rem;
+    background: #f4f8f5;
+    border-bottom: 1px solid #e0e8e3;
+    border-radius: 10px 10px 0 0;
+    font-size: 0.75rem; color: #2d5f3f;
+    display: flex; gap: 6px; align-items: center;
+    overflow: hidden;
+}
+.vm-chat-scope-bar[hidden] { display: none; }
+.vm-chat-scope-label {
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: 0.65rem; color: #1a472a;
+}
+.vm-chat-scope-text {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+}
 .vm-chat-messages {
     flex: 1; padding: 1rem; overflow-y: auto;
     display: flex; flex-direction: column; gap: 0.75rem;
@@ -266,6 +351,13 @@
 }
 .vm-msg-assistant {
     background: #eef7f1; color: #1a1a1a; align-self: flex-start;
+}
+/* Inline transient error bubble — surfaces send failures in the chat
+   stream so the user can see exactly what went wrong. Auto-dismisses
+   after 12s (see sendMessage's setTimeout) so it doesn't pollute history. */
+.vm-msg-system {
+    background: #fdecec; color: #b00020; align-self: stretch; max-width: 100%;
+    border: 1px solid #f0c0c0;
 }
 .vm-msg-role {
     font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
