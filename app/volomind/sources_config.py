@@ -83,7 +83,7 @@ SOURCES: list[SourceDefinition] = [
 ROADMAP: list[RoadmapItem] = [
     {
         "label": "Patent database",
-        "description": "USPTO + Google Patents search across portfolio companies.",
+        "description": "USPTO + Google Patents search across sectors.",
     },
     {
         "label": "Industry data",
