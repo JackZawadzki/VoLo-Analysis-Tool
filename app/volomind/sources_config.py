@@ -51,8 +51,8 @@ SOURCES: list[SourceDefinition] = [
     {
         "source_id": "granola",
         "label": "Volo earth team Granola",
-        "config": {},  # uses GRANOLA_API_KEY env var
-        "enabled": False,
+        "config": {},  # uses GRANOLA_API_KEY env var (Enterprise key from Replit Secrets)
+        "enabled": True,
         "description": "Team meeting notes from Granola workspace.",
     },
     {
