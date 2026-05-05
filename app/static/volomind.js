@@ -9,9 +9,20 @@
     'use strict';
 
     // ------------------------- API helpers -------------------------------
+    // Host app uses JWT in localStorage('rvm_token') -> Authorization header.
+    // We mirror that here so volomind routes (which use the same auth dep)
+    // receive the token. Without this, every volomind fetch 401s.
+
+    function vmAuthHeaders() {
+        const token = localStorage.getItem('rvm_token') || '';
+        return token ? { 'Authorization': 'Bearer ' + token } : {};
+    }
 
     async function vmGet(path) {
-        const r = await fetch(path, { credentials: 'same-origin' });
+        const r = await fetch(path, {
+            credentials: 'same-origin',
+            headers: vmAuthHeaders(),
+        });
         if (!r.ok) {
             let detail = await r.text();
             try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
@@ -26,7 +37,7 @@
         const r = await fetch(path, {
             method: 'POST',
             credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...vmAuthHeaders() },
             body: body === undefined ? undefined : JSON.stringify(body),
         });
         if (!r.ok) {
@@ -40,7 +51,11 @@
     }
 
     async function vmDelete(path) {
-        const r = await fetch(path, { method: 'DELETE', credentials: 'same-origin' });
+        const r = await fetch(path, {
+            method: 'DELETE',
+            credentials: 'same-origin',
+            headers: vmAuthHeaders(),
+        });
         if (!r.ok && r.status !== 204) {
             let detail = await r.text();
             try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
@@ -107,14 +122,12 @@
         } catch (e) {
             return showUnavailable(e.message || 'VoLo Mind backend is not responding.');
         }
-        // Determine if current user is admin via existing user-badge data
-        // (we read from #user-badge which the host populates with role info).
+        // Determine if current user is admin. Use vmGet so the auth header
+        // is attached the same way the host app's app.js does it (JWT token
+        // from localStorage('rvm_token')).
         try {
-            const meResp = await fetch('/api/auth/me', { credentials: 'same-origin' });
-            if (meResp.ok) {
-                const me = await meResp.json();
-                state.isAdmin = (me.role === 'admin');
-            }
+            const me = await vmGet('/api/auth/me');
+            state.isAdmin = (me.role === 'admin');
         } catch (_) { /* non-fatal — assume non-admin */ }
 
         document.getElementById('vm-admin-badge').hidden = !state.isAdmin;
