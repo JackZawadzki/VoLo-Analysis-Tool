@@ -77,13 +77,14 @@
         activeThreadId: null,
         messages: [],
         scope: emptyScope(),
-        dimensions: {},
+        dimensions: {},     // dynamic dims (company, doc_type, etc.) from corpus
+        taxonomy: null,     // fixed VoLo taxonomy from /scope/taxonomy
         bundle: null,
         sending: false,
-        // Per-source-pk → polling intervalId (so we can cancel)
         syncPolls: {},
-        // Per-source-pk → latest sync_status payload
         syncStatus: {},
+        tier2: { status: 'idle', done: 0, total: 0, current: '' },
+        tier2Poll: null,
     };
 
     function emptyScope() {
@@ -131,15 +132,86 @@
         } catch (_) { /* non-fatal — assume non-admin */ }
 
         document.getElementById('vm-admin-badge').hidden = !state.isAdmin;
+        const tier2Controls = document.getElementById('vm-tier2-controls');
+        if (tier2Controls) tier2Controls.hidden = !state.isAdmin;
         const footnote = document.getElementById('vm-source-footnote');
         if (footnote) footnote.hidden = state.isAdmin;  // show only to non-admins
 
         await Promise.all([
             refreshSources(),
+            refreshTaxonomy(),
             refreshDimensions(),
             refreshThreads(),
+            refreshTier2Status(),
         ]);
         wireEventHandlers();
+    }
+
+    async function refreshTaxonomy() {
+        try {
+            state.taxonomy = await vmGet('/api/volomind/scope/taxonomy');
+        } catch (e) {
+            // Fallback hardcoded so the UI still works if the endpoint fails
+            state.taxonomy = {
+                verticals: ['Energy', 'Buildings', 'Industry', 'Mobility'],
+                sectors: {
+                    Energy: ['Solar', 'Wind', 'Storage', 'Hydrogen', 'Geothermal', 'Nuclear / SMR', 'Grid / Transmission', 'Biofuels', 'Carbon Capture'],
+                    Buildings: ['HVAC', 'Envelope / Insulation', 'Lighting', 'Smart Building / Controls', 'Heat Pumps', 'Embodied Carbon'],
+                    Industry: ['Steel', 'Cement', 'Chemicals', 'Plastics', 'Mining / Metals', 'Process Heat', 'Industrial AI', 'Direct Air Capture'],
+                    Mobility: ['EV / Powertrains', 'Charging Infra', 'Batteries', 'Aviation', 'Maritime', 'Rail', 'Logistics', 'Autonomy', 'Micromobility'],
+                },
+                stages: ['Pre-Seed', 'Seed', 'Series A', 'Series B', 'Series C', 'Series D', 'Series E+', 'Growth', 'Public', 'Acquired'],
+                value_chains: ['Upstream', 'Midstream', 'Downstream', 'Cross-cutting'],
+            };
+        }
+    }
+
+    async function refreshTier2Status() {
+        try {
+            state.tier2 = await vmGet('/api/volomind/tier2/status');
+            // If a run is in progress, start polling
+            if (state.tier2.status === 'running' && !state.tier2Poll) {
+                state.tier2Poll = setInterval(refreshTier2Status, 4000);
+            } else if (state.tier2.status !== 'running' && state.tier2Poll) {
+                clearInterval(state.tier2Poll);
+                state.tier2Poll = null;
+                // Refresh dimensions in case Tier 2 just finished and added new tag values
+                refreshDimensions();
+            }
+        } catch (_) { /* non-fatal */ }
+        renderTier2Status();
+    }
+
+    function renderTier2Status() {
+        const el = document.getElementById('vm-tier2-status');
+        if (!el) return;
+        const t = state.tier2 || {};
+        if (t.status === 'running') {
+            el.hidden = false;
+            el.textContent = `Classifying ${t.done}/${t.total} companies… ${t.current ? '(' + t.current + ')' : ''}`;
+        } else if (t.status === 'complete' && t.stats) {
+            el.hidden = false;
+            el.textContent = `Classified ${t.stats.classified} new, skipped ${t.stats.skipped_already_classified} already-tagged.`;
+            setTimeout(() => { el.hidden = true; }, 8000);
+        } else if (t.status === 'error') {
+            el.hidden = false;
+            el.textContent = `Tier 2 error: ${t.error || 'unknown'}`;
+        } else {
+            el.hidden = true;
+        }
+    }
+
+    async function triggerTier2(force) {
+        try {
+            await vmPost('/api/volomind/tier2/run' + (force ? '?force=true' : ''));
+            state.tier2 = { ...state.tier2, status: 'running', done: 0, total: 0, current: '' };
+            renderTier2Status();
+            if (!state.tier2Poll) {
+                state.tier2Poll = setInterval(refreshTier2Status, 4000);
+            }
+        } catch (e) {
+            toast('Tier 2 start failed: ' + e.message, 'err');
+        }
     }
 
     function showUnavailable(detail) {
@@ -310,63 +382,101 @@
         await refreshBundle();
     }
 
-    const DIM_LABELS = {
-        vertical: 'Vertical',
-        sector: 'Sector',
-        stage: 'Stage',
-        co_type: 'Co-type',
-        value_chain: 'Value chain',
-        company: 'Company',
-        meeting_type: 'Meeting type',
-        document_type: 'Doc type',
-    };
+    // FIXED taxonomy dimensions (rendered always from state.taxonomy)
+    const FIXED_DIMS = [
+        { dim: 'vertical', scope: 'verticals', label: 'Vertical', taxonomyKey: 'verticals' },
+        { dim: 'sector', scope: 'sectors', label: 'Sector', taxonomyKey: 'sectors' /* nested by vertical */ },
+        { dim: 'stage', scope: 'stages', label: 'Stage', taxonomyKey: 'stages' },
+        { dim: 'value_chain', scope: 'value_chains', label: 'Value chain', taxonomyKey: 'value_chains' },
+    ];
 
-    const DIM_TO_SCOPE = {
-        vertical: 'verticals',
-        sector: 'sectors',
-        stage: 'stages',
-        co_type: 'co_types',
-        value_chain: 'value_chains',
-        company: 'companies',
-        meeting_type: 'meeting_types',
-        document_type: 'document_types',
-    };
+    // DYNAMIC dimensions (only render if data exists in state.dimensions)
+    const DYNAMIC_DIMS = [
+        { dim: 'co_type', scope: 'co_types', label: 'Co-type' },
+        { dim: 'company', scope: 'companies', label: 'Company' },
+        { dim: 'meeting_type', scope: 'meeting_types', label: 'Meeting type' },
+        { dim: 'document_type', scope: 'document_types', label: 'Doc type' },
+    ];
 
     function renderScopeRows() {
         const container = document.getElementById('vm-scope-rows');
         if (!container) return;
-        const dims = state.dimensions;
-        const dimKeys = Object.keys(DIM_LABELS).filter(k => dims[k] && dims[k].length);
-        if (!dimKeys.length) {
-            container.innerHTML = '<p class="vm-muted">No tags yet — sync a source to populate filters.</p>';
-            return;
-        }
-        container.innerHTML = dimKeys.map(dim => {
-            const scopeKey = DIM_TO_SCOPE[dim];
-            const selected = new Set(state.scope[scopeKey] || []);
-            const chips = dims[dim].map(v => `
+        const taxonomy = state.taxonomy || {};
+        const dims = state.dimensions || {};
+        const rows = [];
+
+        // Always render Vertical / Stage / Value chain.
+        // Sector row CASCADES from vertical — only appears when at least one
+        // vertical is selected, then shows that vertical's sectors only.
+        // Selecting two verticals merges both sector lists.
+        const selectedVerticals = state.scope.verticals || [];
+        for (const f of FIXED_DIMS) {
+            let values;
+            if (f.dim === 'sector') {
+                if (!selectedVerticals.length) {
+                    continue;  // hide sector row entirely — pick a vertical first
+                }
+                const sectorMap = taxonomy.sectors || {};
+                values = selectedVerticals.flatMap(v => sectorMap[v] || []);
+            } else {
+                values = taxonomy[f.taxonomyKey] || [];
+            }
+            const selected = new Set(state.scope[f.scope] || []);
+            const chips = values.map(v => `
                 <button class="vm-chip ${selected.has(v) ? 'vm-chip-active' : ''}"
-                        data-dim="${scopeKey}" data-value="${escapeHtml(v)}">
+                        data-scope="${f.scope}" data-value="${escapeHtml(v)}">
                     ${escapeHtml(v)}
                 </button>
             `).join('');
-            return `
+            rows.push(`
                 <div class="vm-scope-row">
-                    <label class="vm-scope-label">${DIM_LABELS[dim]}</label>
+                    <label class="vm-scope-label">${f.label}</label>
+                    <div class="vm-chips">${chips || '<span class="vm-muted">—</span>'}</div>
+                </div>
+            `);
+        }
+
+        // Render dynamic rows only when corpus has data for them.
+        for (const d of DYNAMIC_DIMS) {
+            const values = dims[d.dim];
+            if (!values || !values.length) continue;
+            const selected = new Set(state.scope[d.scope] || []);
+            const chips = values.map(v => `
+                <button class="vm-chip ${selected.has(v) ? 'vm-chip-active' : ''}"
+                        data-scope="${d.scope}" data-value="${escapeHtml(v)}">
+                    ${escapeHtml(v)}
+                </button>
+            `).join('');
+            rows.push(`
+                <div class="vm-scope-row">
+                    <label class="vm-scope-label">${d.label}</label>
                     <div class="vm-chips">${chips}</div>
                 </div>
-            `;
-        }).join('');
+            `);
+        }
+
+        container.innerHTML = rows.join('');
 
         container.querySelectorAll('.vm-chip').forEach(btn => {
             btn.addEventListener('click', () => {
-                const dim = btn.dataset.dim;
+                const scopeKey = btn.dataset.scope;
                 const value = btn.dataset.value;
-                const list = state.scope[dim] = state.scope[dim] || [];
+                const list = state.scope[scopeKey] = state.scope[scopeKey] || [];
                 const idx = list.indexOf(value);
                 if (idx >= 0) list.splice(idx, 1);
                 else list.push(value);
-                btn.classList.toggle('vm-chip-active');
+                // Cascade: when a vertical changes, prune sectors that no
+                // longer belong to any selected vertical. Otherwise an
+                // invisible sector filter would silently affect results.
+                if (scopeKey === 'verticals') {
+                    const sectorMap = (state.taxonomy || {}).sectors || {};
+                    const validSectors = new Set(
+                        (state.scope.verticals || []).flatMap(v => sectorMap[v] || [])
+                    );
+                    state.scope.sectors = (state.scope.sectors || [])
+                        .filter(s => validSectors.has(s));
+                }
+                renderScopeRows();
                 refreshBundle();
             });
         });
@@ -508,6 +618,7 @@
         onClick('vm-clear-scope-btn', clearScope);
         onClick('vm-new-thread-btn', newThread);
         onClick('vm-chat-send-btn', sendMessage);
+        onClick('vm-tier2-run-btn', () => triggerTier2(false));
 
         const inp = document.getElementById('vm-chat-input');
         if (inp) inp.addEventListener('keydown', (e) => {

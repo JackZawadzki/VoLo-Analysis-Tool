@@ -25,6 +25,13 @@
                 <ul class="vm-source-list" id="vm-source-list">
                     <li class="vm-muted">Loading…</li>
                 </ul>
+                <div class="vm-admin-only" id="vm-tier2-controls" hidden>
+                    <button class="vm-btn vm-btn-secondary" id="vm-tier2-run-btn"
+                            title="Classify each company into Volo's vertical/sector/stage taxonomy. Uses Anthropic Haiku, ~$0.30 one-time.">
+                        Run taxonomy classification
+                    </button>
+                    <div class="vm-tier2-status" id="vm-tier2-status" hidden></div>
+                </div>
                 <p class="vm-side-footnote" id="vm-source-footnote" hidden>
                     Sources are managed in the codebase. Ping Jack to add a new one.
                 </p>

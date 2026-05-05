@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from . import chat_engine, database, scope as scope_mod
+from . import chat_engine, database, scope as scope_mod, tier2_tagger
 from .connectors import get_connector
 from .ingest import normalize
 from .models import (
@@ -126,6 +126,22 @@ async def list_sources(user: CurrentUser = Depends(get_current_user)):
 # Used to prevent two concurrent syncs of the same source.
 _sync_threads: dict[int, threading.Thread] = {}
 _sync_lock = threading.Lock()
+
+# In-memory state for the Tier 2 (LLM taxonomy classification) job.
+# Single-process state — only one Tier 2 run at a time. Status visible
+# through /api/volomind/tier2/status while it runs.
+_tier2_thread: Optional[threading.Thread] = None
+_tier2_lock = threading.Lock()
+_tier2_state: dict[str, Any] = {
+    "status": "idle",   # 'idle' | 'running' | 'complete' | 'error'
+    "started_at": None,
+    "completed_at": None,
+    "current": "",
+    "done": 0,
+    "total": 0,
+    "stats": None,
+    "error": None,
+}
 
 
 # Persist progress every N docs so a container restart doesn't waste hours.
@@ -296,6 +312,16 @@ def _run_sync_in_thread(source_pk: int, run_id: int, admin_user_id: int) -> None
             errors_json=json.dumps(errors[:200]),  # cap to keep row small
             last_error=(errors[-1] if errors else None),
         )
+
+        # Auto-trigger Tier 2 classification on any newly-ingested companies.
+        # skip_already_classified=True means companies that already have
+        # tier2-v1 tags are skipped — only new ones cost LLM calls. Wraps in
+        # try/except so a Tier 2 failure never marks the sync as failed.
+        if inserted > 0:
+            try:
+                _spawn_tier2_run(force=False)
+            except Exception as _t2_e:
+                print(f"[volomind] Tier 2 auto-trigger failed: {_t2_e}", flush=True)
     except Exception as e:
         _finish_sync_run(run_id, "error", last_error=f"unhandled: {e}")
     finally:
@@ -367,6 +393,82 @@ async def sync_status(source_pk: int, user: CurrentUser = Depends(get_current_us
 
 # --- Drive admin status ----------------------------------------------------
 
+# --- Tier 2 LLM tagger ----------------------------------------------------
+
+def _run_tier2_in_thread(force: bool = False) -> None:
+    """Background runner for Tier 2 classification. Updates _tier2_state as
+    it goes so the frontend can poll for progress. Never raises."""
+    import datetime as _dt
+
+    def _progress(done: int, total: int, current: str) -> None:
+        with _tier2_lock:
+            _tier2_state["done"] = done
+            _tier2_state["total"] = total
+            _tier2_state["current"] = current
+
+    try:
+        with _tier2_lock:
+            _tier2_state["status"] = "running"
+            _tier2_state["started_at"] = _dt.datetime.utcnow().isoformat() + "Z"
+            _tier2_state["completed_at"] = None
+            _tier2_state["stats"] = None
+            _tier2_state["error"] = None
+        stats = tier2_tagger.run(
+            skip_already_classified=not force,
+            progress_callback=_progress,
+        )
+        with _tier2_lock:
+            _tier2_state["status"] = "complete"
+            _tier2_state["completed_at"] = _dt.datetime.utcnow().isoformat() + "Z"
+            _tier2_state["stats"] = stats
+    except Exception as e:
+        with _tier2_lock:
+            _tier2_state["status"] = "error"
+            _tier2_state["completed_at"] = _dt.datetime.utcnow().isoformat() + "Z"
+            _tier2_state["error"] = str(e)
+
+
+def _spawn_tier2_run(force: bool = False) -> bool:
+    """Start the tier2 background thread if one isn't already running.
+    Returns True if started, False if a run was already in progress."""
+    global _tier2_thread
+    with _tier2_lock:
+        if _tier2_thread is not None and _tier2_thread.is_alive():
+            return False
+        thread = threading.Thread(
+            target=_run_tier2_in_thread,
+            kwargs={"force": force},
+            daemon=True,
+            name="volomind-tier2",
+        )
+        _tier2_thread = thread
+        thread.start()
+    return True
+
+
+@router.post("/tier2/run")
+async def tier2_run(force: bool = False, user: CurrentUser = Depends(require_admin)):
+    """Admin: kick off Tier 2 (vertical/sector/stage/value_chain) classification.
+
+    Background thread, returns immediately. Poll /tier2/status for progress.
+    `force=true` re-classifies companies that already have tier2-v1 tags;
+    default skips them.
+    """
+    started = _spawn_tier2_run(force=force)
+    if not started:
+        raise HTTPException(409, "Tier 2 run already in progress")
+    return JSONResponse(content={"ok": True, "started": True})
+
+
+@router.get("/tier2/status")
+async def tier2_status(user: CurrentUser = Depends(get_current_user)):
+    """Latest Tier 2 classification job status. Returns idle if never run."""
+    with _tier2_lock:
+        return JSONResponse(content=dict(_tier2_state))
+
+
+# --- Drive admin status ---------------------------------------------------
+
 @router.get("/admin/drive-status")
 async def admin_drive_status(user: CurrentUser = Depends(require_admin)):
     """Whether the admin has connected Google Drive (via the IC memo flow).
@@ -388,10 +490,26 @@ async def admin_drive_status(user: CurrentUser = Depends(require_admin)):
 
 @router.get("/scope/dimensions")
 async def list_dimensions(user: CurrentUser = Depends(get_current_user)):
+    """Distinct tag values that exist in the corpus today.
+
+    Used for the dynamic dimensions (company, meeting_type, document_type)
+    that the frontend only shows when there's data. The fixed taxonomy
+    dimensions (vertical/sector/stage/value_chain) come from the
+    /scope/taxonomy endpoint and are rendered regardless of data.
+    """
     try:
         return JSONResponse(content=scope_mod.list_dimensions())
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@router.get("/scope/taxonomy")
+async def get_taxonomy(user: CurrentUser = Depends(get_current_user)):
+    """VoLo's fixed investment taxonomy. Chips always render from this,
+    independent of whether any docs are tagged yet — clicking a chip with
+    no matches simply returns an empty bundle. Tier 2 LLM tagger writes
+    tags using ONLY values from this taxonomy."""
+    return JSONResponse(content=tier2_tagger.VOLO_TAXONOMY)
 
 
 @router.post("/scope/preview", response_model=BundlePreview)

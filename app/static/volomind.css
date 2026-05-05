@@ -145,6 +145,12 @@
     line-height: 1.4; padding: 0 0.25rem;
 }
 
+.vm-tier2-status {
+    font-size: 0.72rem; color: #2d5f3f; margin-top: 0.5rem;
+    line-height: 1.4; padding: 0.4rem 0.5rem;
+    background: #eef7f1; border-radius: 4px;
+}
+
 /* Admin controls */
 .vm-admin-only { margin-top: 0.75rem; }
 
