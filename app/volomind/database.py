@@ -334,8 +334,18 @@ def _run_init_steps() -> None:
 
 def reconcile_sources_from_config() -> None:
     """Ensure every status='active' entry in sources_config.py has a matching
-    cc_sources row. Idempotent. Removing entries from the config file does
-    NOT delete the DB row; the source just stops appearing in the UI.
+    cc_sources row. Idempotent and self-healing.
+
+    Deduplication: there's no UNIQUE constraint on (source_id, label) — adding
+    one retroactively would require a migration that fails on existing dupes.
+    Instead, this function defensively dedups every time it runs. Duplicates
+    can appear during Cloud Run rolling deploys when two containers overlap
+    and both run init() against READ COMMITTED Postgres (each SELECTs empty,
+    each INSERTs, both succeed). Picking the row with the most attached docs
+    means we never lose ingested data when collapsing dupes.
+
+    Removing entries from the config file does NOT delete the DB row; the
+    source just stops appearing in the UI.
     """
     import json
     from . import sources_config
@@ -346,22 +356,47 @@ def reconcile_sources_from_config() -> None:
             label = definition["label"]
             config_json = json.dumps(definition.get("config") or {})
 
+            # Find all matching rows (could be more than 1 from a deploy race).
             c.execute(
-                "SELECT id, config_json FROM cc_sources WHERE source_id = ? AND label = ?",
+                "SELECT id, config_json FROM cc_sources "
+                "WHERE source_id = ? AND label = ? ORDER BY id ASC",
                 (source_id, label),
             )
-            row = c.fetchone()
+            rows = c.fetchall()
 
-            if row is None:
+            if not rows:
                 c.execute(
-                    "INSERT INTO cc_sources (source_id, label, config_json) VALUES (?, ?, ?)",
+                    "INSERT INTO cc_sources (source_id, label, config_json) "
+                    "VALUES (?, ?, ?)",
                     (source_id, label, config_json),
                 )
-            elif row["config_json"] != config_json:
+                continue
+
+            # Dedup: pick the row with the most ingested docs (so we never
+            # lose work when collapsing). Tiebreak on oldest id.
+            best_id = rows[0]["id"]
+            best_count = -1
+            for row in rows:
                 c.execute(
-                    "UPDATE cc_sources SET config_json = ? WHERE id = ?",
-                    (config_json, row["id"]),
+                    "SELECT COUNT(*) AS n FROM cc_documents WHERE source_pk = ?",
+                    (row["id"],),
                 )
+                n = c.fetchone()["n"] or 0
+                if n > best_count or (n == best_count and row["id"] < best_id):
+                    best_count = n
+                    best_id = row["id"]
+
+            # Delete the losers. CASCADE will cleanup their (probably zero)
+            # docs/segments/tags. We just preserved any winner with data above.
+            for row in rows:
+                if row["id"] != best_id:
+                    c.execute("DELETE FROM cc_sources WHERE id = ?", (row["id"],))
+
+            # Update winner's config to current values.
+            c.execute(
+                "UPDATE cc_sources SET config_json = ? WHERE id = ?",
+                (config_json, best_id),
+            )
 
 
 def _cleanup_stale_sync_runs() -> None:
