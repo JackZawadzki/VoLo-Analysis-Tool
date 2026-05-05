@@ -155,6 +155,26 @@ CREATE TABLE IF NOT EXISTS cc_chat_messages (
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS ix_cc_messages_thread ON cc_chat_messages(thread_id);
+
+-- Sync runs: track background ingestion jobs. Long syncs (e.g. 36K-file
+-- Drive walk) run in a daemon thread that updates this row every ~50 docs
+-- so the frontend can poll for progress without keeping an HTTP request
+-- open. status: 'running' | 'complete' | 'error' | 'interrupted'.
+CREATE TABLE IF NOT EXISTS cc_sync_runs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_pk       INTEGER NOT NULL REFERENCES cc_sources(id) ON DELETE CASCADE,
+    started_by      INTEGER NOT NULL,        -- soft user_id ref into rvm.db
+    status          TEXT NOT NULL DEFAULT 'running',
+    fetched         INTEGER NOT NULL DEFAULT 0,
+    inserted        INTEGER NOT NULL DEFAULT 0,
+    skipped         INTEGER NOT NULL DEFAULT 0,
+    errors_json     TEXT NOT NULL DEFAULT '[]',
+    last_error      TEXT,
+    started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_cc_sync_runs_source ON cc_sync_runs(source_pk);
 """
 
 
@@ -180,11 +200,28 @@ def cursor() -> Iterator[sqlite3.Cursor]:
 
 def init() -> None:
     """Run all CREATE TABLE IF NOT EXISTS statements + reconcile sources from
-    the config file. Idempotent — safe to run on every startup.
+    the config file + clean up stale sync runs. Idempotent.
     """
     with cursor() as c:
         c.executescript(_SCHEMA)
     reconcile_sources_from_config()
+    _cleanup_stale_sync_runs()
+
+
+def _cleanup_stale_sync_runs() -> None:
+    """Mark any cc_sync_runs left in 'running' state as 'interrupted'.
+
+    Daemon threads die when the container restarts, leaving orphan rows.
+    On boot we reconcile so the UI can show "interrupted — click sync to
+    resume" instead of stale "running" forever.
+    """
+    with cursor() as c:
+        c.execute(
+            "UPDATE cc_sync_runs "
+            "SET status = 'interrupted', last_error = 'container restart', "
+            "    completed_at = datetime('now') "
+            "WHERE status = 'running'"
+        )
 
 
 def reconcile_sources_from_config() -> None:

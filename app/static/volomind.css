@@ -125,6 +125,21 @@
     align-self: center;
 }
 
+.vm-source-progress {
+    font-size: 0.72rem; color: #1a472a; margin-top: 4px;
+    font-weight: 500;
+    display: flex; align-items: center; gap: 6px;
+}
+.vm-source-progress::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: #2d5f3f;
+    animation: vm-pulse 1.4s ease-in-out infinite;
+}
+@keyframes vm-pulse {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+}
+
 .vm-side-footnote {
     font-size: 0.7rem; color: #999; margin: 0.5rem 0 0;
     line-height: 1.4; padding: 0 0.25rem;

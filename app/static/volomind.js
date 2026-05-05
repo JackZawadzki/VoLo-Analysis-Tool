@@ -56,8 +56,8 @@
         unavailable: false,
         chatConfigured: false,
         isAdmin: false,
-        active: [],          // active sources (DB rows + counts)
-        roadmap: [],      // coming-soon sources (config-only)
+        active: [],
+        roadmap: [],
         threads: [],
         activeThreadId: null,
         messages: [],
@@ -65,6 +65,10 @@
         dimensions: {},
         bundle: null,
         sending: false,
+        // Per-source-pk → polling intervalId (so we can cancel)
+        syncPolls: {},
+        // Per-source-pk → latest sync_status payload
+        syncStatus: {},
     };
 
     function emptyScope() {
@@ -142,6 +146,16 @@
             const resp = await vmGet('/api/volomind/sources');
             state.active = resp.active || [];
             state.roadmap = resp.roadmap || [];
+            // Seed syncStatus from server-side latest run; pick up polling
+            // for any source still running (e.g. user reloaded mid-sync).
+            state.active.forEach(s => {
+                if (s.sync_status) {
+                    state.syncStatus[s.id] = s.sync_status;
+                    if (s.sync_status.status === 'running') {
+                        ensureSyncPolling(s.id);
+                    }
+                }
+            });
         } catch (e) {
             state.active = [];
             state.roadmap = [];
@@ -170,25 +184,68 @@
         list.innerHTML = sections.join('');
 
         list.querySelectorAll('[data-act="sync"]').forEach(btn => {
-            btn.addEventListener('click', async () => {
-                const id = btn.dataset.id;
-                btn.disabled = true; btn.textContent = '…';
-                try {
-                    const r = await vmPost(`/api/volomind/sources/${id}/sync`);
-                    toast(`Synced: ${r.fetched} fetched, ${r.inserted} new${r.errors.length ? ', ' + r.errors.length + ' errors' : ''}`);
-                    if (r.errors.length) console.warn('VoLo Mind sync errors:', r.errors);
-                } catch (e) {
-                    toast('Sync failed: ' + e.message, 'err');
-                } finally {
-                    btn.disabled = false; btn.textContent = 'sync';
-                    await refreshSources();
-                    await refreshDimensions();
-                }
-            });
+            btn.addEventListener('click', () => triggerSync(parseInt(btn.dataset.id)));
+        });
+
+        // Re-attach polling for any sources that were already syncing
+        // (e.g. user reloaded the page mid-sync)
+        state.active.forEach(s => {
+            if (state.syncStatus[s.id] && state.syncStatus[s.id].status === 'running') {
+                ensureSyncPolling(s.id);
+            }
         });
     }
 
+    async function triggerSync(sourcePk) {
+        try {
+            await vmPost(`/api/volomind/sources/${sourcePk}/sync`);
+            // Optimistic: mark as running immediately
+            state.syncStatus[sourcePk] = { status: 'running', fetched: 0, inserted: 0 };
+            renderSources();
+            ensureSyncPolling(sourcePk);
+        } catch (e) {
+            toast('Sync failed to start: ' + e.message, 'err');
+        }
+    }
+
+    function ensureSyncPolling(sourcePk) {
+        if (state.syncPolls[sourcePk]) return;  // already polling
+        const tick = async () => {
+            try {
+                const status = await vmGet(`/api/volomind/sources/${sourcePk}/sync-status`);
+                state.syncStatus[sourcePk] = status;
+                renderSources();
+                if (status.status !== 'running') {
+                    clearInterval(state.syncPolls[sourcePk]);
+                    delete state.syncPolls[sourcePk];
+                    // Refresh corpus-derived data once sync ends
+                    await refreshSources();
+                    await refreshDimensions();
+                    if (status.status === 'complete') {
+                        toast(`Sync complete: ${status.fetched} fetched, ${status.inserted} new${status.last_error ? ' (with errors)' : ''}`);
+                    } else if (status.status === 'error') {
+                        toast('Sync error: ' + (status.last_error || 'unknown'), 'err');
+                    } else if (status.status === 'interrupted') {
+                        toast('Sync interrupted (container restart). Click sync to resume.', 'err');
+                    }
+                }
+            } catch (e) {
+                console.warn('sync-status poll failed:', e);
+            }
+        };
+        // Tick once immediately, then every 3 seconds.
+        tick();
+        state.syncPolls[sourcePk] = setInterval(tick, 3000);
+    }
+
     function renderActiveSource(s) {
+        const status = state.syncStatus[s.id];
+        const isRunning = status && status.status === 'running';
+        const progressLine = isRunning
+            ? `<div class="vm-source-progress">syncing… ${status.fetched || 0} fetched, ${status.inserted || 0} new</div>`
+            : '';
+        const buttonLabel = isRunning ? '…' : 'sync';
+        const buttonAttr = isRunning ? 'disabled' : '';
         return `
             <li class="vm-source-row">
                 <div class="vm-source-info">
@@ -196,10 +253,11 @@
                     <div class="vm-source-meta">
                         ${escapeHtml(s.source_id)} · ${s.document_count} docs${s.last_synced_at ? ' · synced ' + relTime(s.last_synced_at) : ' · never synced'}
                     </div>
+                    ${progressLine}
                 </div>
                 ${state.isAdmin ? `
                     <div class="vm-source-actions">
-                        <button class="vm-row-btn" data-act="sync" data-id="${s.id}">sync</button>
+                        <button class="vm-row-btn" data-act="sync" data-id="${s.id}" ${buttonAttr}>${buttonLabel}</button>
                     </div>
                 ` : ''}
             </li>

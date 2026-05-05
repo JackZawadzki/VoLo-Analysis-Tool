@@ -59,10 +59,10 @@ SOURCES: list[SourceDefinition] = [
         "source_id": "gdrive_admin",
         "label": "Portfolio Company Information",
         "config": {
-            "root_folder_id": "",  # paste from drive.google.com/drive/folders/<ID>
+            "root_folder_id": "0ABh0_KkvJonSUk9PVA",
             "co_type": "portfolio",
         },
-        "enabled": False,
+        "enabled": True,
         "description": "Volo's portfolio company dataroom.",
     },
     {
