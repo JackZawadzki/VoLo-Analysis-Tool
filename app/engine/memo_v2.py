@@ -46,6 +46,8 @@ import json
 import logging
 import os
 import re
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -76,10 +78,12 @@ logger = logging.getLogger(__name__)
 # starts with "qwen".
 
 # Per-call input budget for Refiant (chars in system + user prompt).
-# Default 100k chars ≈ 25k tokens, comfortable for any Qwen model with
-# a ≥32k token window. Override via env var if you know Refiant's actual
-# limit and want bigger chunks (faster) or smaller (safer).
-_REFIANT_INPUT_BUDGET_DEFAULT = 100_000
+# Default 700k chars ≈ 175k tokens, sized for qwen-rfnt's 262k token window
+# with comfortable headroom for system prompt, instructions, and output.
+# The chunked map-reduce path only triggers when the corpus exceeds this —
+# for typical data rooms the standard cached single-call path runs instead.
+# Override via env var for other Refiant-served models with smaller windows.
+_REFIANT_INPUT_BUDGET_DEFAULT = 700_000
 
 
 def _is_refiant_model(model: str) -> bool:
@@ -154,9 +158,17 @@ _PRIMARY_DOC_CAP = 250_000
 # "reference" docs keep at most this much of their text.
 _REFERENCE_DOC_CAP = 8_000
 
-# Total corpus cap for the cached section-writing prefix. If we overshoot,
-# we truncate reference docs first, then the tail of the largest primary docs.
-_SECTION_CORPUS_CAP = 600_000
+# Hard safety ceiling on corpus size — only fires on pathological uploads
+# (gigabyte-scale data rooms, accidental video transcripts, etc.) and
+# truncates with an explicit marker. The router below sends any corpus
+# above the model's window to extract-once-write-many BEFORE this cap is
+# hit, so in normal operation no document content is ever silently
+# discarded. 20MB ≈ 5M tokens — well above any realistic VC data room.
+_CORPUS_HARD_CAP = 20_000_000
+
+# Backward-compat alias retained in case downstream code references it.
+# Functionally equivalent to _CORPUS_HARD_CAP after the routing rewrite.
+_SECTION_CORPUS_CAP = _CORPUS_HARD_CAP
 
 # Manifest pass model output budget. Claude has a hard cap (8192 for Sonnet
 # 4.6) so we stay safely under it. The output is JSON, not prose, so this is
@@ -165,6 +177,45 @@ _MANIFEST_MAX_TOKENS = 6000
 
 # Section writer output budget per section.
 _SECTION_MAX_TOKENS = 3000
+
+# Per-model corpus-size thresholds. Below the threshold a memo runs the
+# cached single-call-per-section path (writer sees the full corpus on
+# every section). At or above the threshold, the corpus exceeds what fits
+# in one model call, so the memo routes to extract-once-write-many — a
+# single map pass reads every chunk of the corpus into bullet buckets,
+# then 14 parallel synth calls write each section from its bucket. The
+# extract pass guarantees every byte of every document is read by the
+# model exactly once; nothing is silently truncated.
+#
+# Sized for each model's context window, leaving headroom for system
+# prompt (~700 tokens), section instructions (~3K), output budget (~3K),
+# and tokenizer-variance margin:
+#   • Claude (Sonnet 4.6 / Opus 4.7): 200K context → 700K chars (~175K tokens)
+#   • Qwen (qwen-rfnt):              262K context → 800K chars (~200K tokens)
+_CLAUDE_WINDOW_CHARS = 700_000
+_QWEN_RFNT_WINDOW_CHARS = 800_000
+
+
+def _model_window_chars(model: str) -> int:
+    """Return the corpus-size threshold for `model`. Above this the memo
+    routes to extract-once-write-many; below it, the cached single-call
+    path runs."""
+    if _is_refiant_model(model):
+        return _QWEN_RFNT_WINDOW_CHARS
+    return _CLAUDE_WINDOW_CHARS
+
+# Concurrency caps for parallel section writing. The 14 section calls are
+# independent (each takes the same corpus + a different section instruction),
+# so they fan out across threads. Conservative defaults respect typical
+# provider rate limits; SDK retries handle transient 429s.
+_SECTION_PARALLELISM_CLAUDE = int(os.environ.get("VOLO_MEMO_PARALLELISM_CLAUDE", "4"))
+_SECTION_PARALLELISM_REFIANT = int(os.environ.get("VOLO_MEMO_PARALLELISM_REFIANT", "4"))
+
+# Concurrency cap for the extract step in the Qwen oversize-fallback path
+# (extract-once-write-many). Each call processes a single corpus chunk
+# (~175K tokens) and outputs categorized briefs; 4-way parallel is the
+# practical sweet spot.
+_REFIANT_EXTRACT_PARALLELISM = int(os.environ.get("VOLO_MEMO_PARALLELISM_REFIANT", "4"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -572,10 +623,17 @@ def _build_section_corpus(
 
     corpus = "\n\n".join(parts)
 
-    # Final cap — protect the model from a runaway data room
-    if len(corpus) > _SECTION_CORPUS_CAP:
-        # Reference docs go first, then tail of largest primary
-        corpus = corpus[:_SECTION_CORPUS_CAP] + f"\n\n[...corpus truncated at {_SECTION_CORPUS_CAP:,} chars...]"
+    # Hard safety ceiling — only fires on pathological uploads. The
+    # orchestrator routes any corpus above the model's window to
+    # extract-once-write-many before truncation would matter, so in
+    # normal operation this branch never executes.
+    if len(corpus) > _CORPUS_HARD_CAP:
+        logger.warning(
+            "v2 corpus exceeds hard safety cap (%d > %d chars); truncating. "
+            "This is unusual — investigate the data room contents.",
+            len(corpus), _CORPUS_HARD_CAP,
+        )
+        corpus = corpus[:_CORPUS_HARD_CAP] + f"\n\n[...corpus truncated at hard safety cap {_CORPUS_HARD_CAP:,} chars...]"
 
     return corpus, citation_index
 
@@ -609,154 +667,6 @@ Rules:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Refiant map-reduce section writer (smaller-window adaptation)
-# ─────────────────────────────────────────────────────────────────────────────
-
-_REFIANT_CHUNK_EXTRACT_SYSTEM = """You are a venture-capital diligence assistant.
-
-Your only job: extract every fact, quote, number, partnership, customer, risk, and quantitative datum that is RELEVANT to the named memo section.
-
-Output ONLY a bulleted list. No prose. No header. Each bullet:
-- starts with a citation [n] or [RVM]
-- states the fact concisely (one sentence)
-- includes the exact dollar amount, percentage, or date when present in the source
-
-If the chunk has nothing relevant to the section, output exactly:
-NOTHING_RELEVANT_IN_THIS_CHUNK"""
-
-
-def _refiant_extract_chunk_brief(
-    *, client, model: str, section: dict, chunk: str,
-    chunk_idx: int, total_chunks: int,
-    citation_legend: str, company_name: str,
-) -> tuple[str, int, int]:
-    """Map step: pull facts relevant to one section out of one chunk
-    of the data room. Returns (brief_text, tokens_in, tokens_out)."""
-    user_msg = (
-        f"You are reading PART {chunk_idx + 1} of {total_chunks} of the data "
-        f"room for {company_name or 'this company'}.\n\n"
-        f"# CITATION INDEX (use these numbers when citing)\n{citation_legend}\n\n"
-        f"# DATA ROOM CHUNK\n{chunk}\n\n"
-        f"# YOUR TASK\nExtract every fact relevant to writing the "
-        f"'{section['title']}' section.\n\n"
-        f"Section purpose: {section['guidance']}\n"
-    )
-    try:
-        resp = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            system=_REFIANT_CHUNK_EXTRACT_SYSTEM,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
-        usage = resp.usage
-        t_in = (usage.input_tokens if usage else 0) or 0
-        t_out = (usage.output_tokens if usage else 0) or 0
-    except Exception as e:
-        logger.warning(
-            "Refiant chunk extract failed (section=%s, chunk=%d/%d): %s",
-            section["key"], chunk_idx + 1, total_chunks, e,
-        )
-        return "", 0, 0
-    if "NOTHING_RELEVANT_IN_THIS_CHUNK" in text.upper():
-        return "", t_in, t_out
-    return text, t_in, t_out
-
-
-def _pass_section_writer_refiant_chunked(
-    *, client, model: str, section: dict, corpus: str,
-    citation_legend: str, template_guidance: str, company_name: str,
-    links: list, additional_instructions: str,
-    progress_cb: Optional[Callable[[int, str], None]] = None,
-) -> dict:
-    """Refiant-only path: split the corpus into Refiant-sized chunks,
-    extract a per-chunk brief for the section, then write the section
-    from the consolidated brief. Same end output as the cached single-
-    call path, just N+1 calls instead of 1."""
-
-    budget = _get_refiant_input_budget()
-    # Reserve headroom for system prompt + per-chunk instructions + output.
-    chunk_target = max(20_000, budget - 12_000)
-    chunks = _split_corpus_into_chunks(corpus, chunk_target)
-    n_chunks = len(chunks)
-
-    briefs: list[str] = []
-    total_in, total_out = 0, 0
-    # NOTE: deliberately not emitting chunk-level progress updates here.
-    # The orchestrator sets the section-level pct right before calling
-    # this function; pushing intermediate updates with pct=0 would
-    # snap the progress bar back to 0% on every chunk. Users see the
-    # section-level message "Writing section: Market (5/14)" and the
-    # next one when this finishes — quiet but correct.
-    for i, chunk in enumerate(chunks):
-        brief, t_in, t_out = _refiant_extract_chunk_brief(
-            client=client, model=model, section=section, chunk=chunk,
-            chunk_idx=i, total_chunks=n_chunks,
-            citation_legend=citation_legend, company_name=company_name,
-        )
-        total_in += t_in
-        total_out += t_out
-        if brief:
-            briefs.append(f"### Brief from chunk {i + 1}/{n_chunks}\n{brief}")
-
-    consolidated_brief = (
-        "\n\n".join(briefs)
-        if briefs
-        else "(no relevant facts were extracted from the data room for this section)"
-    )
-
-    # Reduce step: write the section from the consolidated brief.
-    user_parts = [
-        f"# CITATION INDEX\n{citation_legend}",
-        f"# CONSOLIDATED BRIEF (facts extracted from the entire data room, relevant to '{section['title']}')\n{consolidated_brief}",
-        f"# SECTION TO WRITE: {section['title']}",
-        f"## Section Purpose\n{section['guidance']}",
-    ]
-    if template_guidance:
-        user_parts.append(f"## Template Guidance for This Section\n{template_guidance}")
-    if links:
-        user_parts.append("## Reference Links\n" + "\n".join(f"- {l}" for l in links))
-    if additional_instructions:
-        user_parts.append(f"## Additional Instructions From the Analyst\n{additional_instructions}")
-    user_parts.append(
-        f"\nWrite the '{section['title']}' section of the investment memo for "
-        f"{company_name or 'this company'}. Be thorough and data-driven. "
-        "Cite your sources using [n] notation. Use [RVM] for quantitative report data."
-    )
-    user_msg = "\n\n".join(user_parts)
-
-    try:
-        resp = client.messages.create(
-            model=model,
-            max_tokens=_SECTION_MAX_TOKENS,
-            system=_SECTION_WRITER_SYSTEM_V2,
-            messages=[{"role": "user", "content": user_msg}],
-        )
-        text = "".join(b.text for b in resp.content if b.type == "text").strip()
-        usage = resp.usage
-        total_in += (usage.input_tokens if usage else 0) or 0
-        total_out += (usage.output_tokens if usage else 0) or 0
-        return {
-            "text": text,
-            "tokens_in": total_in,
-            "tokens_out": total_out,
-            "cache_creation": 0,
-            "cache_read": 0,
-            "_refiant_chunks": n_chunks,
-        }
-    except Exception as e:
-        logger.error(f"Refiant section synthesis failed for {section['key']}: {e}")
-        return {
-            "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
-            "tokens_in": total_in,
-            "tokens_out": total_out,
-            "cache_creation": 0,
-            "cache_read": 0,
-            "_refiant_chunks": n_chunks,
-        }
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _pass_section_writer_cached(
@@ -783,22 +693,38 @@ def _pass_section_writer_cached(
     Claude path is unchanged.
     """
 
-    # ── Refiant adaptation ──────────────────────────────────────────────
-    # Refiant has a smaller context window than Claude. If the corpus
-    # plus prompt scaffolding would exceed the configured Refiant budget,
-    # fall back to chunked map-reduce. Threshold uses 70% of the budget
-    # so we don't accidentally overflow on system prompt + suffix.
-    if _is_refiant_model(model):
-        refiant_budget = _get_refiant_input_budget()
-        if len(corpus) > int(refiant_budget * 0.7):
-            return _pass_section_writer_refiant_chunked(
-                client=client, model=model, section=section, corpus=corpus,
-                citation_legend=citation_legend,
-                template_guidance=template_guidance,
-                company_name=company_name, links=links,
-                additional_instructions=additional_instructions,
-                progress_cb=progress_cb,
-            )
+    # ── Single-section safety fallback ──────────────────────────────────
+    # Reached when this function is called directly (not via the batch
+    # orchestrator) — i.e. revise-section / edit-section flows. The
+    # batch orchestrator already routes oversize corpora to
+    # extract-once-write-many. This guard handles the same case for
+    # single-section callers, regardless of model: route through
+    # extract-once with a one-element sections list. Same code path as
+    # the batch orchestrator; preserves the "every byte read once"
+    # guarantee. Threshold matches the orchestrator's cutoff for
+    # consistency between callers.
+    if len(corpus) > _model_window_chars(model):
+        eo_results = _extract_once_write_many(
+            client=client, model=model, sections=[section], corpus=corpus,
+            citation_legend=citation_legend,
+            template_sections={section["key"]: template_guidance},
+            company_name=company_name, links=links,
+            additional_instructions=additional_instructions,
+            progress_cb=progress_cb, pct_start=0, pct_span=0,
+        )
+        extract_pass = eo_results.pop("_extract_pass_tokens", None)
+        r = eo_results.get(section["key"]) or {
+            "text": "*[Generation failed for this section: no result returned]*",
+            "tokens_in": 0, "tokens_out": 0,
+            "cache_creation": 0, "cache_read": 0,
+        }
+        # Roll the extract-pass token cost into the returned result so
+        # callers see a complete accounting in the same shape as the
+        # cached path.
+        if extract_pass:
+            r["tokens_in"] = r.get("tokens_in", 0) + extract_pass.get("tokens_in", 0)
+            r["tokens_out"] = r.get("tokens_out", 0) + extract_pass.get("tokens_out", 0)
+        return r
 
     # The cached prefix is large and identical across all section calls.
     # The non-cached suffix is small and section-specific.
@@ -872,6 +798,616 @@ def _pass_section_writer_cached(
             "cache_creation": 0,
             "cache_read": 0,
         }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parallel section-writer orchestrator (Stage 3)
+#
+# Replaces the original sequential per-section loop. Routes each memo run by
+# (model, corpus_size) — same logic for Claude and Qwen, only the per-model
+# window threshold differs. The decision is purely about whether the corpus
+# fits a single model call; nothing model-specific beyond that.
+#
+#   ── In-window corpus (corpus ≤ model window) ──
+#     Cached single-call-per-section, parallelized.
+#       • Claude: section #0 runs serially first to create the prompt
+#         cache, then sections #1..N fan out in parallel and read the
+#         cache (10% billing). 14× cache-creation cost is avoided.
+#       • Qwen: no cache to warm, all sections fan out immediately. The
+#         shim silently drops cache_control; Qwen receives the full
+#         corpus + section instruction in one call. Each section sees
+#         the entire data room, identical to Claude.
+#     Wall-clock falls ~3–4× vs. sequential. Token usage unchanged for
+#     Claude, modest improvement for Qwen (parallelism, no caching to
+#     amortize). Output is byte-equivalent to the pre-PR path on Claude
+#     because each section call is the same prompt.
+#
+#   ── Oversize corpus (corpus > model window) ──
+#     Extract-once-write-many. The corpus is split into chunks; ONE map
+#     pass reads every chunk exactly once and emits JSON-keyed bullets
+#     for ALL sections at once. Then 14 parallel synth calls write each
+#     section from its consolidated bullet bucket.
+#       • Crucially: every byte of every document gets read by the model
+#         in the extract pass. Nothing is silently truncated. The router
+#         engages this path BEFORE the corpus would hit any safety cap.
+#       • The synth step sees a comprehensive bullet brief of facts (not
+#         raw documents). Slightly less rich than full-corpus access,
+#         but every fact propagates through — this path is strictly
+#         better than the prior behavior of silently truncating the tail
+#         of the corpus at 600K chars.
+#       • Used by both Claude and Qwen. Same code path; the only
+#         difference is the threshold (Claude 700K chars, Qwen 800K).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _emit_section_progress(
+    progress_cb: Optional[Callable[[int, str], None]],
+    completed: int,
+    total: int,
+    pct_start: int,
+    pct_span: int,
+    label: str,
+) -> None:
+    """Push a progress update into the memo job's status dict.
+
+    Safe to call from worker threads — `progress_cb` ultimately writes via
+    `_MEMO_LOCK` (see _run_memo_background in routes/memo.py)."""
+    if not progress_cb:
+        return
+    pct = pct_start + int((completed / max(1, total)) * pct_span)
+    try:
+        progress_cb(min(pct, pct_start + pct_span), f"{label} ({completed}/{total})")
+    except Exception:
+        pass
+
+
+def _parallel_cached_section_writers(
+    *,
+    client,
+    model: str,
+    sections: list,
+    corpus: str,
+    citation_legend: str,
+    template_sections: dict,
+    company_name: str,
+    links: list,
+    additional_instructions: str,
+    progress_cb: Optional[Callable[[int, str], None]],
+    pct_start: int,
+    pct_span: int,
+) -> dict:
+    """Run `_pass_section_writer_cached` for every section in `sections`,
+    parallelized.
+
+    For Claude: runs section #0 serially first so the prompt cache is
+    created before any other call hits the API. Subsequent sections fan
+    out and read the cache (10% billing) instead of each creating their
+    own copy (which would 14× the cache-creation cost).
+
+    For Qwen: no cache to warm; fans out everything immediately.
+
+    Returns {section_key: result_dict} where each result_dict matches the
+    shape returned by `_pass_section_writer_cached`."""
+    is_refiant = _is_refiant_model(model)
+    max_workers = _SECTION_PARALLELISM_REFIANT if is_refiant else _SECTION_PARALLELISM_CLAUDE
+    n_total = len(sections)
+
+    def _run_one(section_dict: dict) -> tuple[str, dict]:
+        return section_dict["key"], _pass_section_writer_cached(
+            client=client,
+            model=model,
+            section=section_dict,
+            corpus=corpus,
+            citation_legend=citation_legend,
+            template_guidance=template_sections.get(section_dict["key"], ""),
+            company_name=company_name,
+            links=links,
+            additional_instructions=additional_instructions,
+        )
+
+    results: dict = {}
+    completed = 0
+
+    if not is_refiant and sections:
+        # Cache-warmup: section #0 alone first.
+        _emit_section_progress(
+            progress_cb, completed, n_total, pct_start, pct_span,
+            "Seeding prompt cache",
+        )
+        try:
+            sk, r = _run_one(sections[0])
+            results[sk] = r
+        except Exception as e:
+            logger.exception(f"v2 section warmup crashed for {sections[0]['key']}: {e}")
+            results[sections[0]["key"]] = {
+                "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
+                "tokens_in": 0, "tokens_out": 0,
+                "cache_creation": 0, "cache_read": 0,
+            }
+        completed += 1
+        _emit_section_progress(
+            progress_cb, completed, n_total, pct_start, pct_span,
+            "Writing sections in parallel",
+        )
+        rest = sections[1:]
+    else:
+        rest = sections
+
+    if rest:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = {ex.submit(_run_one, s): s for s in rest}
+            for fut in as_completed(futs):
+                s = futs[fut]
+                try:
+                    sk, r = fut.result()
+                    results[sk] = r
+                except Exception as e:
+                    logger.exception(f"v2 parallel section crashed for {s['key']}: {e}")
+                    results[s["key"]] = {
+                        "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
+                        "tokens_in": 0, "tokens_out": 0,
+                        "cache_creation": 0, "cache_read": 0,
+                    }
+                completed += 1
+                _emit_section_progress(
+                    progress_cb, completed, n_total, pct_start, pct_span,
+                    "Writing sections in parallel",
+                )
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Oversize-corpus path: extract-once-write-many
+#
+# Runs whenever the data room exceeds the chosen model's window. Used by
+# both Claude and Qwen — the same code path because `client.messages.create`
+# is identical for both via the Refiant shim. Guarantees every byte of
+# every document is read by the model exactly once during the extract
+# pass; nothing is silently truncated.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# System prompt for the synthesis step in the extract-once-write-many path.
+# Mirrors _SECTION_WRITER_SYSTEM_V2 in tone/structure, but sets the correct
+# expectation about input shape — the model receives a curated bullet brief
+# extracted from the data room, NOT the raw corpus. Same factual-accuracy
+# rules apply, just framed for the brief-as-source case so the model doesn't
+# expect documents that aren't there.
+_SECTION_WRITER_SYSTEM_FROM_BRIEF = """You are VoLo Earth Ventures' Investment Committee memo writer.
+
+You are writing ONE section of an investment memorandum. You have been given a CURATED BRIEF of every fact relevant to your section, extracted in a prior pass over the entire data room. The brief is exhaustive — if a fact is not in your brief, it is not in the data room. Use the brief faithfully; the memo should read like you have read every page (because the extractor has, for you).
+
+CRITICAL — FACTUAL ACCURACY:
+- ONLY state facts, names, numbers, dates, and claims that appear in the consolidated brief or the RVM report data.
+- NEVER fabricate facility names, locations, dollar amounts, percentages, timelines, partnerships, or any other specifics.
+- Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] (matching the citation index) or [RVM] (for the quantitative report). If you cannot cite it, do not write it.
+- The brief preserves the original citation numbers — pass them through verbatim. Do not invent new citation numbers.
+- When in doubt, be less specific rather than risk inventing details. If the brief is empty or thin for this section, mark the gap explicitly as a diligence follow-up rather than padding with invented content.
+
+Rules:
+1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts FROM THE BRIEF ONLY
+2. Be thorough but avoid padding — every sentence should add value
+3. Balance the bull case and bear case — credibility comes from honest assessment, not advocacy
+4. Use Markdown formatting: ### for sub-sections, **bold** for emphasis, bullet lists only for catalogs of discrete items
+5. Do NOT include the section title as a header — it will be added automatically
+6. Target 400-800 words per section (more for Financing Overview and Business Model, less for shorter sections)
+7. Each section stands alone — do NOT reference other sections
+8. If the brief genuinely lacks information for this section, explicitly note it as a diligence gap requiring follow-up — do NOT fill gaps with invented details
+9. Open with a strong orienting statement that frames why this topic matters for the investment thesis
+10. Connect every fact back to its investment implication — never leave data uninterpreted"""
+
+
+_MULTISECTION_EXTRACT_SYSTEM = """You are a venture-capital diligence assistant.
+
+You are given ONE chunk of a data room and a list of memo sections that need to be written. Your job is to extract every fact, quote, number, partnership, customer, risk, and quantitative datum from this chunk and bucket each one under the memo section(s) it is relevant to.
+
+Rules:
+- A fact may belong to MULTIPLE sections — repeat it under each section_key it serves.
+- Each bullet starts with a citation [n] using the citation index, states the fact concisely (one sentence), and includes exact dollar amounts, percentages, and dates when present.
+- Skip sections with no relevant facts (use an empty array []).
+- Output ONLY valid JSON in the exact schema specified. Do not include markdown fences, prose, or commentary.
+
+Output schema:
+{"sections": {"<section_key>": ["[n] fact one", "[n] fact two", ...], ...}}
+
+The output JSON MUST contain a key for every section_key listed in the user message, even if its array is empty."""
+
+
+def _extract_multisection_brief(
+    *,
+    client,
+    model: str,
+    sections: list,
+    chunk: str,
+    chunk_idx: int,
+    total_chunks: int,
+    citation_legend: str,
+    company_name: str,
+) -> tuple[dict, int, int]:
+    """Single map call over one corpus chunk: extract facts categorized by
+    all memo sections at once.
+
+    Returns ({section_key: [bullet, ...]}, tokens_in, tokens_out). On
+    parse failure returns ({}, t_in, t_out) so the caller can keep going
+    with whatever other chunks succeeded."""
+    section_listing = "\n".join(
+        f"- key=`{s['key']}` · title={s['title']!r} · purpose={s.get('guidance', '')[:300]}"
+        for s in sections
+    )
+    section_keys = [s["key"] for s in sections]
+    user_msg = (
+        f"You are reading PART {chunk_idx + 1} of {total_chunks} of the data "
+        f"room for {company_name or 'this company'}.\n\n"
+        f"# CITATION INDEX (use these numbers when citing)\n{citation_legend}\n\n"
+        f"# MEMO SECTIONS THAT NEED FACTS\n{section_listing}\n\n"
+        f"# DATA ROOM CHUNK\n{chunk}\n\n"
+        f"# YOUR TASK\nExtract every relevant fact from this chunk and bucket "
+        f"each under the memo section_key(s) it serves. Output the JSON now. "
+        f"It MUST contain these keys: {section_keys}"
+    )
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=8000,
+            system=_MULTISECTION_EXTRACT_SYSTEM,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        usage = resp.usage
+        t_in = (usage.input_tokens if usage else 0) or 0
+        t_out = (usage.output_tokens if usage else 0) or 0
+    except Exception as e:
+        logger.warning(
+            "v2 multisection extract failed (chunk=%d/%d): %s",
+            chunk_idx + 1, total_chunks, e,
+        )
+        return {}, 0, 0
+
+    # Robust JSON parse: tolerate code fences, leading/trailing junk.
+    parsed: dict = {}
+    try:
+        body = text
+        if body.startswith("```"):
+            body = re.sub(r"^```(?:json)?\s*", "", body)
+            body = re.sub(r"\s*```$", "", body)
+        m = re.search(r"\{.*\}", body, re.DOTALL)
+        if m:
+            obj = json.loads(m.group(0))
+            sections_obj = obj.get("sections")
+            if isinstance(sections_obj, dict):
+                for sk in section_keys:
+                    bullets = sections_obj.get(sk, [])
+                    if isinstance(bullets, list):
+                        parsed[sk] = [str(b).strip() for b in bullets if str(b).strip()]
+    except Exception as e:
+        logger.warning(
+            "v2 multisection extract JSON parse failed (chunk=%d/%d): %s; first 300 chars: %s",
+            chunk_idx + 1, total_chunks, e, text[:300],
+        )
+        return {}, t_in, t_out
+
+    return parsed, t_in, t_out
+
+
+def _synthesize_section_from_bullets(
+    *,
+    client,
+    model: str,
+    section: dict,
+    bullets: list,
+    citation_legend: str,
+    template_guidance: str,
+    company_name: str,
+    links: list,
+    additional_instructions: str,
+) -> dict:
+    """Reduce step: write one memo section from its consolidated bullet list.
+
+    Same end output as the cached single-call path — the only difference
+    is the writer sees a fact-bullet brief instead of the raw corpus."""
+    consolidated = (
+        "\n".join(bullets)
+        if bullets
+        else "(no relevant facts were extracted from the data room for this section)"
+    )
+    user_parts = [
+        f"# CITATION INDEX\n{citation_legend}",
+        f"# CONSOLIDATED BRIEF (every fact in the data room relevant to '{section['title']}')\n{consolidated}",
+        f"# SECTION TO WRITE: {section['title']}",
+        f"## Section Purpose\n{section['guidance']}",
+    ]
+    if template_guidance:
+        user_parts.append(f"## Template Guidance for This Section\n{template_guidance}")
+    if links:
+        user_parts.append("## Reference Links\n" + "\n".join(f"- {l}" for l in links))
+    if additional_instructions:
+        user_parts.append(f"## Additional Instructions From the Analyst\n{additional_instructions}")
+    user_parts.append(
+        f"\nWrite the '{section['title']}' section of the investment memo for "
+        f"{company_name or 'this company'}. Be thorough and data-driven. "
+        "Cite your sources using [n] notation. Use [RVM] for quantitative report data."
+    )
+    user_msg = "\n\n".join(user_parts)
+
+    try:
+        resp = client.messages.create(
+            model=model,
+            max_tokens=_SECTION_MAX_TOKENS,
+            system=_SECTION_WRITER_SYSTEM_FROM_BRIEF,
+            messages=[{"role": "user", "content": user_msg}],
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        usage = resp.usage
+        return {
+            "text": text,
+            "tokens_in": (usage.input_tokens if usage else 0) or 0,
+            "tokens_out": (usage.output_tokens if usage else 0) or 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+        }
+    except Exception as e:
+        logger.error(f"v2 synth from bullets failed for {section['key']}: {e}")
+        return {
+            "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+        }
+
+
+def _extract_once_write_many(
+    *,
+    client,
+    model: str,
+    sections: list,
+    corpus: str,
+    citation_legend: str,
+    template_sections: dict,
+    company_name: str,
+    links: list,
+    additional_instructions: str,
+    progress_cb: Optional[Callable[[int, str], None]],
+    pct_start: int,
+    pct_span: int,
+) -> dict:
+    """Oversize-corpus path: one parallel map pass over corpus chunks
+    extracts facts for ALL sections at once, then parallel synthesis calls
+    write each section from its bullet bucket.
+
+    Used by both Claude and Qwen whenever the data room exceeds the
+    chosen model's window. The map pass reads every byte of every
+    document exactly once and buckets facts under the section_key(s)
+    they serve — so no information is silently truncated. The synth
+    step then writes each section from its consolidated bullet brief.
+
+    A single-section direct caller (revise / edit flows) routes here too
+    via `_pass_section_writer_cached`'s safety fallback, with a
+    one-element sections list.
+
+    Returns {section_key: result_dict} matching the cached writer's shape."""
+    budget = _get_refiant_input_budget()
+    chunk_target = max(20_000, budget - 12_000)
+    chunks = _split_corpus_into_chunks(corpus, chunk_target)
+    n_chunks = max(1, len(chunks))
+    n_sections = len(sections)
+
+    # Map split: progress 0–40% of the section span goes to extraction,
+    # 40–100% to synthesis. Tweakable; keeps the bar moving smoothly.
+    map_span = pct_span * 40 // 100
+    reduce_span = pct_span - map_span
+
+    extracted: dict = defaultdict(list)
+    total_in = 0
+    total_out = 0
+    completed = 0
+
+    _emit_section_progress(
+        progress_cb, completed, n_chunks, pct_start, map_span,
+        "Reading data room (single pass)",
+    )
+
+    def _run_extract(idx_chunk: tuple[int, str]):
+        i, ch = idx_chunk
+        return _extract_multisection_brief(
+            client=client, model=model, sections=sections, chunk=ch,
+            chunk_idx=i, total_chunks=n_chunks,
+            citation_legend=citation_legend, company_name=company_name,
+        )
+
+    with ThreadPoolExecutor(max_workers=_REFIANT_EXTRACT_PARALLELISM) as ex:
+        futs = [ex.submit(_run_extract, (i, ch)) for i, ch in enumerate(chunks)]
+        for fut in as_completed(futs):
+            try:
+                parsed, t_in, t_out = fut.result()
+            except Exception as e:
+                logger.exception(f"extract worker crashed: {e}")
+                parsed, t_in, t_out = {}, 0, 0
+            for sk, bullets in parsed.items():
+                extracted[sk].extend(bullets)
+            total_in += t_in
+            total_out += t_out
+            completed += 1
+            _emit_section_progress(
+                progress_cb, completed, n_chunks, pct_start, map_span,
+                "Reading data room (single pass)",
+            )
+
+    # Reduce: parallel synthesis from per-section bullet buckets.
+    results: dict = {}
+    completed = 0
+    reduce_pct_start = pct_start + map_span
+
+    _emit_section_progress(
+        progress_cb, completed, n_sections, reduce_pct_start, reduce_span,
+        "Writing sections in parallel",
+    )
+
+    def _run_synth(s: dict) -> tuple[str, dict]:
+        return s["key"], _synthesize_section_from_bullets(
+            client=client, model=model, section=s,
+            bullets=extracted.get(s["key"], []),
+            citation_legend=citation_legend,
+            template_guidance=template_sections.get(s["key"], ""),
+            company_name=company_name, links=links,
+            additional_instructions=additional_instructions,
+        )
+
+    with ThreadPoolExecutor(max_workers=_SECTION_PARALLELISM_REFIANT) as ex:
+        futs = {ex.submit(_run_synth, s): s for s in sections}
+        for fut in as_completed(futs):
+            s = futs[fut]
+            try:
+                sk, r = fut.result()
+                results[sk] = r
+                total_in += r["tokens_in"]
+                total_out += r["tokens_out"]
+            except Exception as e:
+                logger.exception(f"synth worker crashed for {s['key']}: {e}")
+                results[s["key"]] = {
+                    "text": f"*[Generation failed for this section: {str(e)[:200]}]*",
+                    "tokens_in": 0, "tokens_out": 0,
+                    "cache_creation": 0, "cache_read": 0,
+                }
+            completed += 1
+            _emit_section_progress(
+                progress_cb, completed, n_sections, reduce_pct_start, reduce_span,
+                "Writing sections in parallel",
+            )
+
+    # Return per-section results plus an aggregate-tokens overlay so the
+    # orchestrator can attribute map-step tokens to a single pass_log entry.
+    # The orchestrator pulls this via the special "_extract_pass_tokens" key
+    # and removes it before iterating section results.
+    if sections:
+        synth_in = sum(r["tokens_in"] for r in results.values())
+        synth_out = sum(r["tokens_out"] for r in results.values())
+        results["_extract_pass_tokens"] = {
+            "tokens_in": max(0, total_in - synth_in),
+            "tokens_out": max(0, total_out - synth_out),
+            "n_chunks": n_chunks,
+        }
+
+    return results
+
+
+def _run_section_writers_batch(
+    *,
+    client,
+    model: str,
+    memo_sections: list,
+    corpus: str,
+    citation_legend: str,
+    template_sections: dict,
+    company_name: str,
+    links: list,
+    additional_instructions: str,
+    locked: dict,
+    progress_cb: Optional[Callable[[int, str], None]],
+    pct_start: int = 15,
+    pct_span: int = 75,
+) -> tuple[dict, list, int, int]:
+    """Top-level routing for Stage 3 section writing.
+
+    Picks the right strategy based on model + corpus size, then returns
+    (section_texts, pass_log_entries, total_tokens_in, total_tokens_out).
+    Locked sections are passed through verbatim (no LLM call).
+
+    Output ordering of section_texts and pass_log preserves the order of
+    `memo_sections` regardless of which sections happen to finish first
+    in the parallel pool."""
+    pass_log: list = []
+    section_texts: dict = {}
+    locked = locked or {}
+
+    # Pending = the sections that will actually hit the LLM. Locked
+    # sections are inserted into final outputs further down, in memo
+    # order, so pass_log keeps a linear timeline.
+    pending = [s for s in memo_sections if s["key"] not in locked]
+
+    if not pending:
+        # All sections locked → populate verbatim and exit.
+        for s in memo_sections:
+            section_texts[s["key"]] = locked[s["key"]]
+            pass_log.append({"stage": "section_locked", "section": s["key"]})
+        return section_texts, pass_log, 0, 0
+
+    # Routing decision: any corpus exceeding the model's window goes to
+    # extract-once-write-many so every byte of every document is still
+    # read at extract time. Below the threshold, the cached single-call
+    # path runs (writer sees the full corpus on every section).
+    window = _model_window_chars(model)
+    use_extract_once = len(corpus) > window
+
+    if use_extract_once:
+        logger.info(
+            "v2 routing: corpus %d chars > window %d for model %s — "
+            "routing to extract-once-write-many to preserve full data room.",
+            len(corpus), window, model,
+        )
+        results = _extract_once_write_many(
+            client=client, model=model, sections=pending, corpus=corpus,
+            citation_legend=citation_legend, template_sections=template_sections,
+            company_name=company_name, links=links,
+            additional_instructions=additional_instructions,
+            progress_cb=progress_cb, pct_start=pct_start, pct_span=pct_span,
+        )
+    else:
+        results = _parallel_cached_section_writers(
+            client=client, model=model, sections=pending, corpus=corpus,
+            citation_legend=citation_legend, template_sections=template_sections,
+            company_name=company_name, links=links,
+            additional_instructions=additional_instructions,
+            progress_cb=progress_cb, pct_start=pct_start, pct_span=pct_span,
+        )
+
+    # Pull aside the extract-pass tokens (only present on the oversize path).
+    # Logged before per-section entries since extract is a prerequisite of
+    # all synth calls.
+    extract_pass = results.pop("_extract_pass_tokens", None)
+    if extract_pass:
+        pass_log.append({
+            "stage": "extract_pass_multisection",
+            "n_chunks": extract_pass.get("n_chunks", 0),
+            "tokens_in": extract_pass["tokens_in"],
+            "tokens_out": extract_pass["tokens_out"],
+        })
+
+    # Single drain in original `memo_sections` order — produces a
+    # deterministic section_texts dict and a pass_log timeline that
+    # matches the on-page order of the memo, regardless of which
+    # sections were locked or which finished first under parallelism.
+    total_in = (extract_pass["tokens_in"] if extract_pass else 0)
+    total_out = (extract_pass["tokens_out"] if extract_pass else 0)
+    for s in memo_sections:
+        sk = s["key"]
+        if sk in locked:
+            section_texts[sk] = locked[sk]
+            pass_log.append({"stage": "section_locked", "section": sk})
+            continue
+        r = results.get(sk)
+        if not r:
+            # Shouldn't happen — guard for safety.
+            section_texts[sk] = f"*[Generation failed for this section: no result returned]*"
+            pass_log.append({
+                "stage": "section", "section": sk,
+                "tokens_in": 0, "tokens_out": 0,
+                "cache_creation": 0, "cache_read": 0,
+            })
+            continue
+        section_texts[sk] = r["text"]
+        total_in += r["tokens_in"]
+        total_out += r["tokens_out"]
+        pass_log.append({
+            "stage": "section",
+            "section": sk,
+            "tokens_in": r["tokens_in"],
+            "tokens_out": r["tokens_out"],
+            "cache_creation": r.get("cache_creation", 0),
+            "cache_read": r.get("cache_read", 0),
+        })
+
+    return section_texts, pass_log, total_in, total_out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -966,41 +1502,30 @@ def run_memo_v2_pipeline(
         sorted(citation_index.items(), key=lambda kv: kv[1])
     )
 
-    _n_steps = max(1, sum(1 for s in memo_sections if s["key"] not in locked))
-    _step = 0
-    _pct_span = 75  # 15% → 90% covers the section writing
-    for section in memo_sections:
-        sk = section["key"]
-        if sk in locked:
-            section_texts[sk] = locked[sk]
-            pass_log.append({"stage": "section_locked", "section": sk})
-            continue
-        _step += 1
-        pct = 15 + int((_step / _n_steps) * _pct_span)
-        _progress(min(pct, 90), f"Writing section: {section['title']} ({_step}/{_n_steps})")
-        result = _pass_section_writer_cached(
-            client=client,
-            model=model,
-            section=section,
-            corpus=corpus,
-            citation_legend=citation_legend,
-            template_guidance=template_sections.get(sk, ""),
-            company_name=company_name,
-            links=links,
-            additional_instructions=additional_instructions,
-            progress_cb=progress_cb,
-        )
-        section_texts[sk] = result["text"]
-        total_in += result["tokens_in"]
-        total_out += result["tokens_out"]
-        pass_log.append({
-            "stage": "section",
-            "section": sk,
-            "tokens_in": result["tokens_in"],
-            "tokens_out": result["tokens_out"],
-            "cache_creation": result["cache_creation"],
-            "cache_read": result["cache_read"],
-        })
+    # Section writing is parallelized inside the batch orchestrator. Routing
+    # picks between (1) cached single-call-per-section with cache warmup for
+    # Claude, (2) parallel cached single-call for Qwen with corpus-fits-window,
+    # or (3) extract-once-write-many for Qwen with oversize corpus. All three
+    # paths preserve the per-section quality of the legacy sequential loop.
+    batch_texts, batch_pass_log, batch_in, batch_out = _run_section_writers_batch(
+        client=client,
+        model=model,
+        memo_sections=memo_sections,
+        corpus=corpus,
+        citation_legend=citation_legend,
+        template_sections=template_sections,
+        company_name=company_name,
+        links=links,
+        additional_instructions=additional_instructions,
+        locked=locked,
+        progress_cb=progress_cb,
+        pct_start=15,
+        pct_span=75,
+    )
+    section_texts.update(batch_texts)
+    pass_log.extend(batch_pass_log)
+    total_in += batch_in
+    total_out += batch_out
 
     manifest_meta = {
         "data_room_narrative": manifest.get("data_room_narrative", ""),

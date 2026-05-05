@@ -4659,8 +4659,13 @@ async function _wizDeepExtract(modelFile, statusEl) {
     }
 
     // ── 2. Poll until done, rendering new progress entries each tick ────
+    // Cap matches the memo poll cap. The deep banker agent can run a long
+    // time on complex multi-sheet models; the prior 15-min ceiling was
+    // showing fake "timed out" errors on jobs that were still running.
+    // Server-side _DEEP_JOBS dict has no TTL, so the job keeps running
+    // regardless — the cap just controls when the UI gives up watching.
     const pollIntervalMs = 2000;
-    const hardTimeoutMs = 15 * 60 * 1000;  // 15-min ceiling
+    const hardTimeoutMs = 55 * 60 * 1000;  // 55-min ceiling
     let shownProgressCount = 0;
 
     while ((Date.now() - startedAt) < hardTimeoutMs) {
@@ -7871,9 +7876,12 @@ async function memoGenerate() {
     }
 
     // ── Poll for progress until complete or error ───────────────────────────
-    // Up to 20 minutes at 3s intervals.
+    // Up to 55 minutes at 3s intervals. Stays under the server's 1h job TTL
+    // (_MEMO_JOB_TTL_SECONDS) so we never poll a pruned job. Manifest-engine
+    // memos on large data rooms can run 25–40 min; the prior 20-min cap was
+    // showing fake "timed out" errors on memos that were still finishing.
     const POLL_INTERVAL_MS = 3000;
-    const MAX_POLLS = Math.ceil((20 * 60 * 1000) / POLL_INTERVAL_MS);
+    const MAX_POLLS = Math.ceil((55 * 60 * 1000) / POLL_INTERVAL_MS);
     let data = null;
     try {
         for (let i = 0; i < MAX_POLLS; i++) {
@@ -7895,7 +7903,7 @@ async function memoGenerate() {
             if (snap.status === 'complete') { data = snap.result; break; }
             if (snap.status === 'error')    { throw new Error(snap.error || 'Generation failed'); }
         }
-        if (!data) throw new Error('Memo generation timed out after 20 minutes.');
+        if (!data) throw new Error('Memo generation timed out after 55 minutes. The job may still be running on the server — check Memo History in a few minutes.');
 
         _memo.currentMemoId = data.id;
         _memo.currentMemoMd = data.memo_markdown;

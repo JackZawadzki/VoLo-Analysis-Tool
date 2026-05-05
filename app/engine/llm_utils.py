@@ -196,10 +196,23 @@ class _RefiantMessages:
 # ── Public factory ────────────────────────────────────────────────────────────
 
 class RefiantClient:
-    """Drop-in replacement for `anthropic.Anthropic` that hits the Refiant endpoint."""
+    """Drop-in replacement for `anthropic.Anthropic` that hits the Refiant endpoint.
+
+    `max_retries=6` matches the Anthropic client's setting in
+    `make_llm_client`. The memo pipeline now fans out section calls across
+    threads (4-way concurrent by default), so a single transient 429/503
+    must not kill a section. The OpenAI SDK default is 2; we bump to 6 so
+    a brief rate-limit blip retries through transparently. `timeout=180`
+    matches Anthropic's per-call ceiling — the memo's overall job timeout
+    is enforced at the worker level, not here."""
     def __init__(self, api_key: str):
         import openai
-        oai = openai.OpenAI(api_key=api_key, base_url=REFIANT_BASE_URL)
+        oai = openai.OpenAI(
+            api_key=api_key,
+            base_url=REFIANT_BASE_URL,
+            max_retries=6,
+            timeout=180.0,
+        )
         self.messages = _RefiantMessages(oai)
 
 
