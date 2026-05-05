@@ -326,77 +326,148 @@ def _serialized_init() -> None:
 
 
 def _run_init_steps() -> None:
+    # Step 1: base schema (CREATE TABLE IF NOT EXISTS — idempotent).
     with cursor() as c:
         c.executescript(_SCHEMA)
+    # Step 2: rename old labels to current canonical labels BEFORE dedup.
+    # Without this, a label rename in sources_config.py would orphan the
+    # old row (no longer matches config) and INSERT a new row, leaving
+    # both in the UI.
+    _migrate_old_labels()
+    # Step 3: collapse any pre-existing duplicates BEFORE creating the
+    # unique index. Required because rolling deploys before this fix could
+    # have created (source_id, label) dupes that would now block index
+    # creation.
+    _dedup_all_sources()
+    # Step 4: enforce uniqueness at the DB layer. Future rolling-deploy
+    # races now fail fast on INSERT (IntegrityError) instead of silently
+    # creating duplicates that need cleanup later. Reconcile catches the
+    # exception and falls through to UPDATE, so the race is harmless.
+    with cursor() as c:
+        c.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_cc_sources_source_label "
+            "ON cc_sources(source_id, label)"
+        )
+    # Step 5: reconcile config -> rows. Race-tolerant against the unique index.
     reconcile_sources_from_config()
+    # Step 6: housekeeping for orphan sync runs.
     _cleanup_stale_sync_runs()
 
 
+def _migrate_old_labels() -> None:
+    """One-off rename map for sources whose canonical label has changed.
+    Idempotent — re-running is a no-op once the rename has happened.
+
+    When a label changes in sources_config.py, the matching DB row would
+    otherwise be orphaned (no longer matches the new label, while a fresh
+    row gets INSERTed alongside it). This step reconciles the rename
+    in-place so synced data stays attached.
+    """
+    renames = [
+        # (source_id, old_label, new_label)
+        ("granola", "Volo earth team Granola", "VoLo Earth Granola"),
+    ]
+    with cursor() as c:
+        for source_id, old_label, new_label in renames:
+            c.execute(
+                "UPDATE cc_sources SET label = ? "
+                "WHERE source_id = ? AND label = ?",
+                (new_label, source_id, old_label),
+            )
+
+
+def _dedup_all_sources() -> None:
+    """Collapse any (source_id, label) groups with >1 row down to one row.
+
+    Picks the row with the most attached cc_documents so we never lose
+    ingested data. Tiebreak on oldest id. Idempotent — running on a
+    clean DB is a no-op.
+    """
+    with cursor() as c:
+        c.execute(
+            "SELECT source_id, label FROM cc_sources "
+            "GROUP BY source_id, label HAVING COUNT(*) > 1"
+        )
+        dup_groups = c.fetchall()
+
+        for group in dup_groups:
+            source_id = group["source_id"]
+            label = group["label"]
+            c.execute(
+                "SELECT id FROM cc_sources "
+                "WHERE source_id = ? AND label = ? ORDER BY id ASC",
+                (source_id, label),
+            )
+            ids = [r["id"] for r in c.fetchall()]
+
+            best_id = ids[0]
+            best_count = -1
+            for sid in ids:
+                c.execute(
+                    "SELECT COUNT(*) AS n FROM cc_documents WHERE source_pk = ?",
+                    (sid,),
+                )
+                n = c.fetchone()["n"] or 0
+                if n > best_count or (n == best_count and sid < best_id):
+                    best_count = n
+                    best_id = sid
+
+            for sid in ids:
+                if sid != best_id:
+                    c.execute("DELETE FROM cc_sources WHERE id = ?", (sid,))
+
+
 def reconcile_sources_from_config() -> None:
-    """Ensure every status='active' entry in sources_config.py has a matching
-    cc_sources row. Idempotent and self-healing.
+    """Ensure every status='active' entry in sources_config.py has exactly
+    one matching cc_sources row.
 
-    Deduplication: there's no UNIQUE constraint on (source_id, label) — adding
-    one retroactively would require a migration that fails on existing dupes.
-    Instead, this function defensively dedups every time it runs. Duplicates
-    can appear during Cloud Run rolling deploys when two containers overlap
-    and both run init() against READ COMMITTED Postgres (each SELECTs empty,
-    each INSERTs, both succeed). Picking the row with the most attached docs
-    means we never lose ingested data when collapsing dupes.
+    Race-tolerant: a UNIQUE INDEX on (source_id, label) (created by
+    _run_init_steps) means concurrent containers attempting to INSERT
+    will see one succeed and the other raise IntegrityError. We catch
+    that and fall through to UPDATE, so the race is harmless.
 
-    Removing entries from the config file does NOT delete the DB row; the
-    source just stops appearing in the UI.
+    Removing entries from sources_config.py does NOT delete the DB row;
+    the source just stops appearing in the UI.
     """
     import json
     from . import sources_config
+    from ..database import IntegrityError
 
-    with cursor() as c:
-        for definition in sources_config.get_enabled():
-            source_id = definition["source_id"]
-            label = definition["label"]
-            config_json = json.dumps(definition.get("config") or {})
+    for definition in sources_config.get_enabled():
+        source_id = definition["source_id"]
+        label = definition["label"]
+        config_json = json.dumps(definition.get("config") or {})
 
-            # Find all matching rows (could be more than 1 from a deploy race).
+        # Each source gets its own short transaction. Fresh cursor per source
+        # so a race on one source doesn't affect the others.
+        with cursor() as c:
             c.execute(
                 "SELECT id, config_json FROM cc_sources "
                 "WHERE source_id = ? AND label = ? ORDER BY id ASC",
                 (source_id, label),
             )
-            rows = c.fetchall()
+            row = c.fetchone()
 
-            if not rows:
+            if row is None:
+                try:
+                    c.execute(
+                        "INSERT INTO cc_sources (source_id, label, config_json) "
+                        "VALUES (?, ?, ?)",
+                        (source_id, label, config_json),
+                    )
+                except IntegrityError:
+                    # Concurrent container won the INSERT race. Fall through
+                    # and update whichever row exists now.
+                    c.execute(
+                        "UPDATE cc_sources SET config_json = ? "
+                        "WHERE source_id = ? AND label = ?",
+                        (config_json, source_id, label),
+                    )
+            elif row["config_json"] != config_json:
                 c.execute(
-                    "INSERT INTO cc_sources (source_id, label, config_json) "
-                    "VALUES (?, ?, ?)",
-                    (source_id, label, config_json),
+                    "UPDATE cc_sources SET config_json = ? WHERE id = ?",
+                    (config_json, row["id"]),
                 )
-                continue
-
-            # Dedup: pick the row with the most ingested docs (so we never
-            # lose work when collapsing). Tiebreak on oldest id.
-            best_id = rows[0]["id"]
-            best_count = -1
-            for row in rows:
-                c.execute(
-                    "SELECT COUNT(*) AS n FROM cc_documents WHERE source_pk = ?",
-                    (row["id"],),
-                )
-                n = c.fetchone()["n"] or 0
-                if n > best_count or (n == best_count and row["id"] < best_id):
-                    best_count = n
-                    best_id = row["id"]
-
-            # Delete the losers. CASCADE will cleanup their (probably zero)
-            # docs/segments/tags. We just preserved any winner with data above.
-            for row in rows:
-                if row["id"] != best_id:
-                    c.execute("DELETE FROM cc_sources WHERE id = ?", (row["id"],))
-
-            # Update winner's config to current values.
-            c.execute(
-                "UPDATE cc_sources SET config_json = ? WHERE id = ?",
-                (config_json, best_id),
-            )
 
 
 def _cleanup_stale_sync_runs() -> None:
