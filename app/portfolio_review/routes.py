@@ -699,6 +699,31 @@ def api_granola_notes_for_company(
         conn.close()
 
 
+@api.get("/granola/probe")
+def api_granola_probe(
+    limit: int = Query(5, ge=1, le=20),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Diagnostic probe — bypasses the connector and hits Granola's
+    /v1/notes endpoint directly with the configured GRANOLA_API_KEY.
+    Returns the raw response shape so we can see whether the API itself
+    is returning notes (vs. the connector dropping them silently).
+
+    Use when granola/sync reports notes_fetched=0 to figure out where
+    the bottleneck is:
+      • probe.raw_count == 0  →  Granola itself returned 0 notes (key
+        scope or workspace is empty)
+      • probe.raw_count > 0 but sync notes_fetched == 0  →  the
+        connector is dropping every note (likely empty bodies / detail
+        fetch failures)
+      • probe.raw_count > 0 but notes_in_scope == 0  →  the folder
+        filter is rejecting every note. Compare diagnostics.seen_folders
+        on the sync response against your allowed_folders list.
+    """
+    from .granola_sync import probe_granola_api
+    return probe_granola_api(limit=limit)
+
+
 @api.get("/granola/syncs")
 def api_granola_recent_syncs(
     limit: int = Query(20, ge=1, le=100),

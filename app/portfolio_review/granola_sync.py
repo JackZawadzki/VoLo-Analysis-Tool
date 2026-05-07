@@ -83,21 +83,58 @@ def _normalize(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
 
 
+def _folder_entry_names(entry) -> list[str]:
+    """Extract every plausible "folder name" from one folder_membership entry.
+
+    Granola's API has historically returned folder_membership as
+    [{"id": ..., "name": "..."}], but we don't want to break if they
+    rename the field to "title" or "folder_name" or start returning bare
+    strings. We try several common shapes and return everything we find;
+    the caller normalizes + matches against the allowlist.
+    """
+    if entry is None:
+        return []
+    if isinstance(entry, str):
+        return [entry]
+    if isinstance(entry, dict):
+        out: list[str] = []
+        # Direct fields first
+        for key in ("name", "title", "folder_name", "label"):
+            v = entry.get(key)
+            if isinstance(v, str) and v.strip():
+                out.append(v)
+        # Sometimes the shape is { "folder": { "name": "..." } }
+        nested = entry.get("folder")
+        if isinstance(nested, dict):
+            v = nested.get("name") or nested.get("title")
+            if isinstance(v, str) and v.strip():
+                out.append(v)
+        return out
+    return []
+
+
 def _note_in_allowed_folders(folder_membership: list, allowed: set[str]) -> bool:
     """True if any of the note's folder_membership entries is in `allowed`.
 
     Granola's folder_membership is a list of {name, id, ...}. We check
     every entry, not just the first, because a single note can live in
     multiple folders (e.g. "Portco Updates" + a company-specific folder).
+    Robust to a few alternative shapes — see _folder_entry_names.
     """
     if not folder_membership:
         return False
     for f in folder_membership:
-        if not isinstance(f, dict):
-            continue
-        if _normalize(f.get("name") or "") in allowed:
-            return True
+        for name in _folder_entry_names(f):
+            if _normalize(name) in allowed:
+                return True
     return False
+
+
+def _all_folder_names_from_entry(entry) -> list[str]:
+    """Like _folder_entry_names but used by the diagnostic counter — returns
+    the un-normalized names so the audit response shows what Granola
+    actually called the folder, not the lowercased form."""
+    return _folder_entry_names(entry)
 
 
 def _matched_folder_names(folder_membership: list, allowed: set[str]) -> list[str]:
@@ -257,6 +294,17 @@ def run_granola_sync(
     error_summary = ""
     status = "success"
 
+    # Diagnostic accumulators — surfaced in the response so we can debug
+    # "0 fetched" without adding ad-hoc logging. seen_folders is the set
+    # of folder names Granola actually returned in folder_membership; if
+    # this set is non-empty but doesn't match the allowlist, we know the
+    # folder filter is the bottleneck. notes_with_no_folders counts
+    # notes that arrived with empty folder_membership (which would be
+    # silently dropped by the allowlist filter).
+    seen_folders: set[str] = set()
+    notes_with_no_folders = 0
+    sample_folder_membership_shapes: list = []
+
     try:
         connector = GranolaConnector(
             config={"include_transcripts": include_transcripts},
@@ -266,6 +314,18 @@ def run_granola_sync(
             notes_fetched += 1
             metadata = raw.source_metadata or {}
             folder_membership = metadata.get("folder_membership") or []
+
+            # Diagnostic: capture every folder name we see, plus the
+            # raw shape of the first few entries, so the API response
+            # tells the operator exactly what Granola is returning.
+            for entry in folder_membership:
+                for nm in _all_folder_names_from_entry(entry):
+                    seen_folders.add(nm)
+            if not folder_membership:
+                notes_with_no_folders += 1
+            elif len(sample_folder_membership_shapes) < 3:
+                sample_folder_membership_shapes.append(folder_membership)
+
             if not _note_in_allowed_folders(folder_membership, allowed):
                 continue
             notes_in_scope += 1
@@ -366,7 +426,111 @@ def run_granola_sync(
         "allowed_folders": sorted(allowed),
         "next_cursor": last_seen_cursor,
         "error": error_summary or None,
+        # Diagnostics — exposed so an operator can see exactly why a sync
+        # came back with 0 in-scope notes without spelunking through logs.
+        "diagnostics": {
+            # Every distinct folder name Granola returned across all
+            # fetched notes. Compare to allowed_folders — if your folder
+            # appears here under a different spelling, fix the env var
+            # PORTFOLIO_GRANOLA_FOLDERS.
+            "seen_folders": sorted(seen_folders),
+            # Notes that arrived with empty folder_membership. These are
+            # silently dropped by the allowlist filter today; a high count
+            # here means many Granola notes aren't in any folder.
+            "notes_with_no_folders": notes_with_no_folders,
+            # Up to 3 raw folder_membership values, untouched, so the
+            # operator can verify the JSON shape matches what
+            # _folder_entry_names knows how to parse.
+            "sample_folder_membership_shapes": sample_folder_membership_shapes,
+        },
     }
+
+
+# ── Diagnostic-only: raw API probe ───────────────────────────────────────────
+
+
+def probe_granola_api(*, limit: int = 5) -> dict:
+    """One-shot raw call to Granola's /v1/notes endpoint, bypassing the
+    connector entirely. Used to answer "did Granola return any notes at
+    all?" — independent of what the connector does to them.
+
+    Returns:
+        {
+          "ok": True/False,
+          "status_code": HTTP status from Granola,
+          "raw_count": number of summaries in the first page,
+          "sample_note_ids": first few note ids returned,
+          "sample_owners": owners of the first few notes (Personal vs
+              Enterprise key tell — Personal will only show one user),
+          "first_detail_folder_membership": folder_membership of the
+              first note's full detail (so we can verify the field shape),
+          "error": str or None,
+        }
+    """
+    import httpx
+    api_key = (os.environ.get("GRANOLA_API_KEY") or "").strip()
+    api_base = (
+        os.environ.get("GRANOLA_API_BASE")
+        or "https://public-api.granola.ai/v1"
+    ).rstrip("/")
+    if not api_key:
+        return {
+            "ok": False, "status_code": 0, "raw_count": 0,
+            "sample_note_ids": [], "sample_owners": [],
+            "first_detail_folder_membership": None,
+            "error": "GRANOLA_API_KEY not set in environment",
+        }
+    try:
+        with httpx.Client(
+            base_url=api_base,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+            },
+            timeout=30.0,
+        ) as client:
+            resp = client.get("/notes", params={"page_size": limit})
+            if resp.status_code != 200:
+                snippet = resp.text[:300] if resp.text else ""
+                return {
+                    "ok": False, "status_code": resp.status_code,
+                    "raw_count": 0, "sample_note_ids": [],
+                    "sample_owners": [],
+                    "first_detail_folder_membership": None,
+                    "error": f"GET /notes returned {resp.status_code}: {snippet}",
+                }
+            page = resp.json()
+            summaries = page.get("notes") or []
+            sample_ids = [s.get("id") for s in summaries[:limit] if s.get("id")]
+            sample_owners = []
+            for s in summaries[:limit]:
+                owner = s.get("owner") or {}
+                em = owner.get("email") or owner.get("name")
+                if em:
+                    sample_owners.append(em)
+            # Fetch the first note's full detail to inspect folder_membership
+            first_fm = None
+            if sample_ids:
+                d = client.get(f"/notes/{sample_ids[0]}")
+                if d.status_code == 200:
+                    first_fm = d.json().get("folder_membership")
+            return {
+                "ok": True, "status_code": 200,
+                "raw_count": len(summaries),
+                "has_more": bool(page.get("hasMore")),
+                "sample_note_ids": sample_ids,
+                "sample_owners": sample_owners,
+                "first_detail_folder_membership": first_fm,
+                "api_base_used": api_base,
+                "error": None,
+            }
+    except Exception as e:
+        return {
+            "ok": False, "status_code": 0, "raw_count": 0,
+            "sample_note_ids": [], "sample_owners": [],
+            "first_detail_folder_membership": None,
+            "error": f"{type(e).__name__}: {str(e)[:300]}",
+        }
 
 
 # ── Tiny helpers ─────────────────────────────────────────────────────────────
