@@ -190,26 +190,31 @@ table th {
 
 /* Nav links: pill-style. Active = solid forest pill, off-white text.
    Hover (inactive) = subtle mint pill.
-   Padding/font tuned tighter than original to fit 6 main tabs +
-   4 BETA tabs (added Portfolio Review) without overflow on 13" laptop
-   widths. Drops to 0.78rem / 6px-10px padding instead of 0.81rem /
-   7px-13px — saves ~12% horizontal width per pill. */
-.nav-links { gap: 1px !important; flex-wrap: nowrap !important; }
+   Padding/font tuned tight so 6 main tabs + 4 BETA tabs (added Portfolio
+   Review) fit on 13"–14" laptop widths. As a defense-in-depth, the .nav-content
+   container below also enables horizontal scroll if a tighter screen still
+   overflows — never silently clipped. */
+.nav-links { gap: 0 !important; flex-wrap: nowrap !important; }
 .nav-link {
     color: var(--vf-stone) !important;
     background: transparent !important;
     border: none !important;
     border-bottom: none !important;
     border-radius: 999px !important;
-    padding: 6px 10px !important;
+    padding: 5px 8px !important;
     font-family: var(--font-sans);
-    font-size: 0.78rem !important;
+    font-size: 0.76rem !important;
     font-weight: 500 !important;
-    letter-spacing: -0.002em !important;
+    letter-spacing: -0.003em !important;
     white-space: nowrap !important;
     line-height: 1.2 !important;
     transition: background 0.15s ease, color 0.15s ease;
 }
+/* Graceful fallback: if the nav still doesn't fit at very narrow widths,
+   scroll horizontally instead of clipping behind the user badge. */
+.nav-content { overflow-x: auto !important; scrollbar-width: thin !important; }
+.nav-content::-webkit-scrollbar { height: 4px !important; }
+.nav-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15) !important; border-radius: 999px !important; }
 .nav-link:hover:not(.active) {
     background: var(--vf-mint-bg-soft) !important;
     color: var(--vf-forest-deep) !important;

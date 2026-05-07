@@ -12,8 +12,8 @@
 
 function _prAuthHeaders() {
   // Mirrors DriveSyncCard.authHeaders — token lives in localStorage under
-  // the key the IC-memo auth flow writes to.
-  const tok = localStorage.getItem('rvm_auth_token') || '';
+  // the same key the IC-memo auth flow in app.js writes to.
+  const tok = localStorage.getItem('rvm_token') || '';
   const h = { 'Content-Type': 'application/json' };
   if (tok) h['Authorization'] = `Bearer ${tok}`;
   return h;
