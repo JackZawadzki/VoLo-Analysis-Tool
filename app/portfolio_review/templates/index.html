@@ -43,7 +43,7 @@
 </div>
 
 <!-- Google Drive sync -->
-<div id="drive-sync-card" class="pr-card p-5 mb-10">
+<div id="drive-sync-card" class="pr-card p-5 mb-6">
   <div class="flex items-center gap-3 mb-3">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M7.71 3.5L1.15 15l3.36 5.5L11 9 7.71 3.5z" fill="#0066DA"/>
@@ -54,6 +54,56 @@
     <span id="drive-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
   </div>
   <div id="drive-sync-content" class="text-sm text-gray-600">Checking connection…</div>
+
+  <!-- Bulk folder discovery — uses default parent folder (Portfolio Company
+       Information shared drive). Surfaced even when the workbook syncer is
+       disconnected so the admin sees what this button does, but the actual
+       call requires Drive auth. -->
+  <div class="mt-4 pt-4 border-t border-gray-100">
+    <div class="flex items-center justify-between gap-3">
+      <div class="text-sm text-gray-700">
+        <strong>Discover company folders</strong>
+        <p class="text-xs text-gray-500 mt-1">Walks the team's
+          <em>Portfolio Company Information</em> shared drive and links each
+          subfolder to a portfolio company by name match. Re-run any time —
+          links update in place.</p>
+      </div>
+      <button id="discover-folders-btn"
+        class="px-3 py-2 text-sm bg-gray-900 text-white rounded hover:bg-black whitespace-nowrap">
+        Discover folders
+      </button>
+    </div>
+    <div id="discover-folders-result" class="mt-3 text-sm"></div>
+  </div>
+</div>
+
+<!-- Granola notes sync -->
+<div id="granola-sync-card" class="pr-card p-5 mb-10">
+  <div class="flex items-center gap-3 mb-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="4" width="18" height="16" rx="2" stroke="#7c3aed" stroke-width="2"/>
+      <path d="M8 9h8M8 13h8M8 17h5" stroke="#7c3aed" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-gray-900">Sync Granola meeting notes</h2>
+    <span id="granola-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
+  </div>
+  <div class="text-sm text-gray-600">
+    Pulls notes from the team Granola workspace. Filters to:
+    <span class="inline-flex flex-wrap gap-1 ml-1">
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Investment Committee</span>
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Portco Updates</span>
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Screening + Rapid Fire Meeting</span>
+    </span>
+    Each note is auto-linked to portfolio companies whose CEO/CFO is an attendee, or whose name appears in the title.
+  </div>
+  <div class="mt-3 flex items-center gap-3">
+    <button id="granola-sync-btn"
+      class="px-3 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700">
+      Sync Granola notes
+    </button>
+    <span id="granola-last-sync" class="text-xs text-gray-500"></span>
+  </div>
+  <div id="granola-sync-result" class="mt-3 text-sm"></div>
 </div>
 
 <!-- Sections grid -->
@@ -98,10 +148,13 @@
 {% block scripts %}
 <script src="/static/portfolio_review/comments.js?v=2"></script>
 <script src="/static/portfolio_review/drive_sync.js?v=1"></script>
+<script src="/static/portfolio_review/granola_sync.js?v=1"></script>
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     new CommentsWidget(document.getElementById('general-comments'), 'section', 'general');
     new DriveSyncCard(document.getElementById('drive-sync-card'));
+    new DiscoverFoldersButton();
+    new GranolaSyncCard(document.getElementById('granola-sync-card'));
   });
 </script>
 {% endblock %}

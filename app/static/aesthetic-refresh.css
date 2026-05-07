@@ -189,17 +189,21 @@ table th {
 }
 
 /* Nav links: pill-style. Active = solid forest pill, off-white text.
-   Hover (inactive) = subtle mint pill. */
-.nav-links { gap: 2px !important; flex-wrap: nowrap !important; }
+   Hover (inactive) = subtle mint pill.
+   Padding/font tuned tighter than original to fit 6 main tabs +
+   4 BETA tabs (added Portfolio Review) without overflow on 13" laptop
+   widths. Drops to 0.78rem / 6px-10px padding instead of 0.81rem /
+   7px-13px — saves ~12% horizontal width per pill. */
+.nav-links { gap: 1px !important; flex-wrap: nowrap !important; }
 .nav-link {
     color: var(--vf-stone) !important;
     background: transparent !important;
     border: none !important;
     border-bottom: none !important;
     border-radius: 999px !important;
-    padding: 7px 13px !important;
+    padding: 6px 10px !important;
     font-family: var(--font-sans);
-    font-size: 0.81rem !important;
+    font-size: 0.78rem !important;
     font-weight: 500 !important;
     letter-spacing: -0.002em !important;
     white-space: nowrap !important;
@@ -226,10 +230,10 @@ table th {
 .nav-beta-group {
     display: flex !important;
     align-items: center !important;
-    gap: 2px !important;
+    gap: 1px !important;
     margin-left: auto !important;
-    margin-right: 8px !important;
-    padding: 4px 6px 4px 5px !important;
+    margin-right: 6px !important;
+    padding: 3px 4px 3px 4px !important;
     background: rgba(182, 136, 66, 0.07) !important;
     border: 1.5px solid var(--vf-warning) !important;
     border-radius: 999px !important;
@@ -238,13 +242,13 @@ table th {
 .nav-beta-tag {
     display: inline-flex !important;
     align-items: center !important;
-    font-size: 0.62rem !important;
+    font-size: 0.58rem !important;
     font-weight: 700 !important;
-    letter-spacing: 0.06em !important;
+    letter-spacing: 0.05em !important;
     text-transform: uppercase !important;
     color: #fff !important;
     background: var(--vf-warning) !important;
-    padding: 5px 11px !important;
+    padding: 4px 8px !important;
     border-radius: 999px !important;
     white-space: nowrap !important;
     cursor: help !important;
@@ -254,7 +258,7 @@ table th {
     color: var(--vf-warning) !important;
     background: transparent !important;
     font-weight: 500 !important;
-    padding: 6px 12px !important;
+    padding: 5px 9px !important;
     border-radius: 999px !important;
 }
 .nav-beta-group .nav-link-beta:hover:not(.active) {
