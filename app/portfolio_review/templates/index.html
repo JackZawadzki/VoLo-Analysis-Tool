@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Portfolio Review{% endblock %}
+{% block content %}
+
+<header class="mb-8">
+  <h1 class="text-2xl font-bold text-gray-900">Portfolio Review</h1>
+  <p class="text-gray-500 mt-1 text-sm">Live portfolio metrics across all sections. Source-of-truth lives in the
+    Excel working doc; the app syncs and renders. Comments are saved in the database.</p>
+</header>
+
+<!-- Top-level metrics tiles -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Companies</div>
+    <div class="text-3xl font-bold mt-1">{{ n_companies }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Investments</div>
+    <div class="text-3xl font-bold mt-1">{{ n_investments }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Active Board Seats</div>
+    <div class="text-3xl font-bold mt-1">{{ n_board_seats }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Last Sync</div>
+    <div class="text-sm font-medium mt-2">
+      {% if last_import %}
+        <span class="px-2 py-0.5 rounded text-xs font-medium
+          {% if last_import.status == 'success' %}bg-green-100 text-green-800
+          {% elif last_import.status == 'partial' %}bg-yellow-100 text-yellow-800
+          {% else %}bg-red-100 text-red-800{% endif %}">
+          {{ last_import.status }}
+        </span>
+        <div class="text-xs text-gray-500 mt-1">
+          {{ last_import.finished_at or last_import.started_at }} · {{ last_import.rows_imported }} rows
+        </div>
+      {% else %}
+        <span class="text-gray-400">No import yet</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Google Drive sync -->
+<div id="drive-sync-card" class="pr-card p-5 mb-10">
+  <div class="flex items-center gap-3 mb-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7.71 3.5L1.15 15l3.36 5.5L11 9 7.71 3.5z" fill="#0066DA"/>
+      <path d="M16.21 8.5L12.85 3 9.79 8.5l3.36 5.5h6.71L16.21 8.5z" fill="#FFC107"/>
+      <path d="M19.85 14L13 14l3.21 5.5h6.79l-3.15-5.5z" fill="#EA4335"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-gray-900">Sync workbook from Google Drive</h2>
+    <span id="drive-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
+  </div>
+  <div id="drive-sync-content" class="text-sm text-gray-600">Checking connection…</div>
+</div>
+
+<!-- Sections grid -->
+<h2 class="text-lg font-semibold text-gray-900 mb-3">Metric sections</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for s in sections %}
+    {% if s.slug not in ('archive',) %}
+    <a href="/portfolio-review/{{ s.slug }}"
+       class="pr-card p-5 hover:shadow-md transition border-l-4"
+       style="border-left-color: {{ s.color }};">
+      <div class="flex items-center gap-3">
+        <span class="pr-section-pill" style="background: {{ s.color }}">{{ s.num }}</span>
+        <div class="font-semibold text-gray-900">{{ s.name }}</div>
+      </div>
+      <div class="text-sm text-gray-500 mt-2">
+        {% if s.slug == 'inputs' %}Master ledger of investments, financials, and SPV LPs.
+        {% elif s.slug == 'carta-source' %}Raw paste-dumps from Carta — IRR, SOI, firm-level returns.
+        {% elif s.slug == 'returns' %}Per-deal IRR, multiples, gain/loss and SPV roll-up.
+        {% elif s.slug == 'valuation' %}NAV vs cost, ownership %, top 5 concentration.
+        {% elif s.slug == 'composition' %}Sector / geography / round-graduation breakdown.
+        {% elif s.slug == 'traction' %}Stoplight, commercial status, revenue growth.
+        {% elif s.slug == 'follow-on' %}Bridges, conversions, and priced follow-on rounds.
+        {% elif s.slug == 'governance' %}Board seats and D&O.
+        {% elif s.slug == 'summary' %}Aggregated roll-up across every section.
+        {% elif s.slug == 'directory' %}CEO / CFO contact info.
+        {% endif %}
+      </div>
+    </a>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<!-- Section-level comment thread -->
+<div class="mt-12">
+  <h2 class="text-lg font-semibold text-gray-900 mb-3">General notes</h2>
+  <div id="general-comments" class="pr-card p-5">
+    <div class="text-sm text-gray-500">Loading…</div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/portfolio_review/comments.js?v=2"></script>
+<script src="/static/portfolio_review/drive_sync.js?v=1"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    new CommentsWidget(document.getElementById('general-comments'), 'section', 'general');
+    new DriveSyncCard(document.getElementById('drive-sync-card'));
+  });
+</script>
+{% endblock %}

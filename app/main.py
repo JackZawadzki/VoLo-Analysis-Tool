@@ -85,6 +85,18 @@ app.include_router(dd_analysis_router)
 app.include_router(fund_deployment_router)
 app.include_router(ddr_router)
 
+# ── Portfolio Review (Beta) — page routes + JSON API ─────────────────────
+# Mount is fail-soft: import failure is logged and swallowed so the host
+# app boots normally even if portfolio_review is broken. Same isolation
+# contract as VoLo Mind below.
+try:
+    from .portfolio_review.routes import get_routers as get_pr_routers
+    for _pr_router in get_pr_routers():
+        app.include_router(_pr_router)
+    print("[VoLo Engine] Portfolio Review (Beta) mounted", flush=True)
+except Exception as _pr_e:
+    print(f"[VoLo Engine] WARN: Portfolio Review import failed (feature disabled): {_pr_e}", flush=True)
+
 # ── VoLo Mind (Beta) — feature-flagged, isolated, fail-soft ─────────────
 # Mounts only when VOLOMIND_ENABLED=true. Any failure here is logged and
 # swallowed so the host app boots normally even if volomind is broken.
@@ -111,6 +123,20 @@ async def startup():
     from .database import startup as db_startup
     db_startup()
     print("[VoLo Engine] RVM database initialized")
+
+    # Portfolio Review schema — additive, idempotent, fail-soft. Adds the
+    # pr_* tables to the host DB without disturbing existing schema.
+    try:
+        from .database import get_db
+        from .portfolio_review.schema import apply_schema as _pr_apply_schema
+        _conn = get_db()
+        try:
+            _pr_apply_schema(_conn)
+        finally:
+            _conn.close()
+        print("[VoLo Engine] Portfolio Review schema applied", flush=True)
+    except Exception as _pr_e:
+        print(f"[VoLo Engine] WARN: Portfolio Review schema init failed: {_pr_e}", flush=True)
 
     # VoLo Mind has its own DB file. Init is fail-soft — a schema problem
     # there must NOT block the host app from booting.

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ section.name }} — Portfolio Review{% endblock %}
+{% block content %}
+
+<header class="mb-6 flex items-center gap-3">
+  <span class="pr-section-pill" style="background: {{ section.color }}">{{ section.num }}</span>
+  <h1 class="text-2xl font-bold text-gray-900">{{ section.name }}</h1>
+  <a href="/portfolio-review/" class="ml-auto text-sm pr-link">← All sections</a>
+</header>
+
+<!-- Section-specific data table loaded via JS -->
+<div id="section-content" class="pr-card mb-8">
+  <div class="p-6 text-sm text-gray-500">Loading…</div>
+</div>
+
+<!-- Section-level comments -->
+<div class="mt-8">
+  <h2 class="text-base font-semibold text-gray-900 mb-3">Comments on this section</h2>
+  <div id="section-comments" class="pr-card p-5"></div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/portfolio_review/comments.js?v=2"></script>
+<script src="/static/portfolio_review/section.js?v=5"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const slug = "{{ section.slug }}";
+    new SectionView(document.getElementById('section-content'), slug);
+    new CommentsWidget(document.getElementById('section-comments'), 'section', slug);
+  });
+</script>
+{% endblock %}
