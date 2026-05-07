@@ -288,11 +288,14 @@ CREATE TABLE IF NOT EXISTS pr_granola_syncs (
 --
 -- Reserved one row per (owner, source) so cursor advances monotonically
 -- per user; clearing the row forces a full re-sync next click.
+-- NOTE: column is `cursor_value`, not `cursor`. `cursor` is a reserved
+-- keyword in Postgres; using it unquoted in DDL aborts the schema apply on
+-- the production Postgres backend (SQLite is permissive and accepts it).
 CREATE TABLE IF NOT EXISTS pr_sync_state (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     owner_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     source        TEXT    NOT NULL,
-    cursor        TEXT    NOT NULL DEFAULT '',
+    cursor_value  TEXT    NOT NULL DEFAULT '',
     last_run_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     last_status   TEXT    NOT NULL DEFAULT '',
     UNIQUE(owner_id, source)
@@ -302,13 +305,20 @@ CREATE INDEX IF NOT EXISTS idx_pr_sync_state_owner ON pr_sync_state(owner_id, so
 
 
 def apply_schema(conn) -> None:
-    """Apply the portfolio_review schema to an existing sqlite3 connection.
+    """Apply the portfolio_review schema to an existing connection.
 
-    Includes lightweight idempotent migrations for columns added after
-    initial deploy — each ALTER TABLE is wrapped to swallow 'duplicate column'
-    errors so it's safe to re-run on existing DBs.
+    Two-phase apply for cross-backend safety:
+      1. CREATE TABLE statements run together; commit once. On SQLite this
+         is moot, but on Postgres it ensures the freshly-created tables are
+         durable BEFORE the migration loop runs.
+      2. Each additive migration runs in its own commit. On Postgres a
+         single ALTER failing (e.g. 'column already exists') aborts the
+         current transaction; without per-stmt commits, that abort would
+         poison every later migration AND the CREATE TABLE work.
     """
     conn.executescript(PR_SCHEMA_SQL)
+    conn.commit()
+
     # Additive migrations — keep these append-only so old DBs can catch up.
     _MIGRATIONS = [
         "ALTER TABLE pr_traction_snapshots ADD COLUMN deal_lead          TEXT NOT NULL DEFAULT ''",
@@ -319,11 +329,23 @@ def apply_schema(conn) -> None:
         # net-new associations so the operator can see whether a sync added
         # anything vs. just reconfirmed prior matches.
         "ALTER TABLE pr_granola_syncs ADD COLUMN associations_updated INTEGER NOT NULL DEFAULT 0",
+        # Rename `cursor` → `cursor_value` for local SQLite DBs that were
+        # created before the Postgres-keyword fix. On Postgres this is a
+        # no-op because the table never existed under the old schema (the
+        # reserved-keyword error aborted the whole executescript, leaving
+        # the CREATE TABLE above to create the renamed column on first
+        # success — and this rename then fails harmlessly).
+        "ALTER TABLE pr_sync_state RENAME COLUMN cursor TO cursor_value",
     ]
     for stmt in _MIGRATIONS:
         try:
             conn.execute(stmt)
+            conn.commit()
         except Exception:
-            # 'duplicate column name' — column already exists, ignore.
-            pass
-    conn.commit()
+            # 'duplicate column' / 'column does not exist' / Postgres aborted
+            # transaction — in all cases roll back so the next migration
+            # starts with a clean transaction.
+            try:
+                conn.rollback()
+            except Exception:
+                pass

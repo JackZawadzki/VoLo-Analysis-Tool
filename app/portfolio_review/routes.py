@@ -21,7 +21,8 @@ JSON API (all under /api/portfolio-review):
     POST   /api/portfolio-review/comments
     DELETE /api/portfolio-review/comments/{id}               — soft delete (own comments only)
 
-    POST   /api/portfolio-review/import                      — re-run Excel sync (admin only)
+    POST   /api/portfolio-review/import                      — re-run Excel sync from server-side path (admin only)
+    POST   /api/portfolio-review/import-upload               — multipart upload of an .xlsx workbook (admin only)
     GET    /api/portfolio-review/imports                     — list recent import runs
 """
 
@@ -370,6 +371,51 @@ def api_run_import(workbook_path: str = Query(..., description="Absolute path to
         conn.close()
 
 
+@api.post("/import-upload")
+async def api_run_import_upload(file: UploadFile = File(...),
+                                as_of: Optional[str] = Query(None),
+                                user: CurrentUser = Depends(get_current_user)):
+    """Import a workbook uploaded directly from the operator's machine.
+
+    Mirrors `/import` (which takes a server-side path) and `/drive/sync`
+    (which pulls from Drive) — same loader, same audit trail in pr_imports.
+    The file is streamed to a tempfile, imported, then unlinked.
+    """
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can run import")
+    name = (file.filename or "").lower()
+    if not name.endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "Only .xlsx / .xlsm workbooks are supported")
+    import tempfile
+    from .loader import run_import
+    suffix = ".xlsm" if name.endswith(".xlsm") else ".xlsx"
+    tmp = tempfile.NamedTemporaryFile(prefix="pr_upload_", suffix=suffix, delete=False)
+    try:
+        # Stream upload to tempfile so we don't hold the whole workbook in memory.
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+        tmp.flush()
+        tmp.close()
+        conn = get_db()
+        try:
+            return run_import(tmp.name, conn, user_id=user.id, as_of_date=as_of)
+        finally:
+            conn.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Upload import failed")
+        raise HTTPException(500, f"Upload import failed: {e}")
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
 @api.get("/imports")
 def api_list_imports(user: CurrentUser = Depends(get_current_user)):
     conn = get_db()
@@ -686,7 +732,7 @@ def api_granola_sync_state(user: CurrentUser = Depends(get_current_user)):
     conn = get_db()
     try:
         row = conn.execute(
-            """SELECT cursor, last_run_at, last_status
+            """SELECT cursor_value, last_run_at, last_status
                  FROM pr_sync_state
                 WHERE owner_id=? AND source='granola'""",
             (user.id,),
@@ -700,7 +746,7 @@ def api_granola_sync_state(user: CurrentUser = Depends(get_current_user)):
                 "next_pull": "Will fetch ALL notes (no incremental cursor saved yet — first sync).",
             }
         d = _row_to_dict(row)
-        cur = d.get("cursor") or ""
+        cur = d.get("cursor_value") or ""
         return {
             "has_cursor": bool(cur),
             "cursor": cur or None,

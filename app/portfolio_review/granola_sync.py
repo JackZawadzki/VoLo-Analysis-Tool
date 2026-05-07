@@ -230,12 +230,12 @@ def get_stored_cursor(conn: sqlite3.Connection, *, user_id: Optional[int]) -> Op
     if not user_id:
         return None
     row = conn.execute(
-        "SELECT cursor FROM pr_sync_state WHERE owner_id=? AND source='granola'",
+        "SELECT cursor_value FROM pr_sync_state WHERE owner_id=? AND source='granola'",
         (user_id,),
     ).fetchone()
     if row is None:
         return None
-    cursor = row["cursor"] if hasattr(row, "keys") else row[0]
+    cursor = row["cursor_value"] if hasattr(row, "keys") else row[0]
     return cursor or None
 
 
@@ -263,12 +263,12 @@ def set_stored_cursor(
     if advance:
         # Success path — write or advance the cursor.
         conn.execute(
-            """INSERT INTO pr_sync_state (owner_id, source, cursor, last_run_at, last_status)
+            """INSERT INTO pr_sync_state (owner_id, source, cursor_value, last_run_at, last_status)
                VALUES (?, 'granola', ?, datetime('now'), ?)
                ON CONFLICT(owner_id, source) DO UPDATE SET
-                   cursor      = excluded.cursor,
-                   last_run_at = excluded.last_run_at,
-                   last_status = excluded.last_status""",
+                   cursor_value = excluded.cursor_value,
+                   last_run_at  = excluded.last_run_at,
+                   last_status  = excluded.last_status""",
             (user_id, cursor, status),
         )
     else:
@@ -277,7 +277,7 @@ def set_stored_cursor(
         # untouched on subsequent runs (the UPDATE clause omits the
         # cursor column entirely).
         conn.execute(
-            """INSERT INTO pr_sync_state (owner_id, source, cursor, last_run_at, last_status)
+            """INSERT INTO pr_sync_state (owner_id, source, cursor_value, last_run_at, last_status)
                VALUES (?, 'granola', '', datetime('now'), ?)
                ON CONFLICT(owner_id, source) DO UPDATE SET
                    last_run_at = excluded.last_run_at,
