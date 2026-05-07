@@ -648,13 +648,15 @@ async def api_import_deck(file: UploadFile = File(...),
 # `granola_sync.py` for the full design notes.
 @api.post("/granola/sync")
 def api_granola_sync(
-    cursor: Optional[str] = Query(None, description="ISO timestamp; only pull notes updated after this. Omit for full sync."),
-    include_transcripts: bool = Query(True, description="Include full transcript text in note bodies. Default True matches volomind so notes that only have a transcript (no summary) aren't silently dropped by _to_raw_document."),
+    cursor: Optional[str] = Query(None, description="ISO timestamp override; only pull notes updated after this. Omit to use the per-user stored cursor (incremental). Pass an explicit value to override."),
+    include_transcripts: bool = Query(True, description="Include full transcript text in note bodies. Default True matches volomind so notes that only have a transcript (no summary) aren't silently dropped."),
+    reset: bool = Query(False, description="Force a full re-sync, ignoring the stored cursor. New cursor is written on success. Use to recover after fixing folder names or after a failed sync."),
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Pull recent Granola notes from the allowed folders and link them
-    to portfolio companies. Idempotent — re-running just refreshes any
-    existing associations and adds new ones."""
+    """Pull Granola notes from allowed folders and link them to portfolio
+    companies. Incremental by default — reads the stored per-user cursor
+    so subsequent clicks only fetch notes updated since the last
+    successful sync. Pass `?reset=true` to force a full re-sync."""
     from .granola_sync import run_granola_sync
     conn = get_db()
     try:
@@ -663,6 +665,7 @@ def api_granola_sync(
             user_id=user.id,
             cursor=cursor,
             include_transcripts=include_transcripts,
+            reset=reset,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -671,6 +674,58 @@ def api_granola_sync(
     except Exception as e:
         logger.exception("Granola sync failed")
         raise HTTPException(500, f"Granola sync failed: {e}")
+    finally:
+        conn.close()
+
+
+@api.get("/granola/sync-state")
+def api_granola_sync_state(user: CurrentUser = Depends(get_current_user)):
+    """Return the current per-user cursor + last run metadata so the UI
+    can show 'Last incremental sync at <time>; will pull notes updated
+    after <cursor>'."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT cursor, last_run_at, last_status
+                 FROM pr_sync_state
+                WHERE owner_id=? AND source='granola'""",
+            (user.id,),
+        ).fetchone()
+        if row is None:
+            return {
+                "has_cursor": False,
+                "cursor": None,
+                "last_run_at": None,
+                "last_status": None,
+                "next_pull": "Will fetch ALL notes (no incremental cursor saved yet — first sync).",
+            }
+        d = _row_to_dict(row)
+        cur = d.get("cursor") or ""
+        return {
+            "has_cursor": bool(cur),
+            "cursor": cur or None,
+            "last_run_at": d.get("last_run_at"),
+            "last_status": d.get("last_status"),
+            "next_pull": (
+                f"Will fetch only notes updated after {cur}." if cur
+                else "Will fetch ALL notes (cursor cleared)."
+            ),
+        }
+    finally:
+        conn.close()
+
+
+@api.post("/granola/reset-cursor")
+def api_granola_reset_cursor(user: CurrentUser = Depends(get_current_user)):
+    """Clear the per-user stored cursor so the next sync runs in full.
+    Equivalent to passing `?reset=true` on the next /sync call but
+    persistent (subsequent syncs will start from scratch until one
+    succeeds)."""
+    from .granola_sync import reset_stored_cursor
+    conn = get_db()
+    try:
+        reset_stored_cursor(conn, user_id=user.id)
+        return {"ok": True, "message": "Granola cursor cleared. Next sync will fetch everything."}
     finally:
         conn.close()
 
@@ -734,7 +789,8 @@ def api_granola_recent_syncs(
     try:
         rows = conn.execute(
             """SELECT id, started_at, finished_at, status, notes_fetched,
-                      associations_new, associations_skip, error_summary
+                      associations_new, associations_updated, associations_skip,
+                      error_summary
                  FROM pr_granola_syncs
                 ORDER BY started_at DESC
                 LIMIT ?""",

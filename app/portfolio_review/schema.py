@@ -274,6 +274,30 @@ CREATE TABLE IF NOT EXISTS pr_granola_syncs (
     associations_skip INTEGER NOT NULL DEFAULT 0,
     error_summary     TEXT    NOT NULL DEFAULT ''
 );
+
+-- Per-user incremental sync state. After a successful Granola pull we
+-- persist the high-water-mark timestamp here so the next sync passes
+-- it to the connector as `updated_after` and only fetches notes that
+-- have changed since. Same pattern volomind uses in cc_sources.cursor.
+--
+-- Source values:
+--   'granola'         — Granola notes incremental cursor (ISO 8601 timestamp)
+--   'drive_discover'  — last successful Drive folder discovery (timestamp;
+--                       informational only — discovery is already idempotent)
+--   'drive_workbook'  — last workbook re-import timestamp (informational)
+--
+-- Reserved one row per (owner, source) so cursor advances monotonically
+-- per user; clearing the row forces a full re-sync next click.
+CREATE TABLE IF NOT EXISTS pr_sync_state (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source        TEXT    NOT NULL,
+    cursor        TEXT    NOT NULL DEFAULT '',
+    last_run_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+    last_status   TEXT    NOT NULL DEFAULT '',
+    UNIQUE(owner_id, source)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_sync_state_owner ON pr_sync_state(owner_id, source);
 """
 
 
@@ -291,6 +315,10 @@ def apply_schema(conn) -> None:
         "ALTER TABLE pr_traction_snapshots ADD COLUMN narrative_raw      TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_traction_snapshots ADD COLUMN fundraising_status TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_traction_snapshots ADD COLUMN deck_row_index     INTEGER",
+        # Granola audit completeness — track existing-note refreshes alongside
+        # net-new associations so the operator can see whether a sync added
+        # anything vs. just reconfirmed prior matches.
+        "ALTER TABLE pr_granola_syncs ADD COLUMN associations_updated INTEGER NOT NULL DEFAULT 0",
     ]
     for stmt in _MIGRATIONS:
         try:

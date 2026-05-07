@@ -220,6 +220,86 @@ def _match_companies(
     return [(cid, m, c) for cid, (m, c) in matched.items()]
 
 
+# ── Per-user cursor persistence ──────────────────────────────────────────────
+
+
+def get_stored_cursor(conn: sqlite3.Connection, *, user_id: Optional[int]) -> Optional[str]:
+    """Read the most recent successful sync's high-water-mark timestamp
+    for this user. Returns None on first sync (no row yet) or if the
+    user_id is missing — both are treated as "fetch everything"."""
+    if not user_id:
+        return None
+    row = conn.execute(
+        "SELECT cursor FROM pr_sync_state WHERE owner_id=? AND source='granola'",
+        (user_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    cursor = row["cursor"] if hasattr(row, "keys") else row[0]
+    return cursor or None
+
+
+def set_stored_cursor(
+    conn: sqlite3.Connection,
+    *,
+    user_id: Optional[int],
+    cursor: Optional[str],
+    status: str,
+) -> None:
+    """Persist the high-water-mark cursor after a sync.
+
+    Cursor advances ONLY on success — failed/partial syncs update the
+    last_run_at + last_status fields but leave the cursor untouched
+    (including on the first-ever failed sync, where the new row is
+    inserted with an empty cursor).
+
+    Two SQL paths because SQLite's UPSERT can't conditionally branch
+    the INSERT side; the prior single-statement form silently wrote a
+    bad cursor on the first failed sync.
+    """
+    if not user_id:
+        return
+    advance = bool(cursor) and status == "success"
+    if advance:
+        # Success path — write or advance the cursor.
+        conn.execute(
+            """INSERT INTO pr_sync_state (owner_id, source, cursor, last_run_at, last_status)
+               VALUES (?, 'granola', ?, datetime('now'), ?)
+               ON CONFLICT(owner_id, source) DO UPDATE SET
+                   cursor      = excluded.cursor,
+                   last_run_at = excluded.last_run_at,
+                   last_status = excluded.last_status""",
+            (user_id, cursor, status),
+        )
+    else:
+        # Failure / partial / no-cursor-returned path. Record the
+        # attempt but leave the cursor field empty on first run, and
+        # untouched on subsequent runs (the UPDATE clause omits the
+        # cursor column entirely).
+        conn.execute(
+            """INSERT INTO pr_sync_state (owner_id, source, cursor, last_run_at, last_status)
+               VALUES (?, 'granola', '', datetime('now'), ?)
+               ON CONFLICT(owner_id, source) DO UPDATE SET
+                   last_run_at = excluded.last_run_at,
+                   last_status = excluded.last_status""",
+            (user_id, status),
+        )
+    conn.commit()
+
+
+def reset_stored_cursor(conn: sqlite3.Connection, *, user_id: Optional[int]) -> None:
+    """Force the next sync to fetch everything from scratch. Useful if
+    the operator wants to re-run a full sync (e.g. after fixing folder
+    names) without manually deleting a row."""
+    if not user_id:
+        return
+    conn.execute(
+        "DELETE FROM pr_sync_state WHERE owner_id=? AND source='granola'",
+        (user_id,),
+    )
+    conn.commit()
+
+
 def _extract_attendee_emails(note: dict) -> list[str]:
     """Pull the email field out of Granola's attendee list. Format:
     [{name: "...", email: "..."}], occasionally just a list of strings."""
@@ -243,39 +323,55 @@ def run_granola_sync(
     user_id: Optional[int] = None,
     allowed_folders: Optional[Iterable[str]] = None,
     cursor: Optional[str] = None,
-    include_transcripts: bool = False,
+    include_transcripts: bool = True,
+    reset: bool = False,
 ) -> dict:
     """Pull recent Granola notes from the allowed folders and link matched
     notes to portfolio companies.
 
-    Args:
-        conn: existing sqlite3 connection (host DB; pr_* tables live here).
-        user_id: caller's user id, recorded on the audit row. Optional.
-        allowed_folders: override the folder allowlist (defaults to env or
-            the Investment Committee / Portco Updates / Screening +
-            Rapid Fire trio).
-        cursor: ISO timestamp; only fetch notes updated after this. None =
-            fetch everything (full first sync).
-        include_transcripts: forwarded to GranolaConnector — keep False
-            unless you need full transcript text in the body.
+    Incremental by default: reads the high-water-mark cursor from
+    pr_sync_state for this user, asks Granola only for notes updated
+    after it, and writes the new high-water-mark on success. First-ever
+    sync (no row in pr_sync_state) fetches everything; subsequent syncs
+    are fast incremental pulls.
 
-    Returns a dict suitable as a JSON API response:
-        {
-          "status": "success" | "partial" | "failed",
-          "notes_fetched": int,                # total notes Granola returned
-          "notes_in_scope": int,               # count after folder filter
-          "associations_new": int,             # rows inserted to pr_granola_notes
-          "associations_updated": int,         # rows updated (re-sync of existing)
-          "associations_unmatched": int,       # in-scope notes with no company match
-          "allowed_folders": [...],
-          "next_cursor": str | None,
-        }
+    Args:
+        conn: sqlite3 connection (host DB; pr_* tables live here).
+        user_id: caller's user id. Required for cursor persistence
+            (cursor is stored per-user). If None, this acts as a
+            stateless one-shot sync.
+        allowed_folders: override the folder allowlist (defaults to env
+            or the Investment Committee / Portco Updates / Screening +
+            Rapid Fire trio).
+        cursor: explicit ISO timestamp override. None = read from
+            pr_sync_state. Pass to force a custom starting point.
+        include_transcripts: forwarded to GranolaConnector. Default True
+            (matches volomind) so notes that only have a transcript (no
+            summary_markdown) aren't silently dropped by _to_raw_document.
+        reset: if True, ignores the stored cursor and runs a full
+            re-sync. The new high-water-mark is written on success.
+            Use to recover after fixing folder names or after a failed
+            sync left the cursor in a confusing state.
+
+    Returns:
+        {status, notes_fetched, notes_in_scope, associations_new,
+         associations_updated, associations_unmatched, allowed_folders,
+         next_cursor, used_cursor, used_reset, diagnostics, error}
     """
     from ..volomind.connectors.granola import GranolaConnector
 
     allowed = _resolve_allowed_folders(allowed_folders)
     if not allowed:
         raise ValueError("granola_sync requires at least one allowed folder")
+
+    # Cursor resolution priority: explicit `cursor` arg > stored cursor
+    # > None (full sync). `reset=True` skips both and starts fresh.
+    if reset:
+        effective_cursor = None
+    elif cursor is not None:
+        effective_cursor = cursor
+    else:
+        effective_cursor = get_stored_cursor(conn, user_id=user_id)
 
     audit_row = conn.execute(
         "INSERT INTO pr_granola_syncs (user_id) VALUES (?)",
@@ -290,7 +386,7 @@ def run_granola_sync(
     associations_new = 0
     associations_updated = 0
     associations_unmatched = 0
-    last_seen_cursor = cursor
+    last_seen_cursor = effective_cursor
     error_summary = ""
     status = "success"
 
@@ -308,7 +404,7 @@ def run_granola_sync(
     try:
         connector = GranolaConnector(
             config={"include_transcripts": include_transcripts},
-            cursor=cursor,
+            cursor=effective_cursor,
         )
         for raw in connector.list_documents():
             notes_fetched += 1
@@ -404,17 +500,28 @@ def run_granola_sync(
     finally:
         conn.execute(
             """UPDATE pr_granola_syncs
-                  SET finished_at      = datetime('now'),
-                      status           = ?,
-                      notes_fetched    = ?,
-                      associations_new = ?,
-                      associations_skip= ?,
-                      error_summary    = ?
+                  SET finished_at         = datetime('now'),
+                      status              = ?,
+                      notes_fetched       = ?,
+                      associations_new    = ?,
+                      associations_skip   = ?,
+                      associations_updated = ?,
+                      error_summary       = ?
                 WHERE id = ?""",
             (status, notes_fetched, associations_new, associations_unmatched,
-             error_summary, sync_id),
+             associations_updated, error_summary, sync_id),
         )
         conn.commit()
+
+    # Persist the high-water-mark cursor (only advances on success — see
+    # set_stored_cursor). Subsequent syncs read from here and only fetch
+    # notes updated after this timestamp.
+    set_stored_cursor(
+        conn,
+        user_id=user_id,
+        cursor=last_seen_cursor,
+        status=status,
+    )
 
     return {
         "status": status,
@@ -425,6 +532,8 @@ def run_granola_sync(
         "associations_unmatched": associations_unmatched,
         "allowed_folders": sorted(allowed),
         "next_cursor": last_seen_cursor,
+        "used_cursor": effective_cursor,        # what was actually used as the sync starting point
+        "used_reset": bool(reset),
         "error": error_summary or None,
         # Diagnostics — exposed so an operator can see exactly why a sync
         # came back with 0 in-scope notes without spelunking through logs.
