@@ -55,10 +55,21 @@ class DriveSyncCard {
 
   renderDisconnected() {
     this.setBadge('not connected', 'bg-gray-100 text-gray-600');
+    // The /api/drive/oauth/authorize endpoint is a top-level browser
+    // navigation (Google's consent screen redirects back to it). A plain
+    // <a> click does NOT send our Authorization header, so the endpoint
+    // accepts a ?token=<jwt> query-string fallback (same pattern as
+    // /memo/history/{id}/docx). Without the token param, the endpoint
+    // returns 401 "Authentication required" even for fully logged-in
+    // users — which is the bug we're fixing here.
+    const tok = localStorage.getItem('rvm_token') || '';
+    const authorizeUrl = '/api/drive/oauth/authorize'
+      + '?return_to=' + encodeURIComponent('/portfolio-review/')
+      + (tok ? '&token=' + encodeURIComponent(tok) : '');
     this.contentEl.innerHTML = `
       <p class="mb-3">Connect your Google account to pull the latest workbook directly from Drive.
         Each user signs in with their own account and only sees files they already have access to.</p>
-      <a href="/api/drive/oauth/authorize?return_to=/portfolio-review/"
+      <a href="${authorizeUrl}"
          class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">
           <path d="M12 5v14M5 12h14" stroke="white" stroke-width="2"/>
