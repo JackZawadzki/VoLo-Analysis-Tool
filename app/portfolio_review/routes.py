@@ -649,7 +649,7 @@ async def api_import_deck(file: UploadFile = File(...),
 @api.post("/granola/sync")
 def api_granola_sync(
     cursor: Optional[str] = Query(None, description="ISO timestamp; only pull notes updated after this. Omit for full sync."),
-    include_transcripts: bool = Query(False, description="Include full transcript text in note bodies (heavier)."),
+    include_transcripts: bool = Query(True, description="Include full transcript text in note bodies. Default True matches volomind so notes that only have a transcript (no summary) aren't silently dropped by _to_raw_document."),
     user: CurrentUser = Depends(get_current_user),
 ):
     """Pull recent Granola notes from the allowed folders and link them

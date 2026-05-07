@@ -48,10 +48,23 @@ class DiscoverFoldersButton {
         method: 'POST',
         headers: _prAuthHeaders(),
       });
-      const data = await r.json();
+      const data = await r.json().catch(() => ({}));
       if (!r.ok) {
-        const detail = data && (data.detail || data.error) || `HTTP ${r.status}`;
-        throw new Error(detail);
+        // Detail may be a string ("Drive not connected.") or a
+        // structured object (FastAPI validation errors). Stringify
+        // safely so the user sees something useful instead of
+        // "[object Object]".
+        const raw = data && (data.detail ?? data.error);
+        const detailStr = typeof raw === 'string'
+          ? raw
+          : raw
+            ? JSON.stringify(raw)
+            : `HTTP ${r.status}`;
+        // Hint when Drive isn't connected yet — the most common cause.
+        const friendly = (r.status === 401 || /not connected|drive/i.test(detailStr))
+          ? `${detailStr} — click "Connect Google Drive" above first.`
+          : detailStr;
+        throw new Error(friendly);
       }
 
       const matched = data.matched ?? 0;
@@ -129,9 +142,20 @@ class GranolaSyncCard {
           ? 'bg-red-100 text-red-700'
           : 'bg-amber-100 text-amber-700';
       this.setBadge(`last: ${status}`, badgeCls);
-      if (this.lastSyncEl && when) {
-        const human = new Date(when.replace(' ', 'T') + 'Z').toLocaleString();
-        this.lastSyncEl.textContent = `Last sync: ${human} · ${latest.notes_fetched || 0} notes fetched · ${latest.associations_new || 0} new links`;
+      if (this.lastSyncEl) {
+        // Postgres returns timestamps as ISO 8601 strings already
+        // ("2026-05-07T15:30:00.123456+00:00"). SQLite returns
+        // "2026-05-07 15:30:00" (no T, no zone) — that's the format
+        // datetime('now') produces. Try both shapes; fall back to the
+        // raw string so we don't render "Invalid Date".
+        let human = '';
+        if (when) {
+          const candidate = when.includes('T') ? when : when.replace(' ', 'T');
+          const dt = new Date(candidate);
+          human = isNaN(dt.getTime()) ? when : dt.toLocaleString();
+        }
+        const prefix = human ? `Last sync: ${human}` : 'Not run yet';
+        this.lastSyncEl.textContent = `${prefix} · ${latest.notes_fetched || 0} notes fetched · ${latest.associations_new || 0} new links`;
       }
     } catch (_e) {
       // Quiet — non-critical
