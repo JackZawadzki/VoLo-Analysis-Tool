@@ -336,6 +336,17 @@ def apply_schema(conn) -> None:
         # the CREATE TABLE above to create the renamed column on first
         # success — and this rename then fails harmlessly).
         "ALTER TABLE pr_sync_state RENAME COLUMN cursor TO cursor_value",
+        # LLM-generated derisking scores. `evaluator` lets human-imported
+        # rows (from the Excel workbook) and AI-generated rows coexist
+        # under different `period` strings (e.g. '2025' vs '2025 LLM');
+        # the JSON columns store per-dimension reasoning + evidence so the
+        # operator can audit and override.
+        "ALTER TABLE pr_derisking_scores ADD COLUMN evaluator        TEXT NOT NULL DEFAULT 'human'",
+        "ALTER TABLE pr_derisking_scores ADD COLUMN model_used       TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_derisking_scores ADD COLUMN reasoning_json   TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_derisking_scores ADD COLUMN evidence_summary TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_derisking_scores ADD COLUMN confidence       TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_derisking_scores ADD COLUMN source_files     TEXT NOT NULL DEFAULT ''",
     ]
     for stmt in _MIGRATIONS:
         try:

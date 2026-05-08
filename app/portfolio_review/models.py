@@ -21,11 +21,12 @@ SECTIONS = [
     {"slug": "valuation",     "num": "04", "name": "Valuation & Ownership", "color": "#C00000"},
     {"slug": "composition",   "num": "05", "name": "Portfolio Composition", "color": "#7030A0"},
     {"slug": "traction",      "num": "06", "name": "Traction & Status",     "color": "#ED7D31"},
-    {"slug": "follow-on",     "num": "07", "name": "Follow-On Activity",    "color": "#5B9BD5"},
-    {"slug": "governance",    "num": "08", "name": "Governance",            "color": "#00B0F0"},
-    {"slug": "summary",       "num": "09", "name": "Summary & Output",      "color": "#548235"},
-    {"slug": "directory",     "num": "10", "name": "Directory",             "color": "#BFBFBF"},
-    {"slug": "archive",       "num": "11", "name": "Archive & WIP",         "color": "#808080"},
+    {"slug": "derisking",     "num": "07", "name": "Derisking Scorecard",   "color": "#7c3aed"},
+    {"slug": "follow-on",     "num": "08", "name": "Follow-On Activity",    "color": "#5B9BD5"},
+    {"slug": "governance",    "num": "09", "name": "Governance",            "color": "#00B0F0"},
+    {"slug": "summary",       "num": "10", "name": "Summary & Output",      "color": "#548235"},
+    {"slug": "directory",     "num": "11", "name": "Directory",             "color": "#BFBFBF"},
+    {"slug": "archive",       "num": "12", "name": "Archive & WIP",         "color": "#808080"},
 ]
 SECTION_SLUGS = {s["slug"] for s in SECTIONS}
 

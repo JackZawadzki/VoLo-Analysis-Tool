@@ -24,10 +24,17 @@ JSON API (all under /api/portfolio-review):
     POST   /api/portfolio-review/import                      — re-run Excel sync from server-side path (admin only)
     POST   /api/portfolio-review/import-upload               — multipart upload of an .xlsx workbook (admin only)
     GET    /api/portfolio-review/imports                     — list recent import runs
+
+    GET    /api/portfolio-review/derisking                   — latest score per company
+    POST   /api/portfolio-review/derisking/import            — upload Derisking Quadrants .xlsx
+    POST   /api/portfolio-review/derisking/llm-score/{id}    — Claude scores one company against IC memo + decks + notes
+    GET    /api/portfolio-review/derisking/by-stage          — companies grouped by current stage with YoY delta
+    GET    /api/portfolio-review/derisking/{id}              — full score + per-dimension reasoning for one company
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -662,6 +669,270 @@ async def api_derisking_import(file: UploadFile = File(...),
             conn.close()
     finally:
         Path(tmp.name).unlink(missing_ok=True)
+
+
+@api.post("/derisking/llm-score/{company_id}")
+def api_derisking_llm_score(company_id: int,
+                            period: str = Query("2025 LLM",
+                                description="Stored as the period string. Use a suffix like ' LLM' to keep these distinct from operator-imported scores."),
+                            provider: Optional[str] = Query("anthropic",
+                                regex="^(anthropic|refiant)$",
+                                description="Which LLM backend to use. 'anthropic' = Claude (Sonnet 4.6 default), 'refiant' = QWEN via Refiant."),
+                            model: Optional[str] = Query(None,
+                                description="Optional explicit model id. Overrides `provider`; the prefix decides backend ('qwen...' → Refiant, else Anthropic)."),
+                            user: CurrentUser = Depends(get_current_user)):
+    """Run an LLM-driven derisking review for one company.
+
+    The chosen LLM reads the IC memo / diligence materials, the most recent
+    board decks + investor updates, and the most recent Granola meeting
+    notes, then scores each of the 7 derisking dimensions with reasoning
+    and evidence. Result is persisted to pr_derisking_scores with
+    evaluator='llm'.
+
+    Provider toggle: pass `provider=anthropic` (default) for Claude or
+    `provider=refiant` for QWEN. `model` overrides both if set explicitly.
+
+    Sync call — typical run is 30-60s for one company. Use a long client
+    timeout (180s+).
+    """
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can run LLM scoring")
+    from .derisking_scoring import score_company_with_llm
+    conn = get_db()
+    try:
+        return score_company_with_llm(
+            conn,
+            company_id=company_id,
+            user_id=user.id,
+            period=period,
+            provider=provider,
+            model=model,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("LLM derisking score failed")
+        raise HTTPException(500, f"LLM scoring failed: {e}")
+    finally:
+        conn.close()
+
+
+@api.get("/derisking/by-stage")
+def api_derisking_by_stage(period: Optional[str] = Query(None,
+                              description="Primary period (latest if omitted)."),
+                           compare_to: Optional[str] = Query(None,
+                              description="Earlier period to show side-by-side (for the YoY delta column)."),
+                           user: CurrentUser = Depends(get_current_user)):
+    """Return derisking scores grouped by current investment stage with
+    optional period-over-period comparison.
+
+    'Current stage' is derived from the latest pr_investments.round_label
+    per company; companies with no investments are bucketed as 'Unstaged'.
+
+    Response shape (frontend renders chips per row):
+      {
+        "stages": [
+          {"stage": "Seed", "rows": [
+              {"company_id": 1, "company_name": "...", "fund": "Fund I",
+               "sector": "...", "current_stage": "Seed",
+               "primary": {"period": "2025 LLM", "quartile": 4, "total": 5,
+                           "evaluator": "llm", "model_used": "claude-sonnet-4-6",
+                           "scored_at": "...", "evidence_summary": "..."},
+               "compare": {"period": "FY2024", "quartile": 3, "total": 3,
+                           "evaluator": "human", ...} | null,
+               "delta_quartile": 1   # primary minus compare; null if either missing
+              }, ...
+          ]}, ...
+        ],
+        "primary_period": "2025 LLM",
+        "compare_period": "FY2024",
+        "available_periods": ["2025 LLM", "FY2025", "FY2024"]
+      }
+    """
+    conn = get_db()
+    try:
+        # Available periods, newest first
+        available = [r[0] for r in conn.execute(
+            "SELECT DISTINCT period FROM pr_derisking_scores ORDER BY period DESC"
+        ).fetchall()]
+        if not available:
+            return {"stages": [], "primary_period": None, "compare_period": None,
+                    "available_periods": []}
+
+        primary = period or available[0]
+        compare = compare_to
+        if compare is None and len(available) > 1:
+            # Pick the next-most-recent period that's different from primary
+            for p in available:
+                if p != primary:
+                    compare = p
+                    break
+
+        # One row per company with its primary score (or NULL) and current stage
+        # derived from latest pr_investments.round_label.
+        rows = conn.execute(
+            """
+            SELECT c.id          AS company_id,
+                   c.name        AS company_name,
+                   c.fund        AS company_fund,
+                   c.sector      AS sector,
+                   c.commercial_status AS commercial_status,
+                   (SELECT i.round_label
+                      FROM pr_investments i
+                     WHERE i.company_id = c.id AND i.round_label != ''
+                  ORDER BY COALESCE(i.investment_date, '') DESC, i.id DESC
+                     LIMIT 1)    AS current_stage,
+                   p.period      AS p_period,
+                   p.quartile    AS p_quartile,
+                   p.total_score AS p_total,
+                   p.is_exited   AS p_is_exited,
+                   COALESCE(p.evaluator, 'human') AS p_evaluator,
+                   p.model_used  AS p_model_used,
+                   p.scored_at   AS p_scored_at,
+                   p.evidence_summary AS p_evidence_summary,
+                   p.confidence  AS p_confidence,
+                   cmp.period    AS c_period,
+                   cmp.quartile  AS c_quartile,
+                   cmp.total_score AS c_total,
+                   COALESCE(cmp.evaluator, 'human') AS c_evaluator
+              FROM pr_companies c
+              LEFT JOIN pr_derisking_scores p
+                ON p.company_id = c.id AND p.period = ?
+              LEFT JOIN pr_derisking_scores cmp
+                ON cmp.company_id = c.id AND cmp.period = ?
+             ORDER BY c.fund, c.name
+            """,
+            (primary, compare or "__none__"),
+        ).fetchall()
+
+        # Bucket rows by stage. Order stages naturally from earliest to latest.
+        STAGE_ORDER = [
+            "Pre-Seed", "Seed", "Seed+", "Seed Extension",
+            "A", "Series A", "A+",
+            "B", "Series B", "B+",
+            "C", "Series C", "D", "Growth",
+        ]
+        def stage_rank(s: str) -> tuple:
+            if not s:
+                return (99, "")
+            for i, label in enumerate(STAGE_ORDER):
+                if s.strip().lower() == label.lower():
+                    return (i, s)
+            return (50, s)  # unknown stages sort after known ones, alphabetically
+
+        bucketed: dict[str, list[dict]] = {}
+        for r in rows:
+            d = _row_to_dict(r)
+            stage = d.get("current_stage") or "Unstaged"
+            primary_block = None
+            if d.get("p_period"):
+                primary_block = {
+                    "period": d["p_period"],
+                    "quartile": d["p_quartile"],
+                    "total": d["p_total"],
+                    "is_exited": bool(d.get("p_is_exited")),
+                    "evaluator": d["p_evaluator"],
+                    "model_used": d.get("p_model_used") or "",
+                    "scored_at": d.get("p_scored_at"),
+                    "evidence_summary": d.get("p_evidence_summary") or "",
+                    "confidence": d.get("p_confidence") or "",
+                }
+            compare_block = None
+            if d.get("c_period"):
+                compare_block = {
+                    "period": d["c_period"],
+                    "quartile": d["c_quartile"],
+                    "total": d["c_total"],
+                    "evaluator": d["c_evaluator"],
+                }
+            delta_q = None
+            if primary_block and compare_block \
+               and primary_block["quartile"] is not None \
+               and compare_block["quartile"] is not None:
+                delta_q = primary_block["quartile"] - compare_block["quartile"]
+
+            bucketed.setdefault(stage, []).append({
+                "company_id": d["company_id"],
+                "company_name": d["company_name"],
+                "fund": d.get("company_fund") or "",
+                "sector": d.get("sector") or "",
+                "commercial_status": d.get("commercial_status") or "",
+                "current_stage": stage,
+                "primary": primary_block,
+                "compare": compare_block,
+                "delta_quartile": delta_q,
+            })
+
+        # Within each stage, rank by primary quartile desc → primary total desc
+        # → company name. Companies with no primary score sink to the bottom.
+        def row_sort_key(row: dict) -> tuple:
+            p = row.get("primary") or {}
+            q = p.get("quartile")
+            t = p.get("total")
+            return (
+                0 if q is not None else 1,
+                -(q or 0),
+                -(t if isinstance(t, (int, float)) else 0),
+                row["company_name"].lower(),
+            )
+        for stage_rows in bucketed.values():
+            stage_rows.sort(key=row_sort_key)
+
+        ordered_stages = sorted(bucketed.keys(), key=stage_rank)
+        return {
+            "stages": [
+                {"stage": s, "rows": bucketed[s], "n": len(bucketed[s])}
+                for s in ordered_stages
+            ],
+            "primary_period": primary,
+            "compare_period": compare,
+            "available_periods": available,
+        }
+    finally:
+        conn.close()
+
+
+@api.get("/derisking/{company_id}")
+def api_derisking_company_detail(company_id: int,
+                                 period: Optional[str] = Query(None),
+                                 user: CurrentUser = Depends(get_current_user)):
+    """Full derisking record for one company at a specific period — includes
+    the LLM reasoning JSON for the per-dimension expand-row UI."""
+    conn = get_db()
+    try:
+        if period:
+            row = conn.execute(
+                """SELECT d.*, c.name AS company_name, c.fund AS company_fund
+                     FROM pr_derisking_scores d
+                     JOIN pr_companies c ON c.id = d.company_id
+                    WHERE d.company_id=? AND d.period=?""",
+                (company_id, period),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT d.*, c.name AS company_name, c.fund AS company_fund
+                     FROM pr_derisking_scores d
+                     JOIN pr_companies c ON c.id = d.company_id
+                    WHERE d.company_id=?
+                 ORDER BY d.scored_at DESC LIMIT 1""",
+                (company_id,),
+            ).fetchone()
+        if row is None:
+            raise HTTPException(404, "No score found")
+        d = _row_to_dict(row)
+        try:
+            d["reasoning"] = json.loads(d.get("reasoning_json") or "{}")
+        except Exception:
+            d["reasoning"] = {}
+        try:
+            d["source_files"] = json.loads(d.get("source_files") or "[]")
+        except Exception:
+            d["source_files"] = []
+        return d
+    finally:
+        conn.close()
 
 
 @api.post("/traction/import-deck")
