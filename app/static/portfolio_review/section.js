@@ -549,6 +549,7 @@ class SectionView {
     this.derisking.compare = data.compare_period;
 
     const periods = data.available_periods || [];
+    const hasData = (data.stages || []).length > 0;
     const periodOptions = (selected) => periods.map(p =>
       `<option value="${this.esc(p)}" ${p === selected ? 'selected' : ''}>${this.esc(p)}</option>`
     ).join('');
@@ -566,6 +567,20 @@ class SectionView {
         </button>
       </div>`;
 
+    // Period selectors only render when there's actual data — otherwise they
+    // sit empty and confuse the operator (the original bug report).
+    const periodControls = hasData ? `
+      <label class="text-xs text-gray-600">Period
+        <select id="derisking-period" class="ml-1 text-xs border border-gray-300 rounded px-2 py-1">${periodOptions(data.primary_period)}</select>
+      </label>
+      <label class="text-xs text-gray-600">Compare to
+        <select id="derisking-compare" class="ml-1 text-xs border border-gray-300 rounded px-2 py-1">
+          <option value="">— none —</option>
+          ${periodOptions(data.compare_period)}
+        </select>
+      </label>
+      <span class="h-5 w-px bg-gray-300"></span>` : '';
+
     const headerHtml = `
       <div class="pr-card mb-6 p-5">
         <div class="flex items-center gap-3 flex-wrap">
@@ -576,50 +591,35 @@ class SectionView {
             </div>
           </div>
           <div class="ml-auto flex items-center gap-3 flex-wrap">
-            <label class="text-xs text-gray-600">Period
-              <select id="derisking-period" class="ml-1 text-xs border border-gray-300 rounded px-2 py-1">${periodOptions(data.primary_period)}</select>
-            </label>
-            <label class="text-xs text-gray-600">Compare to
-              <select id="derisking-compare" class="ml-1 text-xs border border-gray-300 rounded px-2 py-1">
-                <option value="">— none —</option>
-                ${periodOptions(data.compare_period)}
-              </select>
-            </label>
-            <span class="h-5 w-px bg-gray-300"></span>
+            ${periodControls}
             <span class="text-xs text-gray-500">LLM:</span>
             ${providerToggle}
           </div>
         </div>
-        <div class="mt-3 text-xs text-gray-500 leading-relaxed">
-          <strong>How AI scoring works:</strong> For each company, the LLM compares the original IC memo (from the linked
-          <em>diligence</em> Drive folder) against the most recent board deck + investor updates and the last few Granola
-          meeting notes, then scores each dimension +1/0/-1 with cited evidence. Results are stored under a separate
-          period (suffix <code>LLM</code>) so they sit alongside the partners' workbook scores rather than overwriting them.
-        </div>
+        ${hasData ? `
+          <div class="mt-3 text-xs text-gray-500 leading-relaxed">
+            <strong>How AI scoring works:</strong> For each company, the LLM compares the original IC memo (from the linked
+            <em>diligence</em> Drive folder) against the most recent board deck + investor updates and the last few Granola
+            meeting notes, then scores each dimension +1/0/-1 with cited evidence. Results are stored under a separate
+            period (suffix <code>LLM</code>) so they sit alongside the partners' workbook scores rather than overwriting them.
+          </div>` : ''}
       </div>`;
 
     const stageHtml = (data.stages || []).map(stage => this._renderDeriskingStage(stage, !!data.compare_period)).join('');
 
-    const emptyHtml = !(data.stages || []).length ? `
-      <div class="pr-card p-8 text-center text-gray-600">
-        <div class="font-medium">No derisking scores yet.</div>
-        <div class="text-sm text-gray-500 mt-2 max-w-md mx-auto">
-          Either upload the Derisking Quadrants .xlsx in the Traction tab to import the partners' annual scoring,
-          or click <strong>AI Score</strong> on a company in the Traction tab to generate the first LLM-scored row here.
-        </div>
-      </div>` : '';
+    const emptyHtml = !hasData ? this._renderDeriskingEmptyState() : '';
 
     this.setHTML(headerHtml + stageHtml + emptyHtml);
 
     // Wire up controls
-    const onPeriodChange = () => {
-      this.renderDerisking({
-        period:  document.getElementById('derisking-period').value,
-        compare: document.getElementById('derisking-compare').value || null,
-      });
-    };
-    document.getElementById('derisking-period')?.addEventListener('change', onPeriodChange);
-    document.getElementById('derisking-compare')?.addEventListener('change', onPeriodChange);
+    const periodEl  = document.getElementById('derisking-period');
+    const compareEl = document.getElementById('derisking-compare');
+    const onPeriodChange = () => this.renderDerisking({
+      period:  periodEl?.value || null,
+      compare: compareEl?.value || null,
+    });
+    periodEl?.addEventListener('change', onPeriodChange);
+    compareEl?.addEventListener('change', onPeriodChange);
     this.root.querySelectorAll('.js-provider-btn').forEach(btn => {
       btn.addEventListener('click', () => this.renderDerisking({ provider: btn.dataset.provider }));
     });
@@ -628,6 +628,159 @@ class SectionView {
     });
     this.root.querySelectorAll('.js-reasoning-toggle').forEach(btn => {
       btn.addEventListener('click', () => this._toggleReasoning(btn));
+    });
+    // Wire the inline AI-Score-from-empty-state picker
+    document.getElementById('js-empty-ai-score-btn')?.addEventListener('click', () => this._scoreFromEmptyState());
+  }
+
+  // First-run walkthrough rendered when no scores exist. Two paths to data:
+  // (1) upload the workbook, (2) trigger LLM scoring on a single company.
+  // Both routes are spelled out clearly so the operator isn't dropped at a
+  // dead-end empty page with no guidance.
+  _renderDeriskingEmptyState() {
+    const provider = (this.derisking && this.derisking.provider) || 'anthropic';
+    const providerLabel = provider === 'refiant' ? 'Refiant (QWEN)' : 'Claude';
+    return `
+      <div class="pr-card p-6">
+        <div class="text-center mb-6">
+          <div class="inline-block w-12 h-12 rounded-full bg-purple-100 mb-3 flex items-center justify-center">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"
+                    stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="text-lg font-semibold text-gray-900">No derisking scores yet — let's get the first one in</div>
+          <div class="text-sm text-gray-500 mt-1">Two ways to populate this view. Pick whichever you prefer:</div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl mx-auto">
+          <!-- Path A: workbook -->
+          <div class="border border-gray-200 rounded-lg p-5 bg-gray-50">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="inline-block w-6 h-6 rounded-full bg-gray-300 text-white text-xs font-bold flex items-center justify-center">A</span>
+              <span class="font-semibold text-gray-900">Import the partners' workbook</span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed mb-3">
+              If you have the <em>Derisking Quadrants .xlsx</em>, upload it and every Fund I / Fund II tab gets imported as one row per company under period <code class="bg-white px-1 rounded text-xs">FY2025</code>.
+            </p>
+            <a href="/portfolio-review/traction" class="inline-block text-sm px-3 py-2 rounded bg-gray-900 text-white hover:bg-black">
+              Go to Traction tab → Upload Derisking Sheet
+            </a>
+            <div class="text-xs text-gray-500 mt-2">Takes a few seconds.</div>
+          </div>
+
+          <!-- Path B: AI scoring (the agentic two-pass) -->
+          <div class="border-2 border-purple-200 rounded-lg p-5 bg-purple-50">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="inline-block w-6 h-6 rounded-full bg-purple-600 text-white text-xs font-bold flex items-center justify-center">B</span>
+              <span class="font-semibold text-gray-900">Score one company with the LLM</span>
+              <span class="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-purple-600 text-white font-semibold">${this.esc(providerLabel)}</span>
+            </div>
+            <p class="text-sm text-gray-600 leading-relaxed mb-3">
+              Pick a portfolio company. The LLM will read its IC memo (Drive), the most recent board deck, and the last few Granola notes, then score the 7 dimensions with cited evidence. Takes ~30-60s. Stored under period <code class="bg-white px-1 rounded text-xs">${(new Date()).getFullYear()} LLM</code>.
+            </p>
+            <button id="js-empty-ai-score-btn"
+                    class="inline-block text-sm px-3 py-2 rounded bg-purple-600 text-white hover:bg-purple-700">
+              Pick a company to AI-score →
+            </button>
+            <div class="text-xs text-gray-500 mt-2">
+              Requires linked Drive folders <em>or</em> Granola notes.
+              Toggle the LLM provider in the header above before clicking.
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6 text-xs text-gray-400 text-center max-w-2xl mx-auto leading-relaxed">
+          The two methods coexist — workbook scores live under <code>FY2025</code>, LLM scores under <code>YYYY LLM</code>.
+          Once both exist you can use the period selector at the top to compare them and see where the LLM and partners agree or diverge.
+        </div>
+      </div>`;
+  }
+
+  // Spawn a small picker modal listing all companies; clicking one kicks off
+  // the LLM scoring flow inline. Avoids forcing the user to navigate to the
+  // Traction tab just to get their first score.
+  async _scoreFromEmptyState() {
+    let companies;
+    try {
+      const resp = await this.fetchJson('/api/portfolio-review/companies');
+      companies = resp.companies || resp || [];
+    } catch (e) {
+      alert('Could not load company list: ' + e.message);
+      return;
+    }
+    if (!companies.length) {
+      alert('No portfolio companies in the database yet. Import the master workbook first via Inputs tab.');
+      return;
+    }
+
+    // Render a backdrop+modal in-place. Escape closes it.
+    const modal = document.createElement('div');
+    modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/40';
+    modal.innerHTML = `
+      <div class="bg-white rounded-lg shadow-xl w-full max-w-md mx-4 p-5">
+        <div class="flex items-center mb-3">
+          <h3 class="text-base font-semibold text-gray-900">Pick a company to AI-score</h3>
+          <button class="ml-auto text-gray-400 hover:text-gray-600 text-xl leading-none js-close">&times;</button>
+        </div>
+        <input type="text" id="js-company-filter" placeholder="Filter by name…"
+               class="w-full text-sm border border-gray-300 rounded px-3 py-2 mb-3 focus:outline-none focus:ring-2 focus:ring-purple-300">
+        <div id="js-company-list" class="max-h-80 overflow-y-auto border border-gray-100 rounded">
+          ${companies.map(c => `
+            <button class="js-pick-company w-full text-left px-3 py-2 hover:bg-purple-50 border-b border-gray-100 last:border-b-0 text-sm" data-cid="${c.id}">
+              <div class="font-medium text-gray-900">${this.esc(c.name)}</div>
+              <div class="text-xs text-gray-500">${this.esc(c.fund || '')} ${c.sector ? '· ' + this.esc(c.sector) : ''}</div>
+            </button>`).join('')}
+        </div>
+        <div id="js-modal-status" class="mt-3 text-sm text-gray-500"></div>
+      </div>`;
+    document.body.appendChild(modal);
+
+    const close = () => modal.remove();
+    modal.querySelector('.js-close').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function escClose(e) {
+      if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escClose); }
+    });
+
+    const filterEl = modal.querySelector('#js-company-filter');
+    filterEl.addEventListener('input', () => {
+      const q = filterEl.value.toLowerCase();
+      modal.querySelectorAll('.js-pick-company').forEach(btn => {
+        const matches = btn.textContent.toLowerCase().includes(q);
+        btn.style.display = matches ? '' : 'none';
+      });
+    });
+    filterEl.focus();
+
+    const status = modal.querySelector('#js-modal-status');
+    modal.querySelectorAll('.js-pick-company').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const cid = parseInt(btn.dataset.cid);
+        modal.querySelectorAll('.js-pick-company').forEach(b => b.disabled = true);
+        status.innerHTML = `<span class="text-purple-700">Scoring ${this.esc(btn.querySelector('.font-medium').textContent)}… this can take 30-60s.</span>`;
+        try {
+          const provider = (this.derisking && this.derisking.provider) || 'anthropic';
+          const period = `${(new Date()).getFullYear()} LLM`;
+          const t = localStorage.getItem('rvm_token') || '';
+          const url = `/api/portfolio-review/derisking/llm-score/${cid}?provider=${encodeURIComponent(provider)}&period=${encodeURIComponent(period)}`;
+          const r = await fetch(url, { method: 'POST', headers: { 'Authorization': 'Bearer ' + t } });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            status.innerHTML = `<span class="text-red-700">Failed: ${this.esc(data.detail || r.statusText)}</span>`;
+            modal.querySelectorAll('.js-pick-company').forEach(b => b.disabled = false);
+            return;
+          }
+          status.innerHTML = `<span class="text-green-700">Done — total ${data.total_score}, Q${data.quartile}. Refreshing…</span>`;
+          setTimeout(() => {
+            close();
+            this.renderDerisking({ period });
+          }, 800);
+        } catch (e) {
+          status.innerHTML = `<span class="text-red-700">Error: ${this.esc(e.message)}</span>`;
+          modal.querySelectorAll('.js-pick-company').forEach(b => b.disabled = false);
+        }
+      });
     });
   }
 

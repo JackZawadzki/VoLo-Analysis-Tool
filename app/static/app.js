@@ -207,6 +207,25 @@ document.querySelectorAll('.nav-dropdown-item[data-tab]').forEach(link => {
     link.addEventListener('click', (e) => { e.preventDefault(); switchTab(link.dataset.tab); });
 });
 
+// Cross-page tab activation. Portfolio Review (and future external pages)
+// link back to the SPA with /?tab=X so the user lands on the right tab
+// without seeing the default Deal Pipeline first. Same idea for hash links
+// (/#memo) for backward compatibility.
+(function activateTabFromUrl() {
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const fromQuery = params.get('tab');
+        const fromHash  = window.location.hash && window.location.hash.replace(/^#/, '');
+        const requested = fromQuery || fromHash;
+        if (!requested) return;
+        // Only activate if a matching tab exists — silently ignore unknown
+        // values so a stale bookmark can't blank the page.
+        if (document.getElementById(`tab-${requested}`)) {
+            switchTab(requested);
+        }
+    } catch (e) { /* noop — never block page load */ }
+})();
+
 const VOLO = {
     green: 'rgba(91, 119, 68, 1)',
     greenLight: 'rgba(91, 119, 68, 0.15)',

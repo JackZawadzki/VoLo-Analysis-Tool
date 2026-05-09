@@ -108,6 +108,7 @@ def pr_section_page(section_slug: str, request: Request,
     return templates.TemplateResponse(request, "section.html", {
         "section": section,
         "sections": SECTIONS,
+        "active_section_slug": section_slug,
         "user": user.model_dump() if user else None,
     })
 

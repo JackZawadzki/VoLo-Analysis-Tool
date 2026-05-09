@@ -1,12 +1,18 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Portfolio Review{% endblock %} — VoLo Earth</title>
+
+  <!-- Match the underwriting app's chrome so flipping between tabs feels seamless. -->
+  <link rel="stylesheet" href="/static/styles.css?v=110">
+  <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
+
+  <!-- Tailwind utility classes used inside Portfolio Review templates / JS.
+       Scoped to this page; not loaded on the main app. -->
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    /* Match the existing app's palette */
     :root {
       --pr-bg: #f7f7f8;
       --pr-card: #ffffff;
@@ -15,6 +21,7 @@
       --pr-muted: #6b7280;
       --pr-accent: #1f4e78;
     }
+    /* Page-level styling (the top nav comes from styles.css) */
     body { background: var(--pr-bg); color: var(--pr-text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
     .pr-card { background: var(--pr-card); border: 1px solid var(--pr-border); border-radius: 8px; }
     .pr-section-pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: white; letter-spacing: 0.04em; }
@@ -25,36 +32,105 @@
     table.pr-table td { padding: 10px 12px; border-bottom: 1px solid #f3f4f6; font-size: 14px; }
     table.pr-table tr:hover td { background: #f9fafb; }
     .pr-num { font-variant-numeric: tabular-nums; text-align: right; }
+
+    /* Section sub-nav (Portfolio Review's own tabs, sits under the main nav) */
+    .pr-subnav {
+      background: #ffffff;
+      border-bottom: 1px solid var(--pr-border);
+      padding: 0;
+    }
+    .pr-subnav-inner {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow-x: auto;
+      height: 44px;
+    }
+    .pr-subnav-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: #4b5563;
+      text-decoration: none;
+      border-radius: 6px;
+      white-space: nowrap;
+      border-left: 3px solid transparent;
+    }
+    .pr-subnav-link:hover { background: #f3f4f6; color: #111827; }
+    .pr-subnav-link.active { background: #eef2ff; color: #1f2937; font-weight: 600; }
+    .pr-subnav-num {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      background: #e5e7eb;
+      color: #6b7280;
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .pr-subnav-link.active .pr-subnav-num { background: #1f4e78; color: white; }
   </style>
 </head>
 <body>
-  <nav class="bg-white border-b border-gray-200 sticky top-0 z-30">
-    <div class="max-w-7xl mx-auto px-6 h-14 flex items-center gap-6">
-      <a href="/portfolio-review/" class="font-semibold text-gray-900 flex items-center gap-2">
-        <span class="inline-block w-2 h-2 rounded-full" style="background: var(--pr-accent)"></span>
-        Portfolio Review
-      </a>
-      <div class="hidden md:flex items-center gap-1 text-sm overflow-x-auto">
-        {% for s in sections %}
-          {% if s.slug not in ('archive',) %}
-          <a href="/portfolio-review/{{ s.slug }}"
-             class="px-3 py-1.5 rounded text-gray-700 hover:bg-gray-100 whitespace-nowrap"
-             style="border-left: 3px solid {{ s.color }}; padding-left: 10px;">
-            {{ s.num }} · {{ s.name }}
-          </a>
-          {% endif %}
-        {% endfor %}
+  <!-- Top nav: mirrors the main underwriting app so links keep working in-place.
+       Cross-app tabs go to /?tab=X (the main app reads this query param on load
+       and activates the right tab). The Portfolio Review entry stays active here. -->
+  <nav class="top-nav">
+    <div class="nav-inner">
+      <div class="nav-brand">
+        <img src="/static/logo.png" alt="VoLo Earth Ventures" class="nav-logo">
+        <span class="nav-divider"></span>
+        <span class="nav-title">Deal Intelligence Platform</span>
+        <span class="nav-version">v2.0</span>
       </div>
-      <div class="ml-auto flex items-center gap-3 text-sm">
+      <div class="nav-links">
+        <a href="/?tab=pipeline" class="nav-link">Deal Pipeline</a>
+        <a href="/?tab=memo" class="nav-link">Investment Memo</a>
+        <a href="/?tab=ddr" class="nav-link">Due Diligence Report</a>
+        <a href="/?tab=scurves" class="nav-link">S-Curve Atlas</a>
+        <a href="/?tab=references" class="nav-link">References</a>
+        <a href="/?tab=models" class="nav-link">Models</a>
+        <div class="nav-beta-group" title="Beta tabs.">
+          <span class="nav-beta-tag" title="Beta · In Development">BETA</span>
+          <a href="/?tab=volomind" class="nav-link nav-link-beta">VoLo Mind</a>
+          <a href="/portfolio-review/" class="nav-link nav-link-beta active">Portfolio Review</a>
+          <a href="/?tab=ddanalysis" class="nav-link nav-link-beta">DD Financials</a>
+          <a href="/?tab=funddeployment" class="nav-link nav-link-beta">Fund II Deploy</a>
+        </div>
+      </div>
+      <div class="nav-user">
         {% if user %}
-          <span class="text-gray-500">{{ user.username }}</span>
-          <a href="/" class="pr-link">← VoLo Engine</a>
-        {% else %}
-          <a href="/" class="pr-link">Sign in</a>
+          <span class="nav-user-badge">{{ user.username }}</span>
         {% endif %}
+        <button onclick="(function(){localStorage.removeItem('rvm_token');location.href='/';})()" class="nav-logout-btn">Logout</button>
       </div>
     </div>
   </nav>
+
+  <!-- Sub-nav: Portfolio Review's own sections (Inputs, Returns, Derisking, …) -->
+  {% if sections %}
+  <div class="pr-subnav">
+    <div class="pr-subnav-inner">
+      <a href="/portfolio-review/" class="pr-subnav-link {% if not active_section_slug %}active{% endif %}">
+        <span class="pr-subnav-num" style="background:#1f4e78;color:white;">PR</span>
+        <span>Overview</span>
+      </a>
+      {% for s in sections %}
+        {% if s.slug not in ('archive',) %}
+        <a href="/portfolio-review/{{ s.slug }}"
+           class="pr-subnav-link {% if active_section_slug == s.slug %}active{% endif %}">
+          <span class="pr-subnav-num" {% if active_section_slug == s.slug %}style="background:{{ s.color }};color:white;"{% endif %}>{{ s.num }}</span>
+          <span>{{ s.name }}</span>
+        </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
 
   <main class="max-w-7xl mx-auto px-6 py-8">
     {% block content %}{% endblock %}
