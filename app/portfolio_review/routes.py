@@ -930,6 +930,10 @@ def api_derisking_company_detail(company_id: int,
             d["source_files"] = json.loads(d.get("source_files") or "[]")
         except Exception:
             d["source_files"] = []
+        try:
+            d["manifest"] = json.loads(d.get("manifest_json") or "{}")
+        except Exception:
+            d["manifest"] = {}
         return d
     finally:
         conn.close()

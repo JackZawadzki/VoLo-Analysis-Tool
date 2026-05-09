@@ -347,6 +347,11 @@ def apply_schema(conn) -> None:
         "ALTER TABLE pr_derisking_scores ADD COLUMN evidence_summary TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_derisking_scores ADD COLUMN confidence       TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_derisking_scores ADD COLUMN source_files     TEXT NOT NULL DEFAULT ''",
+        # Two-pass agentic scoring stores the recon manifest (which files
+        # mapped to which dimensions, what was skipped, evidence gaps)
+        # alongside the scores. The UI reads this to show the audit trail
+        # under each "Why?" expand.
+        "ALTER TABLE pr_derisking_scores ADD COLUMN manifest_json    TEXT NOT NULL DEFAULT ''",
     ]
     for stmt in _MIGRATIONS:
         try:

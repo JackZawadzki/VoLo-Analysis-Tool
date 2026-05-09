@@ -143,7 +143,7 @@ def _list_files_recursive(service, folder_id: str, depth: int = 0, max_depth: in
     while True:
         resp = service.files().list(
             q=q, pageSize=200,
-            fields="nextPageToken, files(id, name, mimeType, modifiedTime, size)",
+            fields="nextPageToken, files(id, name, mimeType, modifiedTime, size, webViewLink)",
             supportsAllDrives=True, includeItemsFromAllDrives=True,
             pageToken=page_token,
         ).execute()

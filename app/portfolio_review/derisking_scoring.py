@@ -1,28 +1,35 @@
 """
-LLM-driven derisking scorer.
+Two-pass agentic derisking scorer.
 
-For one company, this:
-  1. Pulls the IC memo / diligence materials from the linked Drive `diligence`
-     folder — these define the *original thesis* and the risks that existed
-     at investment time.
-  2. Pulls the most recent board deck + 1-2 investor updates from the
-     `current` (or `board_pack`) Drive folder — current state of the business.
-  3. Pulls the most recent 5-8 Granola meeting notes attached to the company
-     (Investment Committee / Portco Updates / Screening) — qualitative
-     discussion not captured in formal materials.
-  4. Pulls the most recent operator-imported `human` derisking score (if any)
-     as a reference baseline.
-  5. Sends everything to Claude with a structured prompt asking for +1/0/-1
-     on each of the 7 dimensions, with reasoning and concrete evidence
-     citations per dimension.
-  6. Persists a new pr_derisking_scores row with evaluator='llm' and a
-     period string suffixed " LLM" so it sits alongside human scores.
+The pipeline mirrors how a senior analyst actually works:
 
-The scoring rubric is deliberately COMPARATIVE — Claude is told the IC memo
-is the baseline and the board decks/notes are the current state, and asked
-"has this dimension materially derisked since IC?" That framing matches how
-the partners actually use the workbook: the +1/0/-1 isn't an absolute, it's
-a delta against the original concern.
+  PASS 1 — RECONNAISSANCE
+    The LLM sees ONLY metadata: filenames, modification dates, mime types,
+    folder types, and Granola note titles + attendees + brief summaries.
+    NO full text yet. It then:
+      • Identifies the IC / DD memo (the original investment thesis)
+      • Maps every material to the derisking dimensions it bears on
+      • Marks each as primary / reference / skip
+      • Flags dimensions with no good evidence ("evidence_gaps")
+    Output: a manifest. Cheap and fast.
+
+  PASS 2 — SCORING
+    For materials Pass 1 flagged as primary, we now download + extract
+    full text. The LLM gets:
+      • The IC memo (baseline thesis)
+      • Per dimension: only the materials curated by Pass 1
+      • The operator's most recent human-imported score (anchor)
+    For each dimension it scores -1 / 0 / +1 / null with reasoning and
+    evidence quotes that cite specific material IDs. Score is relative
+    to the IC thesis, not absolute.
+
+The manifest is persisted alongside the scores so the UI can show the
+full audit trail: which files informed each dimension, what was skipped,
+and the recon pass's per-dimension rationale.
+
+If the LLM picked too few primaries (or recon failed entirely), we fall
+back to "use everything" — the worst case is the previous monolithic
+behavior, never silent score drift.
 """
 
 from __future__ import annotations
@@ -31,201 +38,570 @@ import json
 import logging
 import os
 import re
-import sqlite3
 from typing import Any, Optional
 
 from .derisking import DIMENSIONS, DIMENSION_KEYS, score_company
 from .drive_scan import (
     _list_files_recursive,
     _download_and_extract_text,
-    _classify_file,
 )
 
 logger = logging.getLogger(__name__)
 
 
-# How much text per source to include. The total prompt budget is ~150K
-# chars (~40K tokens) — we leave headroom for the system prompt and JSON
-# output. The IC memo is the most information-dense source so it gets the
-# largest budget.
-MAX_CHARS_IC_MEMO       = 80_000   # ~30 pages of memo text
-MAX_CHARS_BOARD_DECK    = 30_000   # 1-2 most recent board decks combined
-MAX_CHARS_INVESTOR      = 20_000   # 1-2 recent investor updates
-MAX_CHARS_GRANOLA       = 25_000   # last 5-8 meeting notes combined
-MAX_GRANOLA_NOTES       = 8
-
-# Filename patterns that indicate "this is an IC / DD memo" rather than
-# a generic diligence reference doc. We pick these PREFERENTIALLY from the
-# diligence folder so the LLM sees the actual investment thesis, not a
-# random pitch deck.
-IC_MEMO_PATTERNS = re.compile(
-    r"\b(ic\b|investment\s*committee|investment\s*memo|"
-    r"dd\s*memo|diligence\s*memo|"
-    r"investment\s*recommendation|term\s*sheet\s*memo)\b",
-    re.I,
-)
+# ── Budget knobs ─────────────────────────────────────────────────────────────
+# Pass 1 sees only metadata so we don't budget that — it's a tiny prompt.
+# Pass 2 needs to fit IC memo + per-dimension primaries; budget guards
+# against runaway token usage on companies with bloated DD folders.
+MAX_INVENTORY_ITEMS         = 80      # cap files+notes seen by recon
+MAX_CHARS_IC_MEMO           = 80_000
+MAX_CHARS_PER_PRIMARY_FILE  = 25_000
+MAX_CHARS_PER_GRANOLA_NOTE  = 4_000
+MAX_GRANOLA_NOTES           = 12      # recon sees up to this many notes
+MAX_PASS2_TOTAL_CHARS       = 180_000  # safety net, well under 200K context
+# When recon picks too few primaries we fall back to "use everything"
+MIN_PRIMARIES_FOR_RECON_USE = 3
 
 
-def _pick_ic_memo_files(files: list[dict]) -> list[dict]:
-    """From a diligence-folder file listing, pick the files that look like
-    actual IC memos. Falls back to any DOCX/PDF/GDOC if no name matches."""
-    by_pattern = [f for f in files if IC_MEMO_PATTERNS.search(f.get("name", ""))]
-    if by_pattern:
-        return sorted(by_pattern, key=lambda f: f.get("modifiedTime", ""), reverse=True)[:2]
-
-    # Fallback: text-bearing docs only (skip spreadsheets and images), most recent first
-    candidates = [
-        f for f in files
-        if f.get("mimeType") in (
-            "application/pdf",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.google-apps.document",
-        )
-    ]
-    return sorted(candidates, key=lambda f: f.get("modifiedTime", ""), reverse=True)[:1]
+# ── Material ID convention ────────────────────────────────────────────────────
+# Stable string IDs the LLM can refer back to in evidence citations:
+#   drive:<file_id>     for a Google Drive file
+#   granola:<note_id>   for a Granola note
+def _drive_id(file_id: str) -> str:
+    return f"drive:{file_id}"
 
 
-def _pick_current_state_files(files: list[dict]) -> list[dict]:
-    """From a current/board_pack folder listing, pick the most recent
-    deck and 1-2 investor updates. Reuses drive_scan's classifier."""
-    classified: dict[str, list[dict]] = {"deck": [], "board": [], "investor": []}
-    for f in files:
-        kind = _classify_file(f)
-        if kind in classified:
-            classified[kind].append(f)
-    out: list[dict] = []
-    # Prefer board updates over generic decks (they're closer to derisking signal)
-    for kind, n in (("board", 2), ("deck", 1), ("investor", 2)):
-        ranked = sorted(classified[kind], key=lambda f: f.get("modifiedTime", ""), reverse=True)
-        out.extend(ranked[:n])
-    return out
+def _granola_id(note_id: str) -> str:
+    return f"granola:{note_id}"
 
 
-def _collect_drive_evidence(conn, service, company_id: int) -> tuple[str, str, list[dict]]:
-    """Download + extract text from each company's diligence and current
-    folders. Returns (ic_memo_block, current_state_block, source_files_meta).
+# ── Inventory: collect metadata only (no text yet) ───────────────────────────
+def _list_drive_inventory(conn, service, company_id: int) -> list[dict]:
+    """List metadata for every file in every linked Drive folder.
 
-    Each block is a single string ready to drop into the prompt; the meta
-    list is for audit (saved into pr_derisking_scores.source_files).
+    Returns one dict per file with stable id, name, folder_type, modified
+    date, mime type, and webViewLink (so the UI can deep-link to it later).
+    No text extraction here — that happens after Pass 1 picks primaries.
     """
     folders = conn.execute(
         "SELECT * FROM pr_company_folders WHERE company_id=?", (company_id,)
     ).fetchall()
-    if not folders:
-        return "", "", []
-
-    ic_memo_blocks: list[str] = []
-    current_blocks: list[str] = []
-    source_files: list[dict] = []
-    ic_chars_used = 0
-    current_chars_used = 0
-
+    out: list[dict] = []
     for folder in folders:
-        ftype = folder["folder_type"]
         try:
             files = _list_files_recursive(service, folder["drive_folder_id"])
         except Exception as e:
-            logger.warning(f"Drive list failed for folder {folder['drive_folder_name']}: {e}")
+            logger.warning(f"Drive list failed for {folder['drive_folder_name']}: {e}")
             continue
-
-        if ftype == "diligence":
-            picked = _pick_ic_memo_files(files)
-            char_budget_per_file = MAX_CHARS_IC_MEMO
-            target_block = ic_memo_blocks
-            char_tracker = "ic"
-        elif ftype in ("current", "board_pack"):
-            picked = _pick_current_state_files(files)
-            char_budget_per_file = MAX_CHARS_BOARD_DECK
-            target_block = current_blocks
-            char_tracker = "current"
-        else:
-            continue
-
-        for f in picked:
-            text = _download_and_extract_text(service, f)
-            if not text:
-                continue
-            text = text[:char_budget_per_file]
-
-            # Enforce overall budget per source family
-            if char_tracker == "ic":
-                if ic_chars_used + len(text) > MAX_CHARS_IC_MEMO:
-                    text = text[: max(0, MAX_CHARS_IC_MEMO - ic_chars_used)]
-                    if not text:
-                        break
-                ic_chars_used += len(text)
-            else:
-                if current_chars_used + len(text) > MAX_CHARS_BOARD_DECK + MAX_CHARS_INVESTOR:
-                    text = text[: max(0, MAX_CHARS_BOARD_DECK + MAX_CHARS_INVESTOR - current_chars_used)]
-                    if not text:
-                        break
-                current_chars_used += len(text)
-
-            tag = f.get("modifiedTime", "?")
-            target_block.append(f"--- {f['name']} (modified {tag}) ---\n{text}")
-            source_files.append({
-                "name": f["name"],
-                "folder_type": ftype,
+        for f in files:
+            out.append({
+                "id": _drive_id(f["id"]),
+                "source": "drive",
+                "drive_file_id": f["id"],
+                "name": f.get("name", "(unnamed)"),
+                "folder_type": folder["folder_type"],
+                "folder_name": folder["drive_folder_name"],
                 "modified": f.get("modifiedTime"),
-                "char_count": len(text),
+                "mime_type": f.get("mimeType"),
+                "size": f.get("size"),
+                "url": f.get("webViewLink") or _drive_view_url(f["id"]),
             })
+    # Sort newest first so the LLM sees recent materials at the top
+    out.sort(key=lambda m: m.get("modified") or "", reverse=True)
+    return out
 
-    return "\n\n".join(ic_memo_blocks), "\n\n".join(current_blocks), source_files
+
+def _drive_view_url(file_id: str) -> str:
+    """Best-effort web link to a Drive file. The official `webViewLink`
+    field is the right answer when present; this fallback is what Drive
+    serves for files lookup-able by id."""
+    return f"https://drive.google.com/file/d/{file_id}/view"
 
 
-def _collect_granola_evidence(conn, company_id: int) -> tuple[str, list[dict]]:
-    """Pull the most recent Granola notes attached to this company.
-    Returns (notes_block, audit_meta). Notes are tagged with date + match
-    method so the LLM knows which are confirmed (CEO/CFO attended) vs.
-    matched only by title."""
+def _list_granola_inventory(conn, company_id: int) -> list[dict]:
+    """Metadata for the most-recent Granola notes attached to this company."""
     rows = conn.execute(
-        """SELECT note_title, note_summary, note_url, attendees_json,
-                  note_created_at, note_updated_at, match_method, match_confidence
+        """SELECT granola_note_id, note_title, note_summary, note_url,
+                  attendees_json, note_created_at, note_updated_at,
+                  match_method, match_confidence
              FROM pr_granola_notes
             WHERE company_id=?
          ORDER BY COALESCE(note_updated_at, note_created_at, fetched_at) DESC
             LIMIT ?""",
         (company_id, MAX_GRANOLA_NOTES),
     ).fetchall()
-    if not rows:
-        return "", []
-
-    blocks: list[str] = []
-    meta: list[dict] = []
-    chars_used = 0
+    out: list[dict] = []
     for r in rows:
         d = dict(r) if hasattr(r, "keys") else {}
-        title = d.get("note_title", "") or "(untitled)"
-        date = d.get("note_updated_at") or d.get("note_created_at") or ""
-        summary = d.get("note_summary", "") or ""
-        method = d.get("match_method", "manual")
-        conf = d.get("match_confidence", "medium")
         try:
             attendees = json.loads(d.get("attendees_json") or "[]")
             att_str = ", ".join(
                 a.get("name") or a.get("email") or "" for a in attendees if isinstance(a, dict)
-            )[:200]
+            )[:160]
         except Exception:
             att_str = ""
+        out.append({
+            "id": _granola_id(d["granola_note_id"]),
+            "source": "granola",
+            "granola_note_id": d["granola_note_id"],
+            "name": d.get("note_title") or "(untitled)",
+            "date": d.get("note_updated_at") or d.get("note_created_at"),
+            "attendees": att_str,
+            "match_method": d.get("match_method"),
+            "match_confidence": d.get("match_confidence"),
+            "url": d.get("note_url") or "",
+            # Recon sees the summary preview, not the full note text
+            "summary_preview": (d.get("note_summary") or "")[:600],
+        })
+    return out
 
-        block = (
-            f"--- [{date[:10]}] {title} "
-            f"(match: {method}/{conf}; attendees: {att_str}) ---\n"
-            f"{summary}"
-        )
-        if chars_used + len(block) > MAX_CHARS_GRANOLA:
+
+# ── Pass 1 — Reconnaissance ──────────────────────────────────────────────────
+def _build_recon_prompt(company: dict, inventory: list[dict]) -> str:
+    """Compose the metadata-only recon prompt."""
+
+    # Compact one-line-per-material rendering — the LLM doesn't need full
+    # JSON, just enough to make a routing decision.
+    lines: list[str] = []
+    for m in inventory[:MAX_INVENTORY_ITEMS]:
+        if m["source"] == "drive":
+            lines.append(
+                f"  [{m['id']}] {m['name']!r}  "
+                f"folder={m['folder_type']}  modified={m.get('modified', '?')}  "
+                f"mime={(m.get('mime_type') or '').split('/')[-1] or '?'}"
+            )
+        else:
+            lines.append(
+                f"  [{m['id']}] note: {m['name']!r}  "
+                f"date={(m.get('date') or '?')[:10]}  "
+                f"match={m.get('match_method')}/{m.get('match_confidence')}  "
+                f"attendees=({m.get('attendees', '')[:100]})\n"
+                f"      summary: {m.get('summary_preview', '')[:300]}"
+            )
+
+    inventory_block = "\n".join(lines) if lines else "  (no materials available)"
+
+    return f"""\
+You are doing reconnaissance for a derisking review of {company['name']} \
+({company.get('sector') or 'sector unknown'}, {company.get('commercial_status') or 'status unknown'}, \
+{company.get('fund') or 'fund unknown'}).
+
+Below is the full inventory of materials we have for this company. You see \
+ONLY metadata — filenames, dates, mime types, folder type, and (for Granola \
+notes) brief summary previews. You will NOT read full text in this pass.
+
+Your job:
+  1. Identify the IC / DD memo — the original investment thesis. There may \
+not be one; if so, return null.
+  2. For each material, decide which derisking dimensions it bears on, and \
+mark it primary (worth deep-reading), reference (background), or skip \
+(irrelevant to derisking).
+  3. For each dimension, list the material IDs that should drive scoring.
+  4. Flag any dimension that has no good evidence ("evidence_gaps").
+
+DERISKING DIMENSIONS:
+  - rapid_innovation_adopt  — Has market adoption accelerated since IC?
+  - business_model          — Are unit economics / GTM proving out?
+  - technology              — Has tech risk reduced (deployments, TRL, certs)?
+  - incentive_management    — Stability of gov incentives / regulatory env?
+  - team                    — Strengthening / weakening of leadership?
+  - product_growth          — Customer traction, revenue growth, retention?
+  - ip_and_data             — Defensibility through patents / data moat?
+
+ROUTING HEURISTICS (use your judgment, these are starting points):
+  - The IC memo is automatically primary for ALL dimensions (baseline thesis).
+  - Board decks and investor updates are usually primary for product_growth, \
+business_model, team, technology.
+  - Granola IC / Portco-update meeting notes (especially with the CEO/CFO as \
+attendee) are primary for whatever was discussed — judge from the summary.
+  - Financial models are primary for business_model only.
+  - 409As / cap tables / data rooms / contract folders are usually skip or \
+reference unless they specifically inform a dimension.
+  - "skip" means truly irrelevant. Prefer "reference" over "skip" when unsure.
+
+INVENTORY ({len(inventory)} items):
+{inventory_block}
+
+OUTPUT — strict JSON, no markdown, no preamble:
+
+{{
+  "ic_memo_id": "<material id of the IC memo, or null>",
+  "ic_memo_rationale": "<one sentence on why this one>",
+  "materials": [
+    {{
+      "id": "<material id>",
+      "kind": "primary" | "reference" | "skip",
+      "dimensions": ["team", "technology"],
+      "rationale": "<one short sentence>"
+    }}
+  ],
+  "by_dimension": {{
+    "rapid_innovation_adopt": {{"primary": ["<id>", "<id>"], "rationale": "<one sentence>"}},
+    "business_model":         {{"primary": [...], "rationale": "..."}},
+    "technology":             {{...}},
+    "incentive_management":   {{...}},
+    "team":                   {{...}},
+    "product_growth":         {{...}},
+    "ip_and_data":            {{...}}
+  }},
+  "evidence_gaps": ["<dimension keys with no decent evidence>"]
+}}
+
+Output only the JSON object.
+"""
+
+
+def _enrich_material(entry: dict, inv_lookup: dict) -> dict:
+    """Attach metadata fields (name, url, source, modified, folder_type)
+    from the inventory onto a manifest material entry so downstream
+    consumers (UI chips, audit panel) don't need to re-join."""
+    src = inv_lookup.get(entry["id"], {})
+    return {
+        **entry,
+        "name": src.get("name", ""),
+        "source": src.get("source", ""),
+        "url": src.get("url", ""),
+        "modified": src.get("modified") or src.get("date"),
+        "folder_type": src.get("folder_type"),
+    }
+
+
+def _normalize_manifest(parsed: dict, inventory: list[dict]) -> dict:
+    """Defensive normalization of Pass 1 output. Fills in any missing
+    dimension keys, dedupes ids, clamps to known materials, and enriches
+    each material entry with display metadata (name, url) so the UI can
+    render audit chips without re-joining against the inventory."""
+    valid_ids = {m["id"] for m in inventory}
+    inv_lookup = {m["id"]: m for m in inventory}
+    out: dict[str, Any] = {
+        "ic_memo_id": parsed.get("ic_memo_id") if parsed.get("ic_memo_id") in valid_ids else None,
+        "ic_memo_rationale": parsed.get("ic_memo_rationale", "") or "",
+        "materials": [],
+        "by_dimension": {},
+        "evidence_gaps": [],
+    }
+    seen_in_materials: set[str] = set()
+    for m in (parsed.get("materials") or []):
+        if not isinstance(m, dict):
+            continue
+        mid = m.get("id")
+        if mid not in valid_ids or mid in seen_in_materials:
+            continue
+        seen_in_materials.add(mid)
+        out["materials"].append(_enrich_material({
+            "id": mid,
+            "kind": m.get("kind") if m.get("kind") in ("primary", "reference", "skip") else "reference",
+            "dimensions": [d for d in (m.get("dimensions") or []) if d in DIMENSION_KEYS],
+            "rationale": (m.get("rationale") or "")[:500],
+        }, inv_lookup))
+    # Ensure the IC memo always appears in the materials list, even if
+    # the LLM forgot to include it explicitly.
+    if out["ic_memo_id"] and out["ic_memo_id"] not in seen_in_materials:
+        out["materials"].insert(0, _enrich_material({
+            "id": out["ic_memo_id"],
+            "kind": "primary",
+            "dimensions": list(DIMENSION_KEYS),
+            "rationale": "IC memo / DD baseline (auto-injected for all dimensions)",
+        }, inv_lookup))
+    by_dim = parsed.get("by_dimension") or {}
+    for k, _ in DIMENSIONS:
+        cell = by_dim.get(k) or {}
+        if not isinstance(cell, dict):
+            cell = {}
+        primary = [pid for pid in (cell.get("primary") or []) if pid in valid_ids]
+        # IC memo is implicitly primary for all dims
+        if out["ic_memo_id"] and out["ic_memo_id"] not in primary:
+            primary.insert(0, out["ic_memo_id"])
+        out["by_dimension"][k] = {
+            "primary": primary,
+            "rationale": (cell.get("rationale") or "")[:500],
+        }
+    out["evidence_gaps"] = [
+        g for g in (parsed.get("evidence_gaps") or []) if g in DIMENSION_KEYS
+    ]
+    return out
+
+
+def _build_fallback_manifest(inventory: list[dict]) -> dict:
+    """When recon fails (or picks too few primaries), score against
+    everything we have. Mirrors the original single-pass behavior so we
+    never silently produce a degraded score with hidden inputs."""
+    all_ids = [m["id"] for m in inventory]
+    inv_lookup = {m["id"]: m for m in inventory}
+    # Try to identify the IC memo via filename heuristic
+    ic_id: Optional[str] = None
+    IC_PATTERNS = re.compile(
+        r"\b(ic\b|investment\s*committee|investment\s*memo|"
+        r"dd\s*memo|diligence\s*memo|investment\s*recommendation)\b", re.I
+    )
+    for m in inventory:
+        if m["source"] == "drive" and IC_PATTERNS.search(m.get("name", "")):
+            ic_id = m["id"]
             break
-        blocks.append(block)
-        chars_used += len(block)
-        meta.append({"title": title, "date": date, "match": method, "confidence": conf})
 
-    return "\n\n".join(blocks), meta
+    primary_ids = all_ids[:25]
+    primary_set = set(primary_ids)
+    by_dim = {
+        k: {
+            "primary": list(primary_ids),
+            "rationale": "(fallback: recon unavailable, scoring against all materials)",
+        }
+        for k, _ in DIMENSIONS
+    }
+    # In fallback, the same id can't be 'primary' in by_dimension and
+    # 'reference' in materials — assign each material the kind that
+    # matches whether it's used for scoring.
+    materials = [
+        _enrich_material({
+            "id": m["id"],
+            "kind": "primary" if m["id"] in primary_set else "reference",
+            "dimensions": list(DIMENSION_KEYS) if m["id"] in primary_set else [],
+            "rationale": "fallback (no recon)",
+        }, inv_lookup)
+        for m in inventory
+    ]
+    return {
+        "ic_memo_id": ic_id,
+        "ic_memo_rationale": "filename heuristic match" if ic_id else "no IC memo identified",
+        "materials": materials,
+        "by_dimension": by_dim,
+        "evidence_gaps": [],
+        "fallback": True,
+    }
+
+
+# ── Pass 2 — Scoring ─────────────────────────────────────────────────────────
+def _fetch_text_for_ids(service, conn, inventory: list[dict],
+                         needed_ids: set[str]) -> dict[str, dict]:
+    """For each material id we need full text for, download/extract once.
+
+    Returns {material_id: {text, name, source, modified, url, ...}}.
+
+    Granola note text is fetched from the DB (we already pulled summaries
+    on sync); Drive files are downloaded + parsed via drive_scan helpers.
+    """
+    by_id = {m["id"]: m for m in inventory}
+    out: dict[str, dict] = {}
+
+    # Drive: only download what's needed (one HTTP round-trip per file)
+    for mid in needed_ids:
+        if mid not in by_id:
+            continue
+        m = by_id[mid]
+        if m["source"] == "drive":
+            file_meta = {
+                "id": m["drive_file_id"],
+                "name": m["name"],
+                "mimeType": m.get("mime_type") or "",
+            }
+            try:
+                text = _download_and_extract_text(service, file_meta) or ""
+            except Exception as e:
+                logger.warning(f"text extract failed for {m['name']}: {e}")
+                text = ""
+            out[mid] = {**m, "text": text[:MAX_CHARS_PER_PRIMARY_FILE]}
+        elif m["source"] == "granola":
+            # Pull the full note summary from DB (no API call needed)
+            row = conn.execute(
+                "SELECT note_summary FROM pr_granola_notes WHERE granola_note_id=?",
+                (m["granola_note_id"],),
+            ).fetchone()
+            note_text = (row["note_summary"] if row else "") or ""
+            out[mid] = {**m, "text": note_text[:MAX_CHARS_PER_GRANOLA_NOTE]}
+    return out
+
+
+def _format_material_block(m: dict) -> str:
+    """Render one material's full text into a labeled block for Pass 2."""
+    if m["source"] == "drive":
+        head = f"--- [{m['id']}] {m['name']!r} (folder={m['folder_type']}, modified={m.get('modified', '?')}) ---"
+    else:
+        head = (
+            f"--- [{m['id']}] meeting note: {m['name']!r} "
+            f"(date={(m.get('date') or '?')[:10]}, match={m.get('match_method')}/{m.get('match_confidence')}) ---"
+        )
+    return f"{head}\n{m.get('text', '') or '(text extraction unavailable)'}"
+
+
+def _build_scoring_prompt(
+    company: dict,
+    period_label: str,
+    manifest: dict,
+    fetched: dict[str, dict],
+    prior_human_score: Optional[dict],
+) -> str:
+    """Compose the Pass 2 scoring prompt using only manifest-curated materials."""
+
+    ic_id = manifest.get("ic_memo_id")
+    ic_block = "(no IC memo found in linked Drive — scoring will be conservative.)"
+    if ic_id and ic_id in fetched:
+        ic_text = (fetched[ic_id].get("text") or "")[:MAX_CHARS_IC_MEMO]
+        ic_block = (
+            f"--- [{ic_id}] {fetched[ic_id]['name']!r} (selected by recon: "
+            f"{manifest.get('ic_memo_rationale', '')[:200]}) ---\n{ic_text}"
+        )
+
+    # Per-dimension blocks
+    chars_used = len(ic_block)
+    per_dim_blocks: list[str] = []
+    for key, label in DIMENSIONS:
+        cell = (manifest.get("by_dimension") or {}).get(key) or {}
+        primary_ids = [pid for pid in (cell.get("primary") or []) if pid != ic_id]
+        rationale = cell.get("rationale", "") or ""
+
+        material_blocks: list[str] = []
+        for mid in primary_ids:
+            if mid not in fetched:
+                continue
+            blk = _format_material_block(fetched[mid])
+            if chars_used + len(blk) > MAX_PASS2_TOTAL_CHARS:
+                break
+            material_blocks.append(blk)
+            chars_used += len(blk)
+
+        if material_blocks:
+            per_dim_blocks.append(
+                f"\n═══ {label}  (recon: {rationale[:300]}) ═══\n"
+                + "\n\n".join(material_blocks)
+            )
+        elif key in (manifest.get("evidence_gaps") or []):
+            per_dim_blocks.append(
+                f"\n═══ {label} ═══\n"
+                f"(evidence_gap: recon flagged this dimension as having no good materials. "
+                f"Score=null with reasoning explaining the gap.)"
+            )
+        else:
+            per_dim_blocks.append(
+                f"\n═══ {label} ═══\n"
+                f"(no primary materials assigned; rely on the IC memo's view of this dimension only.)"
+            )
+
+    prior_block = ""
+    if prior_human_score:
+        score_lines = [
+            f"  • {label}: {prior_human_score.get(k) if prior_human_score.get(k) is not None else 'unscored'}"
+            for k, label in DIMENSIONS
+        ]
+        prior_block = (
+            f"\n[OPERATOR'S PRIOR SCORE — {prior_human_score.get('period', 'unknown')}, "
+            f"total {prior_human_score.get('total_score', '?')}/Q{prior_human_score.get('quartile', '?')}]\n"
+            + "\n".join(score_lines)
+            + "\n\nThis is the partners' last formal scoring — useful as a baseline.\n"
+        )
+
+    return f"""\
+You are scoring the {period_label} derisking review for {company['name']}.
+
+Score each of the 7 dimensions -1, 0, +1 (or null if you can't tell from the \
+materials). The score is a DELTA versus the IC thesis — has each dimension \
+materially derisked since investment, stayed flat, or gotten worse?
+
+SCORING:
++1  MATERIALLY DERISKED since IC. Concrete evidence: customer signed, pilot \
+completed, key hire announced, regulation locked in, etc.
+ 0  No material change, or mixed signals that roughly cancel. Default unless \
+you have specific evidence either way.
+-1  Still at risk OR new risk emerged. Original concerns persist or worsened.
+null Cannot be assessed from materials. Use this rather than guessing.
+
+EVIDENCE CITATIONS:
+For each dimension, cite 1-3 short concrete quotes / facts from the \
+materials below. Each evidence item must include the material id it came \
+from (e.g. "drive:abc123" or "granola:xyz789"). Don't invent quotes.
+
+═══════════════════════════════════════════════════════════════════════════
+[IC MEMO — baseline thesis]
+═══════════════════════════════════════════════════════════════════════════
+{ic_block}
+{''.join(per_dim_blocks)}
+{prior_block}
+═══════════════════════════════════════════════════════════════════════════
+
+OUTPUT — strict JSON, no markdown, no preamble:
+
+{{
+  "rapid_innovation_adopt":  {{"score": 1, "reasoning": "...", "evidence": [{{"quote": "...", "from_material_id": "drive:..."}}], "confidence": "high|medium|low"}},
+  "business_model":          {{...}},
+  "technology":              {{...}},
+  "incentive_management":    {{"score": null, "reasoning": "Not addressed", "evidence": [], "confidence": "low"}},
+  "team":                    {{...}},
+  "product_growth":          {{...}},
+  "ip_and_data":             {{...}},
+  "evidence_summary":        "<2-3 sentence narrative of the most material changes since IC>",
+  "is_exited":               false,
+  "overall_confidence":      "high|medium|low"
+}}
+
+Output only the JSON object.
+"""
+
+
+# ── LLM provider routing ─────────────────────────────────────────────────────
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+DEFAULT_REFIANT_MODEL   = "qwen3-coder-plus"
+
+
+def resolve_model(provider: Optional[str], model: Optional[str]) -> tuple[str, bool]:
+    """Resolve (model_id, is_refiant) from a provider toggle + optional override."""
+    if model:
+        return model, model.lower().startswith("qwen")
+    p = (provider or "anthropic").lower()
+    if p == "refiant":
+        return DEFAULT_REFIANT_MODEL, True
+    return DEFAULT_ANTHROPIC_MODEL, False
+
+
+def _call_llm(prompt: str, *, model: str, is_refiant: bool, max_tokens: int = 4000) -> dict:
+    """Send the prompt and parse JSON. Returns {data, raw_text, model}."""
+    from ..engine.llm_utils import make_llm_client
+
+    if is_refiant:
+        api_key = os.environ.get("REFIANT_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("REFIANT_API_KEY not set — required when provider=refiant")
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set — required when provider=anthropic")
+
+    client = make_llm_client(is_refiant=is_refiant, api_key=api_key)
+    resp = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if not m:
+            raise ValueError(f"LLM response was not valid JSON: {cleaned[:500]}")
+        data = json.loads(m.group())
+    return {"data": data, "raw_text": raw, "model": model}
+
+
+# ── Persistence ──────────────────────────────────────────────────────────────
+def _normalize_score(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f >= 0.5:
+        return 1.0
+    if f <= -0.5:
+        return -1.0
+    return 0.0
 
 
 def _fetch_prior_human_score(conn, company_id: int) -> Optional[dict]:
-    """Get the most recent operator-imported (human) derisking score for
-    this company, if any. Used as an anchor in the prompt: 'partners
-    scored this 2 in 2024 — is that still right?'"""
     row = conn.execute(
         """SELECT period, fund, rapid_innovation_adopt, business_model, technology,
                   incentive_management, team, product_growth, ip_and_data,
@@ -241,231 +617,6 @@ def _fetch_prior_human_score(conn, company_id: int) -> Optional[dict]:
     return dict(row) if hasattr(row, "keys") else None
 
 
-# ── Prompt construction ─────────────────────────────────────────────────────
-DIMENSION_GUIDE = """\
-1. **Rapid innovation and adoption** — Has the underlying market adoption
-   curve accelerated or decelerated since IC? Examples of derisking:
-   tailwinds from policy/customers, faster-than-expected pilot conversion,
-   inbound demand. Examples of risk: incumbent moves, slower adoption,
-   policy reversal.
-
-2. **Business model** — Are the unit economics, pricing, and go-to-market
-   proving out? Examples of derisking: signed contracts at target margins,
-   repeat revenue, lower CAC than modeled. Examples of risk: discounting
-   pressure, longer sales cycles than planned, GM compression.
-
-3. **Technology** — Has technical risk reduced through deployments, pilots,
-   TRL advancement, certifications? Examples of derisking: completed pilots,
-   third-party validation, scaling milestones hit. Examples of risk:
-   schedule slips on key tech milestones, performance below spec.
-
-4. **Incentive management** — Stability of government incentives, regulatory
-   environment, and tax credit exposure. Examples of derisking: incentives
-   secured / locked in / safe-harbored. Examples of risk: pending policy
-   changes, reliance on uncertain credits, IRA/IIJA exposure.
-
-5. **Team** — Strengthening or weakening of leadership and key hires.
-   Examples of derisking: key technical / commercial hires, founder
-   alignment, board strength. Examples of risk: founder departure,
-   commercial leadership gap, equity / retention issues.
-
-6. **Product and growth** — Customer traction, revenue growth, retention.
-   Examples of derisking: new logos, expansion within accounts, ARR growth,
-   strong NRR. Examples of risk: stalled growth, churn, missed plan.
-
-7. **IP and Data** — Defensibility through patents, trade secrets, data
-   moats, regulatory barriers. Examples of derisking: granted patents,
-   accumulated proprietary data, regulatory approvals others lack.
-   Examples of risk: competitor IP filings, eroding data advantage,
-   discovery of prior art.
-"""
-
-
-SCORING_RUBRIC = """\
-+1 — MATERIALLY DERISKED since IC. Concrete evidence of progress against
-     the original concern (e.g. customer signed, pilot completed, key
-     hire announced, regulation locked in). The original IC concern is
-     substantially answered.
-
- 0 — NO MATERIAL CHANGE, or mixed signals where derisking and new risk
-     roughly cancel. Use this as the default unless you have evidence
-     either way.
-
--1 — STILL AT RISK or a NEW RISK has emerged. Original concerns persist
-     unaddressed, or material new concerns surfaced (founder departure,
-     missed milestone, customer churn, policy change against them).
-
-null — Cannot be assessed from the materials provided. Use this rather
-       than guessing; it tells the operator to gather more information.
-"""
-
-
-def _build_prompt(
-    company_name: str,
-    period_label: str,
-    ic_memo_block: str,
-    current_state_block: str,
-    granola_block: str,
-    prior_human_score: Optional[dict],
-) -> str:
-    """Compose the user prompt for Claude."""
-
-    prior_block = ""
-    if prior_human_score:
-        # Render the prior human-imported score as a reference, not a constraint
-        score_lines = []
-        for k, label in DIMENSIONS:
-            v = prior_human_score.get(k)
-            score_lines.append(f"  • {label}: {v if v is not None else 'unscored'}")
-        prior_block = (
-            f"\n[OPERATOR'S PRIOR SCORE — "
-            f"{prior_human_score.get('period', 'unknown period')}, "
-            f"total {prior_human_score.get('total_score', '?')}/Q{prior_human_score.get('quartile', '?')}]\n"
-            + "\n".join(score_lines)
-            + "\n\nThis is the partners' last formal scoring — useful as a baseline. "
-            "Your job is to assess whether each dimension has changed since this "
-            "scoring (which itself was relative to the IC thesis).\n"
-        )
-
-    return f"""\
-You are a senior partner at VoLo Earth Ventures performing the {period_label} \
-derisking review for {company_name}.
-
-The firm tracks 7 derisking dimensions. For each dimension, score whether \
-the company has materially derisked since the original IC memo (the baseline \
-thesis), based on the current state of the business.
-
-DIMENSIONS:
-{DIMENSION_GUIDE}
-
-SCORING:
-{SCORING_RUBRIC}
-
-OUTPUT FORMAT — strict JSON, no markdown, no preamble:
-
-{{
-  "rapid_innovation_adopt":  {{"score": 1, "reasoning": "...", "evidence": ["..."], "confidence": "high|medium|low"}},
-  "business_model":          {{"score": 0, "reasoning": "...", "evidence": ["..."], "confidence": "..."}},
-  "technology":              {{"score": -1, "reasoning": "...", "evidence": ["..."], "confidence": "..."}},
-  "incentive_management":    {{"score": null, "reasoning": "Not addressed in materials", "evidence": [], "confidence": "low"}},
-  "team":                    {{"score": 1, "reasoning": "...", "evidence": ["..."], "confidence": "..."}},
-  "product_growth":          {{"score": 0, "reasoning": "...", "evidence": ["..."], "confidence": "..."}},
-  "ip_and_data":             {{"score": 1, "reasoning": "...", "evidence": ["..."], "confidence": "..."}},
-  "evidence_summary":        "<2-3 sentence narrative of the most material changes since IC>",
-  "is_exited":               false,
-  "overall_confidence":      "high|medium|low"
-}}
-
-RULES:
-- "evidence" must be 1-3 short concrete quotes / facts FROM the materials below.
-  Don't fabricate quotes. If a dimension can't be assessed, score=null with
-  evidence=[] and a brief reasoning.
-- Default to score=0 unless you have specific evidence either way.
-- Score relative to the IC thesis, not against an absolute standard.
-- "overall_confidence" reflects how good the evidence base is overall — if
-  you only have a stale board deck, call it "low".
-
-═══════════════════════════════════════════════════════════════════════════
-[IC MEMO / DILIGENCE MATERIALS — the baseline thesis, what we believed at investment]
-═══════════════════════════════════════════════════════════════════════════
-{ic_memo_block or '(No IC memo or diligence materials available — score conservatively.)'}
-
-═══════════════════════════════════════════════════════════════════════════
-[CURRENT STATE — recent board decks + investor updates]
-═══════════════════════════════════════════════════════════════════════════
-{current_state_block or '(No current-state materials available — score conservatively.)'}
-
-═══════════════════════════════════════════════════════════════════════════
-[GRANOLA MEETING NOTES — qualitative discussion from IC, portco update, and screening meetings]
-═══════════════════════════════════════════════════════════════════════════
-{granola_block or '(No meeting notes available.)'}
-{prior_block}
-═══════════════════════════════════════════════════════════════════════════
-
-Output only the JSON object. Do not include any text before or after it.
-"""
-
-
-# ── LLM call + JSON parse ───────────────────────────────────────────────────
-# Default model per provider. The frontend toggle sends `provider=anthropic`
-# or `provider=refiant` and the endpoint resolves the actual model id from
-# these defaults (or the operator can override the model explicitly).
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
-DEFAULT_REFIANT_MODEL   = "qwen3-coder-plus"  # Refiant's general-purpose QWEN tier
-
-
-def resolve_model(provider: Optional[str], model: Optional[str]) -> tuple[str, bool]:
-    """Resolve (model_id, is_refiant) from a provider toggle + optional override.
-
-    Provider 'anthropic' (or unset) → Claude.  Provider 'refiant' → QWEN.
-    An explicit model id always wins; the prefix decides the backend.
-    """
-    if model:
-        return model, model.lower().startswith("qwen")
-    p = (provider or "anthropic").lower()
-    if p == "refiant":
-        return DEFAULT_REFIANT_MODEL, True
-    return DEFAULT_ANTHROPIC_MODEL, False
-
-
-def _call_llm(prompt: str, *, model: str, is_refiant: bool) -> dict:
-    """Send the prompt to the chosen LLM and parse the JSON response.
-
-    Routes through `engine.llm_utils.make_llm_client` which exposes the
-    same `.messages.create(...)` API for both Anthropic and Refiant/QWEN.
-    Returns {data, raw_text, model}.
-    """
-    from ..engine.llm_utils import make_llm_client
-
-    if is_refiant:
-        api_key = os.environ.get("REFIANT_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("REFIANT_API_KEY not set — required when provider=refiant")
-    else:
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY not set — required when provider=anthropic")
-
-    client = make_llm_client(is_refiant=is_refiant, api_key=api_key)
-    resp = client.messages.create(
-        model=model,
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
-
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```\s*$", "", cleaned)
-
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if not m:
-            raise ValueError(f"LLM response was not valid JSON: {cleaned[:500]}")
-        data = json.loads(m.group())
-
-    return {"data": data, "raw_text": raw, "model": model}
-
-
-def _normalize_score(v: Any) -> Optional[float]:
-    """Coerce any LLM-returned score to -1.0 / 0.0 / 1.0 / None."""
-    if v is None:
-        return None
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    if f >= 0.5:
-        return 1.0
-    if f <= -0.5:
-        return -1.0
-    return 0.0
-
-
-# ── Persistence ─────────────────────────────────────────────────────────────
 def _persist_score(
     conn,
     *,
@@ -475,31 +626,73 @@ def _persist_score(
     parsed: dict,
     raw_text: str,
     model: str,
-    source_files: list[dict],
+    manifest: dict,
+    inventory: list[dict],
 ) -> dict:
-    """Upsert one pr_derisking_scores row with evaluator='llm'.
+    """Upsert one pr_derisking_scores row with evaluator='llm', plus
+    the recon manifest. Returns the persisted row contents for the API."""
+    by_inv_id = {m["id"]: m for m in inventory}
 
-    Returns the persisted row contents (matching what /derisking returns)."""
-    # Pull dim scores out of the parsed payload, normalizing to -1/0/1/null
     scores: dict[str, Any] = {}
     reasoning: dict[str, Any] = {}
     for k, _ in DIMENSIONS:
         cell = parsed.get(k) or {}
         if isinstance(cell, dict):
             scores[k] = _normalize_score(cell.get("score"))
+            # Resolve evidence material refs to richer objects so the UI
+            # doesn't have to re-join against the manifest
+            evidence_in = cell.get("evidence", []) or []
+            evidence_out: list[dict] = []
+            for e in evidence_in:
+                if isinstance(e, dict):
+                    mid = e.get("from_material_id") or e.get("material_id") or ""
+                    src = by_inv_id.get(mid, {})
+                    evidence_out.append({
+                        "quote": (e.get("quote") or "")[:600],
+                        "from_material_id": mid,
+                        "material_name": src.get("name", ""),
+                        "material_url": src.get("url", ""),
+                        "material_source": src.get("source", ""),
+                    })
+                elif isinstance(e, str):
+                    evidence_out.append({"quote": e[:600], "from_material_id": "",
+                                         "material_name": "", "material_url": "",
+                                         "material_source": ""})
             reasoning[k] = {
                 "score": scores[k],
-                "reasoning": cell.get("reasoning", ""),
-                "evidence": cell.get("evidence", []) or [],
-                "confidence": cell.get("confidence", ""),
+                "reasoning": (cell.get("reasoning") or "")[:1000],
+                "evidence": evidence_out,
+                "confidence": cell.get("confidence") or "",
+                "primary_material_ids": (manifest.get("by_dimension") or {}).get(k, {}).get("primary") or [],
+                "recon_rationale": (manifest.get("by_dimension") or {}).get(k, {}).get("rationale") or "",
             }
         else:
-            # Some old-style responses may return a bare number per key
             scores[k] = _normalize_score(cell)
-            reasoning[k] = {"score": scores[k], "reasoning": "", "evidence": [], "confidence": ""}
+            reasoning[k] = {"score": scores[k], "reasoning": "", "evidence": [],
+                            "confidence": "", "primary_material_ids": [],
+                            "recon_rationale": ""}
 
     is_exited = bool(parsed.get("is_exited"))
     summary = score_company(scores, is_exited=is_exited)
+
+    # Source files audit list — every primary material gets recorded
+    primary_ids: set[str] = set()
+    for cell in (manifest.get("by_dimension") or {}).values():
+        for pid in (cell.get("primary") or []):
+            primary_ids.add(pid)
+    if manifest.get("ic_memo_id"):
+        primary_ids.add(manifest["ic_memo_id"])
+    source_files = [
+        {
+            "id": pid,
+            "name": by_inv_id.get(pid, {}).get("name", ""),
+            "source": by_inv_id.get(pid, {}).get("source", ""),
+            "url": by_inv_id.get(pid, {}).get("url", ""),
+            "modified": by_inv_id.get(pid, {}).get("modified") or by_inv_id.get(pid, {}).get("date"),
+            "folder_type": by_inv_id.get(pid, {}).get("folder_type"),
+        }
+        for pid in primary_ids if pid in by_inv_id
+    ]
 
     conn.execute(
         """INSERT INTO pr_derisking_scores
@@ -507,8 +700,8 @@ def _persist_score(
             technology, incentive_management, team, product_growth, ip_and_data,
             is_exited, total_score, quartile,
             evaluator, model_used, reasoning_json, evidence_summary,
-            confidence, source_files, scored_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            confidence, source_files, manifest_json, scored_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(company_id, period) DO UPDATE SET
           fund=excluded.fund,
           rapid_innovation_adopt=excluded.rapid_innovation_adopt,
@@ -527,25 +720,18 @@ def _persist_score(
           evidence_summary=excluded.evidence_summary,
           confidence=excluded.confidence,
           source_files=excluded.source_files,
+          manifest_json=excluded.manifest_json,
           scored_at=datetime('now')""",
         (
             company_id, period, fund,
-            scores["rapid_innovation_adopt"],
-            scores["business_model"],
-            scores["technology"],
-            scores["incentive_management"],
-            scores["team"],
-            scores["product_growth"],
-            scores["ip_and_data"],
-            summary["is_exited"],
-            summary["total_score"],
-            summary["quartile"],
-            "llm",
-            model,
-            json.dumps(reasoning),
+            scores["rapid_innovation_adopt"], scores["business_model"],
+            scores["technology"], scores["incentive_management"], scores["team"],
+            scores["product_growth"], scores["ip_and_data"],
+            summary["is_exited"], summary["total_score"], summary["quartile"],
+            "llm", model, json.dumps(reasoning),
             (parsed.get("evidence_summary") or "")[:2000],
             (parsed.get("overall_confidence") or "")[:20],
-            json.dumps(source_files),
+            json.dumps(source_files), json.dumps(manifest),
         ),
     )
     conn.commit()
@@ -556,6 +742,7 @@ def _persist_score(
         "evaluator": "llm",
         "scores": scores,
         "reasoning": reasoning,
+        "manifest": manifest,
         "total_score": summary["total_score"],
         "quartile": summary["quartile"],
         "is_exited": summary["is_exited"],
@@ -567,7 +754,7 @@ def _persist_score(
     }
 
 
-# ── Public entry point ──────────────────────────────────────────────────────
+# ── Public entry point ───────────────────────────────────────────────────────
 def score_company_with_llm(
     conn,
     *,
@@ -577,83 +764,125 @@ def score_company_with_llm(
     provider: Optional[str] = None,
     model: Optional[str] = None,
 ) -> dict:
-    """End-to-end: collect evidence → call the chosen LLM → persist → return result.
-
-    `provider` is the operator-facing toggle ('anthropic' or 'refiant').
-    `model` is an optional explicit override; if set, its prefix decides
-    the backend ('qwen…' → Refiant, anything else → Anthropic).
-    """
+    """End-to-end two-pass agentic scoring."""
     from ..routes.drive import _get_drive_service
 
     resolved_model, is_refiant = resolve_model(provider, model)
 
-    company = conn.execute(
-        "SELECT id, name, fund FROM pr_companies WHERE id=?", (company_id,)
+    company_row = conn.execute(
+        "SELECT id, name, fund, sector, commercial_status FROM pr_companies WHERE id=?",
+        (company_id,),
     ).fetchone()
-    if not company:
+    if not company_row:
         raise ValueError(f"Company {company_id} not found")
+    company = dict(company_row) if hasattr(company_row, "keys") else {}
     company_name = company["name"]
-    fund = company["fund"] or "Fund I"
+    fund = company.get("fund") or "Fund I"
 
-    # 1. Drive evidence (IC memo + current-state materials)
+    # 1. Build inventory (metadata only)
+    drive_inv: list[dict] = []
     try:
         service = _get_drive_service(user_id)
-        ic_block, current_block, drive_files = _collect_drive_evidence(conn, service, company_id)
+        drive_inv = _list_drive_inventory(conn, service, company_id)
     except Exception as e:
-        # Drive is optional — we can still score from Granola alone, but the
-        # operator should know the evidence base is degraded.
-        logger.warning(f"Drive evidence collection failed for {company_name}: {e}")
-        ic_block, current_block, drive_files = "", "", []
+        logger.warning(f"Drive inventory failed for {company_name}: {e}")
+        service = None
 
-    # 2. Granola evidence
-    granola_block, granola_meta = _collect_granola_evidence(conn, company_id)
+    granola_inv = _list_granola_inventory(conn, company_id)
+    inventory = drive_inv + granola_inv
 
-    # 3. Prior human score as anchor
-    prior_human = _fetch_prior_human_score(conn, company_id)
-
-    # Refuse to score if we have NOTHING — better to fail loud than write
-    # a hallucinated score row.
-    if not (ic_block or current_block or granola_block):
+    if not inventory:
         raise ValueError(
-            f"No evidence available for {company_name}: "
-            f"no Drive folders linked AND no Granola notes attached. "
-            f"Run folder discovery + granola sync first, or import the operator workbook."
+            f"No materials available for {company_name}: no Drive folders linked "
+            f"AND no Granola notes attached. Run folder discovery + Granola sync first."
         )
 
-    # 4. Build prompt + call the chosen LLM
-    prompt = _build_prompt(
-        company_name=company_name,
+    # 2. PASS 1 — Recon (metadata only). On failure, fall back to "use everything".
+    recon_meta: dict[str, Any] = {"used": False, "fallback": False, "error": None}
+    manifest: dict
+    try:
+        recon_prompt = _build_recon_prompt(company, inventory)
+        recon_resp = _call_llm(recon_prompt, model=resolved_model, is_refiant=is_refiant, max_tokens=2500)
+        manifest = _normalize_manifest(recon_resp["data"], inventory)
+        recon_meta["used"] = True
+        recon_meta["raw"] = recon_resp["raw_text"][:5000]
+
+        # Sanity check: did recon assign anything beyond the auto-injected
+        # IC memo? `_normalize_manifest` injects the IC memo into every
+        # dimension's primary list, so a count that includes it would mask
+        # a useless recon (LLM picked nothing → still gets n_primary=7).
+        # We want to know if recon did real work picking *non-IC* materials.
+        ic_id = manifest.get("ic_memo_id")
+        n_real_primaries = sum(
+            len([pid for pid in (c.get("primary") or []) if pid != ic_id])
+            for c in manifest.get("by_dimension", {}).values()
+        )
+        if n_real_primaries < MIN_PRIMARIES_FOR_RECON_USE:
+            logger.info(
+                f"Recon picked only {n_real_primaries} non-IC primaries — "
+                f"falling back to full corpus"
+            )
+            manifest = _build_fallback_manifest(inventory)
+            recon_meta["fallback"] = True
+            recon_meta["fallback_reason"] = (
+                f"recon picked only {n_real_primaries} non-IC primaries"
+            )
+    except Exception as e:
+        logger.warning(f"Pass 1 recon failed for {company_name}: {e}")
+        manifest = _build_fallback_manifest(inventory)
+        recon_meta["fallback"] = True
+        recon_meta["error"] = str(e)[:400]
+
+    # 3. Fetch text for ALL materials referenced in the manifest as primary
+    needed: set[str] = set()
+    if manifest.get("ic_memo_id"):
+        needed.add(manifest["ic_memo_id"])
+    for cell in (manifest.get("by_dimension") or {}).values():
+        for pid in cell.get("primary") or []:
+            needed.add(pid)
+    fetched = _fetch_text_for_ids(service, conn, inventory, needed) if service else {}
+    # If Drive service was unavailable, still fetch Granola text (DB-only)
+    if not service:
+        fetched = _fetch_text_for_ids(None, conn, inventory, {n for n in needed if n.startswith("granola:")})
+
+    # 4. PASS 2 — Score with curated context
+    prior_human = _fetch_prior_human_score(conn, company_id)
+    score_prompt = _build_scoring_prompt(
+        company={"name": company_name, **company},
         period_label=period,
-        ic_memo_block=ic_block,
-        current_state_block=current_block,
-        granola_block=granola_block,
+        manifest=manifest,
+        fetched=fetched,
         prior_human_score=prior_human,
     )
-    resp = _call_llm(prompt, model=resolved_model, is_refiant=is_refiant)
+    score_resp = _call_llm(score_prompt, model=resolved_model, is_refiant=is_refiant, max_tokens=4500)
 
-    # 5. Persist
-    source_files = drive_files + [{"source": "granola", **m} for m in granola_meta]
+    # 5. Persist with manifest attached
+    manifest["recon_meta"] = recon_meta
     result = _persist_score(
         conn,
         company_id=company_id,
         period=period,
         fund=fund,
-        parsed=resp["data"],
-        raw_text=resp["raw_text"],
-        model=resp["model"],
-        source_files=source_files,
+        parsed=score_resp["data"],
+        raw_text=score_resp["raw_text"],
+        model=resolved_model,
+        manifest=manifest,
+        inventory=inventory,
     )
     result["company_name"] = company_name
     result["provider"] = "refiant" if is_refiant else "anthropic"
     result["evidence_base"] = {
-        "drive_files": len(drive_files),
-        "granola_notes": len(granola_meta),
-        "had_ic_memo": bool(ic_block),
-        "had_current_state": bool(current_block),
+        "inventory_size": len(inventory),
+        "drive_files_seen": len(drive_inv),
+        "granola_notes_seen": len(granola_inv),
+        "primaries_chosen": len(needed),
+        "recon_used": recon_meta["used"],
+        "recon_fallback": recon_meta["fallback"],
+        "had_ic_memo": bool(manifest.get("ic_memo_id")),
         "had_prior_human_score": prior_human is not None,
+        "evidence_gaps": manifest.get("evidence_gaps") or [],
     }
     return result
 
 
-# Re-exported for the route handler so it can show defaults in error messages
-DEFAULT_MODEL = DEFAULT_ANTHROPIC_MODEL
+DEFAULT_MODEL = DEFAULT_ANTHROPIC_MODEL  # back-compat

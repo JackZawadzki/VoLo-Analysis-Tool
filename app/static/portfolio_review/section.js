@@ -776,54 +776,156 @@ class SectionView {
     try {
       const period = this.derisking.period;
       const data = await this.fetchJson(`/api/portfolio-review/derisking/${cid}${period ? `?period=${encodeURIComponent(period)}` : ''}`);
-      const dims = [
-        ['rapid_innovation_adopt', 'Rapid innovation & adoption'],
-        ['business_model', 'Business model'],
-        ['technology', 'Technology'],
-        ['incentive_management', 'Incentive management'],
-        ['team', 'Team'],
-        ['product_growth', 'Product & growth'],
-        ['ip_and_data', 'IP & Data'],
-      ];
-      const dimRow = (key, label) => {
-        const r = (data.reasoning && data.reasoning[key]) || {};
-        const score = r.score;
-        const sym = score === 1 ? '+1' : score === -1 ? '−1' : score === 0 ? '0' : '—';
-        const cls = score === 1 ? 'bg-green-500 text-white'
-                  : score === -1 ? 'bg-red-500 text-white'
-                  : score === 0 ? 'bg-yellow-300 text-gray-800'
-                  : 'bg-gray-200 text-gray-500';
-        const evidence = (r.evidence || []).map(e => `<li class="text-xs text-gray-600">${this.esc(e)}</li>`).join('');
-        return `
-          <tr>
-            <td class="py-2 align-top w-48"><span class="font-medium text-gray-800">${label}</span>
-              ${r.confidence ? `<div class="text-[10px] text-gray-400">conf: ${this.esc(r.confidence)}</div>` : ''}
-            </td>
-            <td class="py-2 align-top w-12 text-center"><span class="inline-block w-7 h-7 rounded-full text-sm leading-7 font-bold text-center ${cls}">${sym}</span></td>
-            <td class="py-2 align-top">
-              <div class="text-sm text-gray-800">${this.esc(r.reasoning || '—')}</div>
-              ${evidence ? `<ul class="mt-1 list-disc ml-5">${evidence}</ul>` : ''}
-            </td>
-          </tr>`;
-      };
-      const header = `
-        <div class="text-xs text-gray-700 mb-3">
-          <span class="font-semibold">${this.esc(data.period || '')}</span>
-          ${data.model_used ? `<span class="ml-2 text-purple-700">${this.esc(data.model_used)}</span>` : ''}
-          ${data.confidence ? `<span class="ml-2 px-1.5 py-0.5 bg-white rounded text-[10px]">overall conf: ${this.esc(data.confidence)}</span>` : ''}
-          ${data.scored_at ? `<span class="ml-2 text-gray-500">scored ${this.esc(data.scored_at)}</span>` : ''}
-        </div>
-        ${data.evidence_summary ? `<div class="text-sm text-gray-700 mb-3 italic">${this.esc(data.evidence_summary)}</div>` : ''}`;
-      const sourceList = (data.source_files || []).map(s => `<span class="px-1.5 py-0.5 bg-white rounded text-[10px] mr-1 mb-1 inline-block">${this.esc(s.name || s.title || s.source || '')}</span>`).join('');
-      row.firstElementChild.innerHTML = `
-        ${header}
-        <table class="w-full">${dims.map(([k, l]) => dimRow(k, l)).join('')}</table>
-        ${sourceList ? `<div class="mt-3 text-[10px] text-gray-500"><div class="mb-1">Evidence base:</div>${sourceList}</div>` : ''}
-      `;
+      row.firstElementChild.innerHTML = this._renderReasoningPanel(data);
       row.dataset.loaded = '1';
     } catch (e) {
       row.firstElementChild.innerHTML = `<div class="text-sm text-red-600">${this.esc(e.message)}</div>`;
     }
+  }
+
+  // Render the full audit panel: per-dim score + reasoning + cited evidence
+  // (with material links), the recon manifest (which materials informed
+  // each dim), and what was deliberately skipped.
+  _renderReasoningPanel(data) {
+    const dims = [
+      ['rapid_innovation_adopt', 'Rapid innovation & adoption'],
+      ['business_model',         'Business model'],
+      ['technology',             'Technology'],
+      ['incentive_management',   'Incentive management'],
+      ['team',                   'Team'],
+      ['product_growth',         'Product & growth'],
+      ['ip_and_data',            'IP & Data'],
+    ];
+    const reasoning = data.reasoning || {};
+    const manifest  = data.manifest  || {};
+    const byDim     = manifest.by_dimension || {};
+    const materials = manifest.materials || [];
+    const matById   = {};
+    for (const m of materials) matById[m.id] = m;
+    // Source-files audit (richer metadata; resolves recon ids to names/links)
+    const srcById = {};
+    for (const s of (data.source_files || [])) srcById[s.id] = s;
+    const lookupMaterial = (id) => srcById[id] || matById[id] || { id, name: id };
+
+    const scoreSym = (s) => s === 1 ? '+1' : s === -1 ? '−1' : s === 0 ? '0' : '—';
+    const scoreCls = (s) => s === 1 ? 'bg-green-500 text-white'
+                        : s === -1 ? 'bg-red-500 text-white'
+                        : s === 0  ? 'bg-yellow-300 text-gray-800'
+                                   : 'bg-gray-200 text-gray-500';
+
+    const sourceChip = (id) => {
+      const m = lookupMaterial(id);
+      const label = m.name || id;
+      const isGranola = (m.source === 'granola') || String(id).startsWith('granola:');
+      const icon = isGranola ? '📝' : '📄';
+      const cls = isGranola
+        ? 'bg-purple-100 text-purple-800 border-purple-300'
+        : 'bg-blue-100 text-blue-800 border-blue-300';
+      const tail = m.modified ? ` · ${String(m.modified).slice(0,10)}` : '';
+      const inner = `${icon} ${this.esc(label)}${tail}`;
+      if (m.url) {
+        return `<a href="${this.esc(m.url)}" target="_blank" rel="noopener" class="inline-block px-2 py-0.5 mr-1 mb-1 rounded text-[10px] border ${cls} hover:underline">${inner}</a>`;
+      }
+      return `<span class="inline-block px-2 py-0.5 mr-1 mb-1 rounded text-[10px] border ${cls}">${inner}</span>`;
+    };
+
+    const evidenceList = (evid) => {
+      if (!evid || !evid.length) return '';
+      return `<ul class="mt-1 space-y-1">${evid.map(e => {
+        if (typeof e === 'string') {
+          return `<li class="text-xs text-gray-700">"${this.esc(e)}"</li>`;
+        }
+        const quote = (e.quote || '').trim();
+        const fromId = e.from_material_id || '';
+        const m = fromId ? lookupMaterial(fromId) : null;
+        const sourceTag = m ? `<span class="text-[10px] text-gray-500 ml-1">— ${this.esc(m.name || fromId)}</span>` : '';
+        return `<li class="text-xs text-gray-700">"${this.esc(quote)}"${sourceTag}</li>`;
+      }).join('')}</ul>`;
+    };
+
+    const dimBlock = (key, label) => {
+      const r = reasoning[key] || {};
+      const score = r.score;
+      const primaryIds = r.primary_material_ids || (byDim[key] && byDim[key].primary) || [];
+      const reconRationale = r.recon_rationale || (byDim[key] && byDim[key].rationale) || '';
+      const isGap = (manifest.evidence_gaps || []).includes(key);
+      return `
+        <div class="border-t border-gray-200 first:border-t-0 py-3">
+          <div class="flex items-start gap-3">
+            <span class="inline-block w-8 h-8 rounded-full text-sm leading-8 font-bold text-center flex-shrink-0 ${scoreCls(score)}">${scoreSym(score)}</span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-baseline gap-2 flex-wrap">
+                <span class="font-semibold text-gray-900">${label}</span>
+                ${r.confidence ? `<span class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded">conf: ${this.esc(r.confidence)}</span>` : ''}
+                ${isGap ? `<span class="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-700 rounded">evidence gap</span>` : ''}
+              </div>
+              ${reconRationale ? `<div class="mt-1 text-[11px] text-gray-500 italic">recon: ${this.esc(reconRationale)}</div>` : ''}
+              <div class="mt-2 text-sm text-gray-800">${this.esc(r.reasoning || '—')}</div>
+              ${evidenceList(r.evidence)}
+              ${primaryIds.length ? `
+                <div class="mt-2">
+                  <div class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Materials examined</div>
+                  ${primaryIds.map(sourceChip).join('')}
+                </div>` : ''}
+            </div>
+          </div>
+        </div>`;
+    };
+
+    const reconMeta = manifest.recon_meta || {};
+    const reconBadge = reconMeta.fallback
+      ? `<span class="text-[10px] px-1.5 py-0.5 bg-amber-100 text-amber-800 rounded" title="${this.esc(reconMeta.fallback_reason || reconMeta.error || '')}">recon fallback</span>`
+      : reconMeta.used
+        ? `<span class="text-[10px] px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded">two-pass</span>`
+        : '';
+
+    const skipped = materials.filter(m => m.kind === 'skip');
+    const reference = materials.filter(m => m.kind === 'reference');
+
+    const header = `
+      <div class="flex items-baseline gap-2 flex-wrap mb-3">
+        <span class="font-semibold text-gray-900">${this.esc(data.period || '')}</span>
+        ${reconBadge}
+        ${data.model_used ? `<span class="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-800 rounded">${this.esc(data.model_used)}</span>` : ''}
+        ${data.confidence ? `<span class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-700 rounded">overall conf: ${this.esc(data.confidence)}</span>` : ''}
+        ${data.scored_at ? `<span class="text-[10px] text-gray-500">scored ${this.esc(data.scored_at)}</span>` : ''}
+      </div>
+      ${data.evidence_summary ? `<div class="text-sm text-gray-800 mb-4 italic border-l-2 border-purple-300 pl-3">${this.esc(data.evidence_summary)}</div>` : ''}`;
+
+    const reconRationaleBlock = manifest.ic_memo_rationale ? `
+      <div class="text-[11px] text-gray-600 mb-3">
+        <span class="font-medium">IC memo:</span>
+        ${manifest.ic_memo_id ? sourceChip(manifest.ic_memo_id) : '<span class="text-gray-400">(none identified)</span>'}
+        <span class="text-gray-500 italic">${this.esc(manifest.ic_memo_rationale)}</span>
+      </div>` : '';
+
+    const auditPanel = `
+      <details class="mt-4">
+        <summary class="text-xs font-medium text-gray-700 cursor-pointer hover:text-gray-900">
+          Recon manifest (${materials.length} materials inventoried, ${reference.length} reference, ${skipped.length} skipped)
+        </summary>
+        <div class="mt-3 text-xs space-y-2">
+          ${reference.length ? `
+            <div>
+              <div class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Reference (background only, not deep-read)</div>
+              ${reference.map(m => sourceChip(m.id)).join('')}
+            </div>` : ''}
+          ${skipped.length ? `
+            <div>
+              <div class="text-[10px] uppercase tracking-wide text-gray-400 mb-1">Skipped (deemed not relevant)</div>
+              ${skipped.slice(0, 30).map(m => `<span class="inline-block px-2 py-0.5 mr-1 mb-1 rounded text-[10px] border bg-gray-50 text-gray-500 border-gray-200" title="${this.esc(m.rationale || '')}">${this.esc((matById[m.id] && matById[m.id].name) || m.id)}</span>`).join('')}
+            </div>` : ''}
+          ${reconMeta.error ? `<div class="text-red-600">recon error: ${this.esc(reconMeta.error)}</div>` : ''}
+        </div>
+      </details>`;
+
+    return `
+      ${header}
+      ${reconRationaleBlock}
+      <div class="bg-white rounded border border-gray-200 px-4">
+        ${dims.map(([k, l]) => dimBlock(k, l)).join('')}
+      </div>
+      ${auditPanel}`;
   }
 
   renderPlaceholder(label, slug) {
