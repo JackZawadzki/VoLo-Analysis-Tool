@@ -292,6 +292,9 @@ class SectionView {
                   <td class="text-sm text-gray-600">${this.esc(s.deal_lead) || '—'}</td>
                   <td>${quartileBadge(d?.quartile)}
                     ${d ? `<div class="text-xs text-gray-500 mt-1">${d.total_score >= 0 ? '+' : ''}${d.total_score}</div>` : ''}
+                    <a href="/portfolio-review/derisking?company=${s.company_id}"
+                       class="text-[10px] text-purple-700 hover:underline mt-0.5 inline-block"
+                       title="Open the Derisking Scorecard with this company highlighted">Full →</a>
                   </td>
                   <td class="whitespace-nowrap">${dimensionDots(d)}</td>
                   <td>
@@ -334,10 +337,6 @@ class SectionView {
               Upload Updates Deck
               <input type="file" id="traction-upload" accept=".pptx" class="hidden">
             </label>
-            <label class="text-xs px-3 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-700 cursor-pointer">
-              Upload Derisking Sheet
-              <input type="file" id="derisking-upload" accept=".xlsx" class="hidden">
-            </label>
             <button id="traction-discover-btn" class="text-xs px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50">Link Drive folders</button>
             <button id="traction-scan-all-btn" class="text-xs px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-50">Scan via Drive</button>
           </div>
@@ -376,7 +375,6 @@ class SectionView {
       document.getElementById('traction-discover-btn')?.addEventListener('click', () => this._discoverFolders());
       document.getElementById('traction-scan-all-btn')?.addEventListener('click', () => this._scanAll());
       document.getElementById('traction-upload')?.addEventListener('change', (e) => this._uploadDeck(e.target.files[0]));
-      document.getElementById('derisking-upload')?.addEventListener('change', (e) => this._uploadDerisking(e.target.files[0]));
       this.root.querySelectorAll('.js-rescan').forEach(btn => {
         btn.addEventListener('click', () => this._scanOne(parseInt(btn.dataset.cid), btn));
       });
@@ -409,7 +407,10 @@ class SectionView {
       const totalScored = (data.results || []).reduce((acc, x) => acc + (x.scored || 0), 0);
       out.className = 'pr-card p-4 mb-4 bg-green-50 text-sm text-green-800';
       out.innerHTML = `Imported ${totalScored} derisking score${totalScored === 1 ? '' : 's'} across ${data.sheets_processed} tab${data.sheets_processed === 1 ? '' : 's'}. Reloading…`;
-      setTimeout(() => this.renderTraction(), 1000);
+      // Re-render whichever section we're on (Traction or Derisking — both
+      // surface derisking quartiles in different ways), via the slug-based
+      // dispatcher in `render()`.
+      setTimeout(() => this.render(), 1000);
     } catch (e) {
       out.className = 'pr-card p-4 mb-4 bg-red-50 text-sm text-red-700';
       out.innerHTML = `Upload error: ${this.esc(e.message)}`;
@@ -594,6 +595,12 @@ class SectionView {
             ${periodControls}
             <span class="text-xs text-gray-500">LLM:</span>
             ${providerToggle}
+            <span class="h-5 w-px bg-gray-300"></span>
+            <label class="text-xs px-3 py-1.5 rounded bg-purple-600 text-white hover:bg-purple-700 cursor-pointer whitespace-nowrap"
+                   title="Import the partners' Derisking Quadrants .xlsx — every Fund I/II tab becomes one row per company under period FY{year}.">
+              Upload Derisking Sheet
+              <input type="file" id="derisking-upload" accept=".xlsx,.xlsm" class="hidden">
+            </label>
           </div>
         </div>
         ${hasData ? `
@@ -629,8 +636,45 @@ class SectionView {
     this.root.querySelectorAll('.js-reasoning-toggle').forEach(btn => {
       btn.addEventListener('click', () => this._toggleReasoning(btn));
     });
-    // Wire the inline AI-Score-from-empty-state picker
+    // Wire the inline AI-Score-from-empty-state picker (only present in empty state)
     document.getElementById('js-empty-ai-score-btn')?.addEventListener('click', () => this._scoreFromEmptyState());
+    // Workbook upload — both the always-visible header button (when there
+    // is data) and the empty-state Path A button route through the same
+    // _uploadDerisking handler. Two separate input ids so the empty state
+    // doesn't depend on the populated header rendering.
+    document.getElementById('derisking-upload')?.addEventListener('change',
+      (e) => this._uploadDerisking(e.target.files[0]));
+    document.getElementById('js-empty-derisking-upload')?.addEventListener('change',
+      (e) => this._uploadDerisking(e.target.files[0]));
+
+    // Deeplink: if /portfolio-review/derisking?company=<id> brought us here
+    // (typically from a Traction quartile cell), scroll the row into view
+    // and auto-expand the LLM reasoning panel if there is one. We consume
+    // the param exactly once so subsequent re-renders (period change, etc.)
+    // don't keep snapping back to the deeplinked row.
+    this._consumeDeriskingDeeplink();
+  }
+
+  _consumeDeriskingDeeplink() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const cid = params.get('company');
+      if (!cid) return;
+      const row = this.root.querySelector(`tr[data-cid="${cid}"]:not(.js-reasoning-row)`);
+      if (!row) return;
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.style.transition = 'background-color 0.4s ease';
+      row.style.backgroundColor = '#f5f3ff';
+      setTimeout(() => { row.style.backgroundColor = ''; }, 1800);
+      // Auto-open the reasoning panel if the row is LLM-scored
+      const whyBtn = row.querySelector('.js-reasoning-toggle');
+      if (whyBtn) whyBtn.click();
+      // Strip ?company= from the URL so future re-renders don't refire this
+      params.delete('company');
+      const qs = params.toString();
+      const newUrl = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
+      window.history.replaceState({}, '', newUrl);
+    } catch (e) { /* noop — deeplink is a nice-to-have, never block render */ }
   }
 
   // First-run walkthrough rendered when no scores exist. Two paths to data:
@@ -654,19 +698,20 @@ class SectionView {
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl mx-auto">
-          <!-- Path A: workbook -->
+          <!-- Path A: workbook (inline upload — same handler as the always-visible header button) -->
           <div class="border border-gray-200 rounded-lg p-5 bg-gray-50">
             <div class="flex items-center gap-2 mb-3">
               <span class="inline-block w-6 h-6 rounded-full bg-gray-300 text-white text-xs font-bold flex items-center justify-center">A</span>
               <span class="font-semibold text-gray-900">Import the partners' workbook</span>
             </div>
             <p class="text-sm text-gray-600 leading-relaxed mb-3">
-              If you have the <em>Derisking Quadrants .xlsx</em>, upload it and every Fund I / Fund II tab gets imported as one row per company under period <code class="bg-white px-1 rounded text-xs">FY2025</code>.
+              If you have the <em>Derisking Quadrants .xlsx</em>, drop it here and every Fund I / Fund II tab gets imported as one row per company (period <code class="bg-white px-1 rounded text-xs">FY${(new Date()).getFullYear()}</code>).
             </p>
-            <a href="/portfolio-review/traction" class="inline-block text-sm px-3 py-2 rounded bg-gray-900 text-white hover:bg-black">
-              Go to Traction tab → Upload Derisking Sheet
-            </a>
-            <div class="text-xs text-gray-500 mt-2">Takes a few seconds.</div>
+            <label class="inline-block text-sm px-3 py-2 rounded bg-gray-900 text-white hover:bg-black cursor-pointer">
+              Upload Derisking Sheet (.xlsx)
+              <input type="file" id="js-empty-derisking-upload" accept=".xlsx,.xlsm" class="hidden">
+            </label>
+            <div class="text-xs text-gray-500 mt-2">Takes a few seconds. No Drive or Granola needed.</div>
           </div>
 
           <!-- Path B: AI scoring (the agentic two-pass) -->
