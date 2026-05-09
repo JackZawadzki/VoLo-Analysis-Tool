@@ -114,6 +114,12 @@ def _list_models_in_drive(service, conn, company_id: int) -> list[dict]:
     Dedupe key is Drive fileId (one Drive file = one snapshot, even if it's
     referenced from multiple linked folders). Each item carries enough
     metadata to download and persist it later.
+
+    Recurses 4 levels deep — operators commonly nest models like
+    `Company / Models / Annual / 2024.xlsx` (depth 3) or even
+    `Company / Financials / Models / 2024 / Operating.xlsx` (depth 4).
+    The traction scanner uses depth=2 because it's looking for top-level
+    decks; financial models live deeper in folder hierarchies.
     """
     from .drive_scan import _list_files_recursive
 
@@ -126,7 +132,7 @@ def _list_models_in_drive(service, conn, company_id: int) -> list[dict]:
     seen: dict[str, dict] = {}  # fileId → metadata
     for folder in folders:
         try:
-            files = _list_files_recursive(service, folder["drive_folder_id"])
+            files = _list_files_recursive(service, folder["drive_folder_id"], max_depth=4)
         except Exception as e:
             logger.warning(
                 f"Drive list failed for folder {folder['drive_folder_name']}: {e}"
@@ -189,15 +195,21 @@ def _download_xlsx_to_tempfile(service, file_meta: dict) -> str:
 # ── Persistence ──────────────────────────────────────────────────────────────
 def _persist_snapshot(
     conn, *, company_id: int, file_meta: dict, result: Optional[dict],
-    status: str, error: str = "",
+    status: str, fy_end_month: int = 12, error: str = "",
 ) -> None:
-    """UPSERT one snapshot. `result` is the full run_pipeline output (or None
-    when extraction failed)."""
+    """UPSERT one snapshot. `result` is the full run_pipeline output (or
+    None when extraction failed). `fy_end_month` is the input we passed
+    to the pipeline — the result dict doesn't echo it back, so the caller
+    is responsible for forwarding it.
+
+    Commits per-call so partial progress survives a mid-run crash; the
+    extract loop runs sequentially over many files and we don't want a
+    fatal error on file 7 of 10 to lose the work for files 1–6.
+    """
     financials = (result or {}).get("financials") or {}
     units      = (result or {}).get("units") or {}
     years      = (result or {}).get("fiscal_years") or []
     summary    = (result or {}).get("model_summary") or {}
-    fy_end_m   = int((summary.get("fy_end_month") if isinstance(summary, dict) else None) or 12)
 
     conn.execute(
         """INSERT INTO pr_financial_snapshots
@@ -226,15 +238,18 @@ def _persist_snapshot(
             file_meta["name"],
             file_meta.get("modified"),
             file_meta.get("url") or "",
-            fy_end_m,
-            json.dumps(financials),
-            json.dumps(units),
-            json.dumps(years),
-            json.dumps(summary if isinstance(summary, dict) else {}),
+            int(fy_end_month or 12),
+            # default=str so non-JSON-native types in the pipeline output
+            # (e.g. numpy ints, pandas timestamps, Path objects) don't crash
+            json.dumps(financials, default=str),
+            json.dumps(units, default=str),
+            json.dumps(years, default=str),
+            json.dumps(summary if isinstance(summary, dict) else {}, default=str),
             status,
             (error or "")[:1000],
         ),
     )
+    conn.commit()
 
 
 # ── Public entry point ───────────────────────────────────────────────────────
@@ -281,23 +296,39 @@ def extract_company_history(conn, *, company_id: int, user_id: int,
                        "model file (e.g. 'Operating Model.xlsx') in its folder.",
         }
 
+    # Status normalization. The pipeline returns status="completed" on a
+    # clean run; "partial" if some metrics failed extraction. Anything else
+    # (or no status) we treat as partial so the operator sees the snapshot
+    # but knows it didn't fully succeed.
+    def _norm_status(raw: Optional[str]) -> str:
+        s = (raw or "").lower().strip()
+        if s in {"completed", "success", "ok"}:
+            return "success"
+        if s == "partial":
+            return "partial"
+        return "partial"
+
     snapshots: list[dict] = []
     n_ok = n_failed = 0
     for m in models:
         tmp_path: Optional[str] = None
+        # Per-call tempdir for run_pipeline's output JSON files. Keeping
+        # them isolated means concurrent extractions don't clobber each
+        # other's annual_metrics.json / model_summary.json files, and
+        # cleanup is one rmtree at the end.
+        out_dir = tempfile.mkdtemp(prefix="pr_finmodel_out_")
         try:
             tmp_path = _download_xlsx_to_tempfile(service, m)
             result = run_pipeline(
                 input_path=tmp_path,
                 company_id=str(company_id),
                 fy_end_month=fy_end_month,
-                out_dir=tempfile.gettempdir(),
+                out_dir=out_dir,
             )
-            status = (result.get("status") or "success").lower()
-            if status not in {"success", "partial"}:
-                status = "partial"
+            status = _norm_status(result.get("status"))
             _persist_snapshot(conn, company_id=company_id, file_meta=m,
-                              result=result, status=status)
+                              result=result, status=status,
+                              fy_end_month=fy_end_month)
             n_ok += 1
             snapshots.append({
                 "snapshot_year": m["snapshot_year"],
@@ -307,8 +338,12 @@ def extract_company_history(conn, *, company_id: int, user_id: int,
             })
         except Exception as e:
             logger.exception(f"Extraction failed for {m['name']}")
-            _persist_snapshot(conn, company_id=company_id, file_meta=m,
-                              result=None, status="failed", error=str(e))
+            try:
+                _persist_snapshot(conn, company_id=company_id, file_meta=m,
+                                  result=None, status="failed",
+                                  fy_end_month=fy_end_month, error=str(e))
+            except Exception:
+                logger.exception("Persisting failure row also failed")
             n_failed += 1
             snapshots.append({
                 "snapshot_year": m["snapshot_year"],
@@ -318,12 +353,13 @@ def extract_company_history(conn, *, company_id: int, user_id: int,
             })
         finally:
             if tmp_path:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
+                try: os.unlink(tmp_path)
+                except OSError: pass
+            try:
+                import shutil; shutil.rmtree(out_dir, ignore_errors=True)
+            except Exception:
+                pass
 
-    conn.commit()
     return {
         "company_id": company_id,
         "company_name": company_name,
