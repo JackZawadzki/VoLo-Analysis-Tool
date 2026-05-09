@@ -28,6 +28,16 @@
       <div class="px-5 py-3 border-b border-gray-200 font-semibold">Board seats</div>
       <div class="p-5 text-sm text-gray-500">Loading…</div>
     </div>
+    <div id="company-financials-history" class="pr-card">
+      <div class="px-5 py-3 border-b border-gray-200 flex items-center">
+        <div class="font-semibold">Financial history — plan vs. actuals</div>
+        <button id="extract-financials-btn"
+          class="ml-auto text-xs px-3 py-1 rounded bg-purple-600 text-white hover:bg-purple-700">
+          Extract from Drive
+        </button>
+      </div>
+      <div id="company-financials-content" class="p-5 text-sm text-gray-500">Loading…</div>
+    </div>
   </div>
   <aside class="space-y-6">
     <div class="pr-card p-5 space-y-2 text-sm">
@@ -93,6 +103,123 @@
         : `<div class="p-5 text-sm text-gray-500">No board seats recorded.</div>`;
 
     new CommentsWidget(document.getElementById('company-comments'), 'company', String(COMPANY_ID));
+
+    // ── Financial history matrix (plan vs. actuals across model snapshots) ──
+    const finContent = document.getElementById('company-financials-content');
+    const extractBtn = document.getElementById('extract-financials-btn');
+    const fmtMm = (n) => (n == null || isNaN(n)) ? '—' : '$' + (Math.abs(n) / 1e6).toFixed(1) + 'M';
+    const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    async function loadFinancialsHistory() {
+      try {
+        const r = await fetch(`/api/portfolio-review/financials/history/${COMPANY_ID}`, { headers: _hdr });
+        if (!r.ok) { finContent.innerHTML = `<div class="text-red-600">Load failed (HTTP ${r.status}).</div>`; return; }
+        const data = await r.json();
+        renderFinancialsHistory(data);
+      } catch (e) {
+        finContent.innerHTML = `<div class="text-red-600">Load failed: ${escHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderFinancialsHistory(data) {
+      const snaps = data.snapshots || [];
+      if (!snaps.length) {
+        finContent.innerHTML = `
+          <div class="text-gray-700">No financial-model snapshots extracted yet.</div>
+          <div class="text-xs text-gray-500 mt-2">
+            Click <strong>Extract from Drive</strong> to walk this company's linked Drive folders, find every Excel model, and run the diligence-time extractor on each. One row per model = one column-set in the matrix below. Each model's projections become a "plan-as-of-YYYY" column; later models' historicals become the actuals.
+          </div>`;
+        return;
+      }
+      // Sort snapshots oldest→newest so columns read left-to-right chronologically
+      const sortedSnaps = snaps.slice().sort((a, b) => a.snapshot_year - b.snapshot_year);
+      const fyList = (data.fiscal_years || []).slice().sort((a,b) => a-b);
+      const metrics = (data.metrics || []);
+
+      // Build the per-snapshot row blocks. Each fiscal year gets one cell
+      // per snapshot — the plan-vs-actuals signal is the spread across the
+      // row of snapshot cells for the same fy.
+      function cellValue(snap, metric, fy) {
+        const series = (snap.financials || {})[metric] || {};
+        // JSON keys are strings; try both representations
+        const v = series[String(fy)] !== undefined ? series[String(fy)] : series[fy];
+        return (v == null || isNaN(v)) ? null : v;
+      }
+      function fyClass(snap, fy) {
+        // Years <= snapshot_year are historicals (actuals at the time the
+        // model was built). Years > snapshot_year are forecasts.
+        return fy <= snap.snapshot_year
+          ? 'bg-green-50 text-green-900 font-medium'
+          : 'bg-amber-50 text-amber-900 italic';
+      }
+
+      const headerRow = `
+        <tr>
+          <th class="text-left px-3 py-2 text-xs uppercase text-gray-500 sticky left-0 bg-gray-50">Metric</th>
+          <th class="text-left px-3 py-2 text-xs uppercase text-gray-500">Snapshot</th>
+          ${fyList.map(fy => `<th class="text-right px-3 py-2 text-xs text-gray-700">FY${fy}</th>`).join('')}
+        </tr>`;
+
+      const bodyRows = metrics.map(metric => {
+        const snapRows = sortedSnaps.map((snap, i) => {
+          const cells = fyList.map(fy => {
+            const v = cellValue(snap, metric, fy);
+            return `<td class="px-3 py-1.5 text-right text-xs ${v == null ? 'bg-gray-50 text-gray-300' : fyClass(snap, fy)}">${v == null ? '—' : escHtml(fmtMm(v))}</td>`;
+          }).join('');
+          const label = i === 0
+            ? `<td rowspan="${sortedSnaps.length}" class="align-top px-3 py-1.5 font-semibold text-gray-900 sticky left-0 bg-white border-r border-gray-200 text-sm">${escHtml(metric.replace(/_/g, ' '))}</td>`
+            : '';
+          return `<tr>${label}<td class="px-3 py-1.5 text-xs text-gray-600 whitespace-nowrap" title="${escHtml(snap.source_file_name || '')}">
+                    ${snap.source_url
+                      ? `<a class="pr-link" href="${escHtml(snap.source_url)}" target="_blank" rel="noopener">as-of ${escHtml(snap.snapshot_year)}</a>`
+                      : `as-of ${escHtml(snap.snapshot_year)}`}
+                    ${snap.status === 'failed' ? '<span class="ml-1 text-red-600">⚠</span>' : ''}
+                  </td>${cells}</tr>`;
+        }).join('');
+        return snapRows;
+      }).join('');
+
+      finContent.innerHTML = `
+        <div class="text-xs text-gray-600 mb-3">
+          <span class="inline-block px-1.5 py-0.5 rounded bg-green-100 text-green-800 mr-1">historical</span>
+          <span class="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">forecast</span>
+          <span class="ml-2 text-gray-500">— each row reads left→right; rows with the same metric show how each year was projected at the time vs. what later snapshots showed.</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full border-collapse text-sm">
+            <thead class="bg-gray-50">${headerRow}</thead>
+            <tbody>${bodyRows || `<tr><td colspan="${fyList.length + 2}" class="text-center text-gray-500 p-6">No metrics extracted across these snapshots yet.</td></tr>`}</tbody>
+          </table>
+        </div>
+        <div class="mt-3 text-[10px] text-gray-400">
+          ${sortedSnaps.length} snapshot${sortedSnaps.length === 1 ? '' : 's'} · ${metrics.length} metric${metrics.length === 1 ? '' : 's'} · ${fyList.length} fiscal year${fyList.length === 1 ? '' : 's'} covered
+        </div>`;
+    }
+
+    extractBtn.addEventListener('click', async () => {
+      if (!confirm('Run the financial-model extractor on every Excel model in this company\'s Drive folders? This can take a couple minutes.')) return;
+      extractBtn.disabled = true; extractBtn.textContent = 'Extracting…';
+      try {
+        const r = await fetch(`/api/portfolio-review/financials/extract-history/${COMPANY_ID}`,
+          { method: 'POST', headers: _hdr });
+        const result = await r.json();
+        if (!r.ok) {
+          alert('Extraction failed: ' + (result.detail || r.statusText));
+          return;
+        }
+        if (result.message) {
+          finContent.innerHTML = `<div class="text-gray-700">${escHtml(result.message)}</div>`;
+        } else {
+          await loadFinancialsHistory();
+        }
+      } catch (e) {
+        alert('Extraction failed: ' + e.message);
+      } finally {
+        extractBtn.disabled = false; extractBtn.textContent = 'Extract from Drive';
+      }
+    });
+
+    loadFinancialsHistory();
   });
 </script>
 {% endblock %}

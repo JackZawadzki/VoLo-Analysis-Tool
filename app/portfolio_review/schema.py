@@ -301,6 +301,39 @@ CREATE TABLE IF NOT EXISTS pr_sync_state (
     UNIQUE(owner_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_pr_sync_state_owner ON pr_sync_state(owner_id, source);
+
+-- Per-company financial-model snapshots, one row per Excel model we found
+-- in Drive. Each snapshot contains the multi-year forecast extracted by the
+-- existing diligence-time pipeline (app/engine/financial_pipeline.py).
+--
+-- This is the substrate for the year-by-year plan-vs-actuals view: when
+-- the company sends a model in 2024 with FY2024-FY2028 projections, and
+-- another in 2025 with FY2025-FY2029 projections, comparing them side by
+-- side shows how each year was forecast at the time vs how it actually
+-- played out (the most recent model's historicals are the "actuals").
+--
+-- `snapshot_year` is the year the model represents (heuristic from filename
+-- or modifiedTime). `financials_json` is the pivot_by_year() output —
+-- {metric: {fiscal_year: value_usd}}.
+CREATE TABLE IF NOT EXISTS pr_financial_snapshots (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id        INTEGER NOT NULL REFERENCES pr_companies(id) ON DELETE CASCADE,
+    snapshot_year     INTEGER NOT NULL,
+    source_file_id    TEXT    NOT NULL,                         -- Drive fileId
+    source_file_name  TEXT    NOT NULL,
+    source_modified   TEXT,                                      -- Drive modifiedTime
+    source_url        TEXT    NOT NULL DEFAULT '',
+    fy_end_month      INTEGER NOT NULL DEFAULT 12,
+    financials_json   TEXT    NOT NULL DEFAULT '{}',             -- {metric: {fy: value}}
+    units_json        TEXT    NOT NULL DEFAULT '{}',             -- physical units per year
+    fiscal_years_json TEXT    NOT NULL DEFAULT '[]',
+    model_summary     TEXT    NOT NULL DEFAULT '{}',             -- pipeline diagnostics
+    status            TEXT    NOT NULL DEFAULT 'success',        -- success | partial | failed
+    error_summary     TEXT    NOT NULL DEFAULT '',
+    extracted_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(company_id, source_file_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_fin_snap_company ON pr_financial_snapshots(company_id, snapshot_year DESC);
 """
 
 

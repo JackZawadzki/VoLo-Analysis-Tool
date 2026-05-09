@@ -30,6 +30,9 @@ JSON API (all under /api/portfolio-review):
     POST   /api/portfolio-review/derisking/llm-score/{id}    — Claude scores one company against IC memo + decks + notes
     GET    /api/portfolio-review/derisking/by-stage          — companies grouped by current stage with YoY delta
     GET    /api/portfolio-review/derisking/{id}              — full score + per-dimension reasoning for one company
+
+    POST   /api/portfolio-review/financials/extract-history/{id}  — run the diligence-time financial extractor over every model file in Drive (admin only)
+    GET    /api/portfolio-review/financials/history/{id}          — return all snapshots for the plan-vs-actuals matrix
 """
 
 from __future__ import annotations
@@ -936,6 +939,52 @@ def api_derisking_company_detail(company_id: int,
         except Exception:
             d["manifest"] = {}
         return d
+    finally:
+        conn.close()
+
+
+# ── Per-company financial-model history ──────────────────────────────────────
+@api.post("/financials/extract-history/{company_id}")
+def api_financials_extract_history(company_id: int,
+                                   fy_end_month: int = Query(12, ge=1, le=12),
+                                   user: CurrentUser = Depends(get_current_user)):
+    """Walk a company's linked Drive folders, find every Excel financial
+    model, and run the diligence-time extractor on each — producing one
+    snapshot per model. Result is the substrate for the year-by-year
+    plan-vs-actuals matrix.
+
+    Sync call, can take a couple minutes per company on a folder with
+    many models. Use a long client timeout (180s+).
+    """
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can run financial extraction")
+    from .financials_history import extract_company_history
+    conn = get_db()
+    try:
+        return extract_company_history(
+            conn, company_id=company_id, user_id=user.id, fy_end_month=fy_end_month,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Financial history extraction failed")
+        raise HTTPException(500, f"Extraction failed: {e}")
+    finally:
+        conn.close()
+
+
+@api.get("/financials/history/{company_id}")
+def api_financials_history(company_id: int,
+                           user: CurrentUser = Depends(get_current_user)):
+    """Return all stored financial-model snapshots for a company plus the
+    set of (metric, fiscal_year) pairs seen across them — the UI uses
+    this to render the plan-vs-actuals matrix."""
+    from .financials_history import list_company_history
+    conn = get_db()
+    try:
+        return list_company_history(conn, company_id)
     finally:
         conn.close()
 
