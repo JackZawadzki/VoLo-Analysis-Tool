@@ -110,6 +110,12 @@ def run_simulation(
     custom_inflection_year: Optional[int] = None,
     founder_revenue_projections_m: Optional[List[float]] = None,
     round_size_m: Optional[float] = None,
+    # Total-position overrides (follow-on blended modeling). When provided,
+    # VoLo's starting stake = the combined diluted ownership across prior rounds
+    # + this round, and the MOIC/IRR denominator = total capital deployed
+    # (prior + new). Both unset for first checks → behaviour is unchanged.
+    entry_ownership_override: Optional[float] = None,
+    invested_capital_m: Optional[float] = None,
 ) -> dict:
     if check_size_millions <= 0:
         raise ValueError("check_size_millions must be positive")
@@ -121,6 +127,17 @@ def run_simulation(
     effective_round_size = round_size_m if round_size_m and round_size_m > 0 else check_size_millions
     post_money = pre_money_millions + effective_round_size
     entry_ownership = check_size_millions / post_money
+
+    # Total-position overrides. The dilution engine is purely multiplicative in
+    # ownership and the outcome distribution is ownership-independent, so
+    # swapping the starting stake correctly rescales every exit's proceeds; the
+    # denominator swap turns per-check MOIC into return-on-total-capital.
+    if entry_ownership_override is not None and entry_ownership_override > 0:
+        entry_ownership = entry_ownership_override
+    moic_denominator = (
+        invested_capital_m if (invested_capital_m and invested_capital_m > 0)
+        else check_size_millions
+    )
 
     # --- Layer 1: Adoption trajectories ---
     horizon = max(exit_year_range[1] + 2, 15)
@@ -309,26 +326,26 @@ def run_simulation(
                 ev_at_exit[i] = ev
                 proceeds = ev * final_own
                 gross_proceeds[i] = proceeds
-                moic[i] = proceeds / check_size_millions
+                moic[i] = proceeds / moic_denominator
                 moic[i] = min(moic[i], 500.0)
-                gross_proceeds[i] = min(gross_proceeds[i], 500.0 * check_size_millions)
+                gross_proceeds[i] = min(gross_proceeds[i], 500.0 * moic_denominator)
             else:
                 moic[i] = 0.0
 
         elif oc == OUTCOME_STAGE_EXIT:
             proceeds = exit_moic_raw[i]
             gross_proceeds[i] = proceeds
-            moic[i] = proceeds / check_size_millions
+            moic[i] = proceeds / moic_denominator
 
         elif oc == OUTCOME_PARTIAL_RECOVERY:
             proceeds = exit_moic_raw[i]
             gross_proceeds[i] = proceeds
-            moic[i] = proceeds / check_size_millions
+            moic[i] = proceeds / moic_denominator
 
         elif oc == OUTCOME_LATE_SMALL_EXIT:
             proceeds = exit_moic_raw[i]
             gross_proceeds[i] = proceeds
-            moic[i] = proceeds / check_size_millions
+            moic[i] = proceeds / moic_denominator
 
         else:
             moic[i] = 0.0
@@ -488,10 +505,10 @@ def run_simulation(
     # dominates the mean), this weights outcomes by actual dollars returned.
     _max_ey = int(exit_years.max()) + 1
     _agg_cf = np.zeros(_max_ey + 1)
-    _agg_cf[0] = -check_size_millions * n_simulations
+    _agg_cf[0] = -moic_denominator * n_simulations
     for _i in range(n_simulations):
         _ey = int(exit_years[_i])
-        _agg_cf[min(_ey, _max_ey)] += moic[_i] * check_size_millions
+        _agg_cf[min(_ey, _max_ey)] += moic[_i] * moic_denominator
     _r = 0.10
     for _ in range(150):
         _t_idx = np.arange(len(_agg_cf))
@@ -570,6 +587,7 @@ def run_simulation(
             "round_size_millions": effective_round_size,
             "pre_money_millions": pre_money_millions,
             "entry_ownership_pct": round(entry_ownership * 100, 2),
+            "invested_capital_millions": round(moic_denominator, 4),
             "sector_profile": sector_profile,
             "penetration_share": list(penetration_share),
             "exit_multiple_range": list(exit_multiple_range),

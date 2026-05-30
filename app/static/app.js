@@ -3448,17 +3448,22 @@ function wizRenderReport(r) {
             <div><span class="rpt-dt-label">Round Size ${infoTip('round_size')}</span><span class="rpt-dt-val">$${fmt(ov.round_size_millions,1)}M</span></div>
             <div><span class="rpt-dt-label">Pre-Money ${infoTip('pre_money')}</span><span class="rpt-dt-val">$${fmt(ov.pre_money_millions,1)}M</span></div>
             <div><span class="rpt-dt-label">Post-Money ${infoTip('post_money')}</span><span class="rpt-dt-val">$${fmt(ov.post_money_millions,1)}M</span></div>
-            <div><span class="rpt-dt-label">Entry Ownership ${infoTip('entry_ownership')}</span><span class="rpt-dt-val">${fmt(ov.entry_ownership_pct,1)}%</span></div>
+            <div><span class="rpt-dt-label">${ov.is_blended_followon ? 'Entry Ownership (combined)' : 'Entry Ownership'} ${infoTip('entry_ownership')}</span><span class="rpt-dt-val">${fmt(ov.entry_ownership_pct,1)}%</span></div>
         </div>
         ${(ov.investment_type === 'followon' && ov.prior_investments?.length) ? `
         <div class="rpt-followon-banner" style="margin-top:12px;padding:10px 14px;background:#f0f4ec;border:1px solid #5B7744;border-radius:6px;font-size:0.9rem;line-height:1.55;">
             <strong>Follow-on investment${ov.follow_on_number ? ` — ${['','1st','2nd','3rd'][ov.follow_on_number] || ov.follow_on_number+'th'} follow-on` : ''}</strong>${ov.follow_on_is_pro_rata ? ' &middot; pro-rata' : ''}.
-            VoLo has already deployed <strong>$${fmt(ov.total_prior_exposure_m,2)}M</strong> across ${ov.prior_investments.length} prior round${ov.prior_investments.length>1?'s':''}; total exposure with this check becomes <strong>$${fmt(ov.total_exposure_m,2)}M</strong>.
-            Combined ownership and blended return appear under <em>Check Size Optimization &rarr; Follow-on Sizing</em>.
+            VoLo has already deployed <strong>$${fmt(ov.total_prior_exposure_m,2)}M</strong> across ${ov.prior_investments.length} prior round${ov.prior_investments.length>1?'s':''}; combined stake is <strong>${fmt(ov.combined_entry_ownership_pct,1)}%</strong> on <strong>$${fmt(ov.total_invested_millions,2)}M</strong> total deployed.
+            The headline metrics below (MOIC, IRR, Entry Ownership) reflect VoLo's <em>total position</em>; the incremental new-check sizing is under <em>Check Size Optimization &rarr; Follow-on Sizing</em>.
         </div>` : ''}
         ${trace('Deal terms derivation', `
             <p>Post-Money = Pre-Money + Round Size = $${fmt(ov.pre_money_millions,1)}M + $${fmt(ov.round_size_millions,1)}M = <strong>$${fmt(ov.post_money_millions,1)}M</strong></p>
+            ${ov.is_blended_followon ? `
+            <p>New-check ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.new_check_ownership_pct,1)}%</strong></p>
+            <p><strong>Entry Ownership = ${fmt(ov.entry_ownership_pct,1)}%</strong> — VoLo's combined diluted stake (prior rounds carried through this round + this check). All headline returns are computed on this stake and total capital deployed (<strong>$${fmt(ov.total_invested_millions,1)}M</strong>), not the new check alone.</p>
+            ` : `
             <p>Entry Ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.entry_ownership_pct,1)}%</strong></p>
+            `}
             <p>Exit multiples: ${fmt(ov.exit_multiple_range?.[0],1)}x - ${fmt(ov.exit_multiple_range?.[1],1)}x EV/EBITDA. ${ov.comps_derived_multiples ? 'Damodaran/NYU comps, 20% acquisition haircut.' : 'User-specified.'}</p>
         `)}
         <div class="rpt-hero-row">
@@ -3468,7 +3473,7 @@ function wizRenderReport(r) {
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.survival_rate)}</div><div class="rpt-hero-label">Survival Rate ${infoTip('survival_rate')}</div></div>
         </div>
         ${trace('Hero metrics methodology', `
-            <p><strong>E[MOIC]</strong> = unconditional mean over ${(sim.n_simulations||5000).toLocaleString()} paths (~${pctFmt(prob.total_loss)} total-loss). Fund-returner = ~${fmt((ov.check_size_millions > 0 ? ((ov.fund_size_m || 100) / ov.check_size_millions) : 33), 0)}x ($${fmt(ov.check_size_millions,1)}M into $${fmt(ov.fund_size_m || 100, 0)}M fund).</p>
+            <p><strong>E[MOIC]</strong> = unconditional mean over ${(sim.n_simulations||5000).toLocaleString()} paths (~${pctFmt(prob.total_loss)} total-loss). ${ov.is_blended_followon ? `Computed on VoLo's <strong>total position</strong>: $${fmt(ov.total_invested_millions,1)}M deployed at ${fmt(ov.entry_ownership_pct,1)}% combined ownership (prior rounds + this check).` : `Fund-returner = ~${fmt((ov.check_size_millions > 0 ? ((ov.fund_size_m || 100) / ov.check_size_millions) : 33), 0)}x ($${fmt(ov.check_size_millions,1)}M into $${fmt(ov.fund_size_m || 100, 0)}M fund).`}</p>
             <p><strong>P(>3x)</strong> = fraction of paths with MOIC >= 3.0.</p>
             <p><strong>E[IRR]</strong> = cashflow-based dollar-weighted IRR. Aggregates all ${(sim.n_simulations||5000).toLocaleString()} simulated paths into a single cashflow vector (invest at t=0, receive proceeds at each exit year) and solves for the discount rate where NPV = 0 (Newton's method). This weights outcomes by actual dollars returned rather than averaging per-path IRRs.</p>
             <p><strong>Survival Rate</strong> = P(MOIC > 0). Driven by TRL-adjusted stage graduation rates from dilution model.</p>
@@ -3947,7 +3952,7 @@ function wizRenderReport(r) {
             <p><strong>Layer 2 — Revenue</strong>: ${revSource === 'founder_anchored' ? 'Founder projections (from Excel extraction) as base. Market-driven scaling factor = each path\'s adoption / median adoption at reference year. TRL-calibrated execution noise (lognormal, sigma varies by TRL). Beyond founder window: extrapolate at S-curve growth rates.' : 'Annual market additions x penetration share (uniform ' + fmt((ov.penetration_share||[])[0]||0.01,3) + ' to ' + fmt((ov.penetration_share||[])[1]||0.05,3) + '), cumulated. TRL ' + ov.trl + ' lag = ' + (trlImp.revenue_lag_years||'?') + ' years.'}</p>
             <p><strong>Layer 3 — Dilution</strong>: Stage-by-stage from ${ov.entry_stage}. At each stage, three outcomes: graduate (raise next round), mid-stage exit (acquisition/IPO), or failure. Round sizes and post-money from Carta lognormal fits (sector: ${ov.sector_profile}). TRL modifiers: ${fmt(trlImp.survival_penalty,0)}% survival penalty, ${fmt(trlImp.capital_intensity_mult,2)}x capital intensity, ${fmt(trlImp.extra_bridge_prob,0)}% bridge prob.</p>
             <p><strong>Layer 4 — Exit valuation</strong>: EV = EBITDA x exit_multiple x final_ownership. EBITDA = revenue x margin (margin ramps ${((sim.ebitda_margin?.margin_start || 0)*100).toFixed(0)}% → ${((sim.ebitda_margin?.margin_end || 0.25)*100).toFixed(0)}% over ${sim.ebitda_margin?.ramp_years || 6} years for TRL ${ov.trl}). Revenue basis: max(trailing_rev, projected_rev_${fwdLook}yr x ${(fwdConf*100).toFixed(0)}%). EV/EBITDA multiples: ${fmt(trlImp.effective_multiple_range?.[0],1)}x - ${fmt(trlImp.effective_multiple_range?.[1],1)}x (TRL-adjusted). Stage exits valued from Carta post-money x acq_multiple, capped at forward-looking EV. Partials and late exits use EBITDA ceiling.</p>
-            <p><strong>Layer 5 — Returns</strong>: MOIC = gross_proceeds / check. Total losses → MOIC 0.</p>
+            <p><strong>Layer 5 — Returns</strong>: MOIC = gross_proceeds / ${ov.is_blended_followon ? 'total capital deployed (prior rounds + new check)' : 'check'}. Total losses → MOIC 0.</p>
             <p><strong>Determinism</strong>: Seed ${audit.random_seed || 'auto'} — deterministic and reproducible.</p>
         `)}
     </div>`;

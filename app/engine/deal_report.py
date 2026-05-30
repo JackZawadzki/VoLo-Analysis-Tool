@@ -251,6 +251,31 @@ def generate_deal_report(
         "follow_on" if investment_type == "followon" else deal_commitment_type
     )
 
+    # ── Total-position (blended) model for follow-ons ─────────────────────────
+    # For a follow-on, the headline report models VoLo's ENTIRE position in the
+    # company: starting stake = combined diluted ownership (priors diluted
+    # through this round + the new check) and invested capital = prior exposure
+    # + new check. So headline returns, Entry Ownership, and carbon all reflect
+    # "return on everything VoLo has deployed", not just the incremental check.
+    # Sizing / portfolio impact / sensitivity / fund commitment keep using the
+    # standalone new-check sim. First checks: this block is inert.
+    _is_followon_blended = bool(
+        investment_type == "followon" and resolved_priors and total_prior_exposure_m > 0
+    )
+    _combined_ownership = None
+    _total_invested_m = None
+    if _is_followon_blended:
+        from .position_sizing import compute_followon_ownership
+        _own_model = compute_followon_ownership(
+            resolved_priors, pre_money_millions, effective_round_size
+        )
+        _own_pre = float(_own_model["own_pre_followon"])
+        _fo_post = float(_own_model["followon_post_money_m"]) or post_money
+        _combined_ownership = (
+            _own_pre * (pre_money_millions / _fo_post) + check_size_millions / _fo_post
+        ) if _fo_post > 0 else _own_pre
+        _total_invested_m = total_prior_exposure_m + check_size_millions
+
     # ── Auto-fill carbon defaults from archetype ──────────────────────────────
     carbon_defaults = get_carbon_defaults(archetype)
     if not op_carbon.get("displaced_resource"):
@@ -260,11 +285,14 @@ def generate_deal_report(
     if not op_carbon.get("range_improvement"):
         op_carbon["range_improvement"] = carbon_defaults.get("range_improvement", 1.0)
 
-    # Auto-fill portfolio from deal terms
+    # Auto-fill portfolio from deal terms. For a follow-on, carbon attribution
+    # uses VoLo's TOTAL position (combined stake, total capital deployed).
+    _carbon_volo_pct = _combined_ownership if _is_followon_blended else entry_ownership
+    _carbon_volo_inv = (_total_invested_m if _is_followon_blended else check_size_millions) * 1_000_000
     if not portfolio.get("volo_pct"):
-        portfolio["volo_pct"] = entry_ownership
+        portfolio["volo_pct"] = _carbon_volo_pct
     if not portfolio.get("volo_investment"):
-        portfolio["volo_investment"] = check_size_millions * 1_000_000
+        portfolio["volo_investment"] = _carbon_volo_inv
 
     # ── Pre-compute founder revenue in $M for the simulation ────────────────
     # PRECEDENCE (changed 2026-04: previously the wizard form value won, which
@@ -328,7 +356,7 @@ def generate_deal_report(
         founder_revenue_projections = list(_sim_founder_rev_m)
 
     # ── Section 1: Monte Carlo simulation ─────────────────────────────────────
-    sim = run_simulation(
+    _sim_kwargs = dict(
         archetype=archetype,
         tam_millions=tam_millions,
         trl=trl,
@@ -349,6 +377,21 @@ def generate_deal_report(
         founder_revenue_projections_m=_sim_founder_rev_m,
         round_size_m=round_size_m,
     )
+    # Standalone new-check sim — always run. Feeds check-size optimization,
+    # follow-on sizing, portfolio impact, sensitivity, and the committed-deal
+    # MOIC distribution (the fund deploys only the NEW check now).
+    sim_standalone = run_simulation(**_sim_kwargs)
+
+    # Headline sim. For a blended follow-on it models VoLo's total position;
+    # for a first check it IS the standalone sim (same object, no extra compute).
+    if _is_followon_blended:
+        sim = run_simulation(
+            **_sim_kwargs,
+            entry_ownership_override=_combined_ownership,
+            invested_capital_m=_total_invested_m,
+        )
+    else:
+        sim = sim_standalone
 
     # ── Section 2: Carbon assessment ──────────────────────────────────────────
     # Use simulation survival_rate as the carbon risk multiplier so it matches
@@ -463,8 +506,10 @@ def generate_deal_report(
         carta_data=carta_data, penetration_share=penetration_share,
         exit_multiple_range=exit_multiple_range, exit_year_range=exit_year_range,
         random_seed=random_seed or 42,
-        base_moic=sim.get("moic_unconditional", {}).get("expected", 0),
-        base_p3x=sim.get("probability", {}).get("gt_3x", 0),
+        # Sensitivity perturbs deal inputs and re-runs the STANDALONE sim, so its
+        # baseline must be the standalone new-check return (not the blended).
+        base_moic=sim_standalone.get("moic_unconditional", {}).get("expected", 0),
+        base_p3x=sim_standalone.get("probability", {}).get("gt_3x", 0),
         round_size_m=round_size_m,
     )
 
@@ -475,8 +520,8 @@ def generate_deal_report(
     portfolio_impact = _run_portfolio_impact(
         company_name=company_name,
         check_size_millions=check_size_millions,
-        survival_rate=sim.get("summary", {}).get("survival_rate", 0.3),
-        moic_conditional_mean=sim.get("moic_conditional", {}).get("mean", 3.0),
+        survival_rate=sim_standalone.get("summary", {}).get("survival_rate", 0.3),
+        moic_conditional_mean=sim_standalone.get("moic_conditional", {}).get("mean", 3.0),
         exit_year_range=exit_year_range,
         committed_deals=committed_deals,
         deal_commitment_type=deal_commitment_type,
@@ -495,7 +540,14 @@ def generate_deal_report(
         "round_size_millions": effective_round_size,
         "pre_money_millions": pre_money_millions,
         "post_money_millions": post_money,
-        "entry_ownership_pct": round(entry_ownership * 100, 2),
+        # For a follow-on, Entry Ownership is VoLo's COMBINED diluted stake
+        # (priors through this round + new check) — what actually drives the
+        # blended returns. For a first check it is the new check's ownership.
+        "entry_ownership_pct": round((_combined_ownership if _is_followon_blended else entry_ownership) * 100, 2),
+        "new_check_ownership_pct": round(entry_ownership * 100, 2),
+        "combined_entry_ownership_pct": round(_combined_ownership * 100, 2) if _is_followon_blended else None,
+        "total_invested_millions": round(_total_invested_m, 2) if _is_followon_blended else check_size_millions,
+        "is_blended_followon": _is_followon_blended,
         "sector_profile": sector_profile,
         "tam_millions": tam_millions,
         "penetration_share": list(penetration_share) if penetration_share else [0.01, 0.05],
@@ -669,7 +721,10 @@ def generate_deal_report(
     report["portfolio_impact"] = portfolio_impact
 
     # ── Section 8: Position sizing optimization ────────────────────────────
-    raw_moic = sim.get("_raw_moic", [])
+    # Sizing always operates on the STANDALONE new-check return distribution —
+    # the question is "how much more to invest now", independent of the blended
+    # headline. For first checks sim_standalone IS sim.
+    raw_moic = sim_standalone.get("_raw_moic", [])
     if raw_moic and len(raw_moic) > 100:
         try:
             sizing = optimize_position_size(
@@ -683,8 +738,8 @@ def generate_deal_report(
                 max_concentration_pct=max_concentration_pct,
                 entry_stage=entry_stage,
                 company_name=company_name,
-                survival_rate=sim.get("summary", {}).get("survival_rate", 0.3),
-                moic_conditional_mean=sim.get("moic_conditional", {}).get("mean", 3.0),
+                survival_rate=sim_standalone.get("summary", {}).get("survival_rate", 0.3),
+                moic_conditional_mean=sim_standalone.get("moic_conditional", {}).get("mean", 3.0),
                 exit_year_range=exit_year_range,
                 round_size_m=round_size_m,
                 committed_deals=committed_deals,
@@ -722,8 +777,8 @@ def generate_deal_report(
                 reserve_pct=reserve_pct,
                 max_concentration_pct=max_concentration_pct,
                 company_name=company_name,
-                survival_rate=sim.get("summary", {}).get("survival_rate", 0.3),
-                moic_conditional_mean=sim.get("moic_conditional", {}).get("mean", 3.0),
+                survival_rate=sim_standalone.get("summary", {}).get("survival_rate", 0.3),
+                moic_conditional_mean=sim_standalone.get("moic_conditional", {}).get("mean", 3.0),
                 exit_year_range=exit_year_range,
                 committed_deals=committed_deals,
                 is_pro_rata=follow_on_is_pro_rata,
@@ -784,8 +839,10 @@ def generate_deal_report(
         "financial_model_scale": financial_model.get("scale_info", "") if financial_model else "",
     }
 
-    report["_raw_moic"] = sim.get("_raw_moic", [])
-    report["_raw_exit_years"] = sim.get("_raw_exit_years", [])
+    # Committed-deal MOIC distribution = the NEW check's standalone return (the
+    # fund deploys only this check now; priors are already in the fund).
+    report["_raw_moic"] = sim_standalone.get("_raw_moic", [])
+    report["_raw_exit_years"] = sim_standalone.get("_raw_exit_years", [])
 
     return report
 
