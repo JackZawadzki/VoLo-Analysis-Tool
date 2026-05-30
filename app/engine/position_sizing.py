@@ -92,9 +92,17 @@ def compute_followon_ownership(
         pre_m = float(p.get("effective_pre_m") or p.get("pre_money_m") or 0)
         round_m = float(p.get("round_size_m") or 0) or check_m
         post_m = pre_m + round_m
-        if post_m > 0:
-            own = own * (pre_m / post_m) + (check_m / post_m)
-        # else: unknown valuation for this round → no dilution applied
+        # This round's standalone ownership. Prefer the already-resolved
+        # ``ownership`` so the walk matches the per-round entry ownership shown
+        # elsewhere in the report — for priced rounds this equals check/post,
+        # but for convertibles it is check/effective_pre, which differs.
+        _resolved_own = p.get("ownership")
+        this_own = (
+            float(_resolved_own) if _resolved_own is not None
+            else (check_m / post_m if post_m > 0 else 0.0)
+        )
+        dilution = (pre_m / post_m) if post_m > 0 else 1.0
+        own = own * dilution + this_own  # dilute prior holdings, add this round
         trajectory.append({
             "year": p.get("year"),
             "stage": p.get("stage", ""),
