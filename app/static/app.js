@@ -3044,9 +3044,13 @@ async function _wizExtractDealTerms() {
 
         // Fill in form fields from extracted terms
         // Populate Prior Investment 1 fields
-        if (d.check_size_m) document.getElementById('wiz-prior-1-check').value = d.check_size_m;
-        if (d.pre_money_m)  document.getElementById('wiz-prior-1-premoney').value = d.pre_money_m;
-        if (d.round_size_m) document.getElementById('wiz-prior-1-roundsize').value = d.round_size_m;
+        // Only fill BLANK fields — never clobber values the user typed.
+        const _pc = document.getElementById('wiz-prior-1-check');
+        const _pp = document.getElementById('wiz-prior-1-premoney');
+        const _pr = document.getElementById('wiz-prior-1-roundsize');
+        if (d.check_size_m && _pc && !_pc.value) _pc.value = d.check_size_m;
+        if (d.pre_money_m  && _pp && !_pp.value) _pp.value = d.pre_money_m;
+        if (d.round_size_m && _pr && !_pr.value) _pr.value = d.round_size_m;
         if (d.entry_stage)  document.getElementById('wiz-prior-1-stage').value = d.entry_stage;
         if (d.fund_year)    document.getElementById('wiz-prior-1-year').value = d.fund_year;
         _wizUpdateExposure();
@@ -3446,6 +3450,12 @@ function wizRenderReport(r) {
             <div><span class="rpt-dt-label">Post-Money ${infoTip('post_money')}</span><span class="rpt-dt-val">$${fmt(ov.post_money_millions,1)}M</span></div>
             <div><span class="rpt-dt-label">Entry Ownership ${infoTip('entry_ownership')}</span><span class="rpt-dt-val">${fmt(ov.entry_ownership_pct,1)}%</span></div>
         </div>
+        ${(ov.investment_type === 'followon' && ov.prior_investments?.length) ? `
+        <div class="rpt-followon-banner" style="margin-top:12px;padding:10px 14px;background:#f0f4ec;border:1px solid #5B7744;border-radius:6px;font-size:0.9rem;line-height:1.55;">
+            <strong>Follow-on investment${ov.follow_on_number ? ` — ${['','1st','2nd','3rd'][ov.follow_on_number] || ov.follow_on_number+'th'} follow-on` : ''}</strong>${ov.follow_on_is_pro_rata ? ' &middot; pro-rata' : ''}.
+            VoLo has already deployed <strong>$${fmt(ov.total_prior_exposure_m,2)}M</strong> across ${ov.prior_investments.length} prior round${ov.prior_investments.length>1?'s':''}; total exposure with this check becomes <strong>$${fmt(ov.total_exposure_m,2)}M</strong>.
+            Combined ownership and blended return appear under <em>Check Size Optimization &rarr; Follow-on Sizing</em>.
+        </div>` : ''}
         ${trace('Deal terms derivation', `
             <p>Post-Money = Pre-Money + Round Size = $${fmt(ov.pre_money_millions,1)}M + $${fmt(ov.round_size_millions,1)}M = <strong>$${fmt(ov.post_money_millions,1)}M</strong></p>
             <p>Entry Ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.entry_ownership_pct,1)}%</strong></p>

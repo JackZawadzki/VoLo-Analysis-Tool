@@ -1036,6 +1036,24 @@ def _build_report_context(report_row) -> str:
         parts.append(f"- Fund P50 Impact: +{best.get('fund_p50_pct_chg', 'N/A')}%")
         parts.append(f"- Recommended Check: ${ps.get('recommended_check_m', 'N/A')}M")
 
+    # Follow-on sizing — present only for follow-on investments. Surfaces the
+    # prior rounds so the memo sizes the NEW check against capital already in.
+    fops = report.get("followon_position_sizing", {})
+    if fops.get("has_data"):
+        if not best:
+            parts.append("\n## CHECK SIZE OPTIMIZATION")
+        _pr = fops.get("prorata", {}) or {}
+        _comb = fops.get("combined", {}) or {}
+        _bl = _comb.get("blended_stats") or {}
+        _combown = _comb.get("combined_ownership_pct", _comb.get("total_ownership_pct_approx", "N/A"))
+        parts.append(f"- FOLLOW-ON INVESTMENT (#{fops.get('followon_number', '?')} follow-on; sizing basis: {fops.get('sizing_method', 'N/A')})")
+        parts.append(f"  Prior capital already deployed: ${_comb.get('total_prior_m', 'N/A')}M across {_comb.get('n_prior_rounds', '?')} round(s)")
+        parts.append(f"  Recommended follow-on check: ${fops.get('recommended_followon_check_m', 'N/A')}M; combined invested (prior + new): ${_comb.get('total_invested_m', 'N/A')}M")
+        parts.append(f"  Diluted ownership entering round: {_pr.get('current_diluted_ownership_pct', 'N/A')}% -> combined post-round: {_combown}%")
+        parts.append(f"  Pro-rata check to hold ownership flat: ${_pr.get('pro_rata_check_m', 'N/A')}M (recommendation is {_pr.get('recommended_vs_pro_rata', 'N/A')})")
+        if _bl.get("blended_moic_p50") is not None:
+            parts.append(f"  Blended MOIC on all capital deployed: P10 {_bl.get('blended_moic_p10')}x / P50 {_bl.get('blended_moic_p50')}x / P90 {_bl.get('blended_moic_p90')}x")
+
     # Financial model — pull from report_json["financial_model"]["financials"]
     fm = report.get("financial_model", {})
     fm_fins = fm.get("financials", {})
@@ -3585,6 +3603,17 @@ def _build_report_context_from_parsed(rpt: dict, section_def: dict) -> str:
             parts.append(f"  Fund P50 impact: {gso.get('fund_p50_pct_chg', 'N/A')}")
             parts.append(f"  Fund constraints: min=${constraints.get('min_check_m', 'N/A')}M, max=${constraints.get('max_check_m', 'N/A')}M, fund_size=${constraints.get('fund_size_m', 'N/A')}M")
             parts.append(f"  Kelly full=${kelly.get('optimal_check_m', 'N/A')}M, half-Kelly=${kelly.get('half_kelly_check_m', 'N/A')}M")
+        fops = rpt.get("followon_position_sizing", {})
+        if fops.get("has_data"):
+            _pr = fops.get("prorata", {}) or {}
+            _comb = fops.get("combined", {}) or {}
+            _bl = _comb.get("blended_stats") or {}
+            _combown = _comb.get("combined_ownership_pct", _comb.get("total_ownership_pct_approx", "N/A"))
+            parts.append(f"Follow-on sizing (#{fops.get('followon_number', '?')} follow-on; basis: {fops.get('sizing_method', 'N/A')}):")
+            parts.append(f"  Prior deployed: ${_comb.get('total_prior_m', 'N/A')}M; recommended follow-on: ${fops.get('recommended_followon_check_m', 'N/A')}M; combined invested: ${_comb.get('total_invested_m', 'N/A')}M")
+            parts.append(f"  Diluted ownership entering: {_pr.get('current_diluted_ownership_pct', 'N/A')}% -> combined post-round: {_combown}%; pro-rata check: ${_pr.get('pro_rata_check_m', 'N/A')}M ({_pr.get('recommended_vs_pro_rata', 'N/A')})")
+            if _bl.get("blended_moic_p50") is not None:
+                parts.append(f"  Blended MOIC: P10 {_bl.get('blended_moic_p10')}x / P50 {_bl.get('blended_moic_p50')}x / P90 {_bl.get('blended_moic_p90')}x")
         pi = rpt.get("portfolio_impact", {})
         if pi.get("has_data"):
             parts.append(f"Portfolio impact (Section 3):")
