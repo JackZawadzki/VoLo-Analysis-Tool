@@ -3341,6 +3341,57 @@ async function wizRunPipeline() {
     }
 }
 
+// Follow-on sizing block for the MAIN deal report (Section 8). Self-contained
+// (own number formatter) so it has no dependency on wizRenderReport locals.
+// Returns '' for first-check deals, so it's safe to interpolate unconditionally.
+function _foReportSection(r) {
+    const fo = (r && r.followon_position_sizing) || {};
+    const priors = fo.prior_investments || [];
+    if (!fo.has_data || !priors.length) return '';
+
+    const fmt = (v, d=2) => v != null ? Number(v).toLocaleString(undefined, {minimumFractionDigits:d, maximumFractionDigits:d}) : 'N/A';
+    const pr   = fo.prorata || {};
+    const comb = fo.combined || {};
+    const foInv = fo.followon_investment || {};
+    const bl = comb.blended_stats || {};
+    const foN = fo.followon_number || priors.length;
+    const ord = (n) => (['0th','1st','2nd','3rd'][n] || `${n}th`);
+    const recCheck = fo.recommended_followon_check_m;
+    const totalPrior = comb.total_prior_m != null ? comb.total_prior_m : priors.reduce((s,p)=>s+(p.check_m||0),0);
+    const combinedOwn = comb.combined_ownership_pct ?? comb.total_ownership_pct_approx;
+    const modeLbl = pr.is_pro_rata_mode
+        ? (pr.target_ownership_pct ? `Target ownership ${fmt(pr.target_ownership_pct,1)}%` : 'Pro-rata — maintain ownership')
+        : 'Fund-TVPI optimum (prior rounds held in fund)';
+
+    const priorRows = priors.map(p =>
+        `<tr><td>Round ${p.round_num||''} — ${p.type==='priced'?'Priced':'Conv/SAFE'} ${p.stage||''}</td><td class="rpt-num">$${fmt(p.check_m,2)}M</td><td class="rpt-num">Yr ${p.year ?? '–'}</td><td class="rpt-num">${fmt(p.ownership_pct,1)}%</td></tr>`
+    ).join('');
+
+    return `<div class="rpt-followon-block" style="margin-top:20px;padding-top:16px;border-top:2px solid var(--accent,#5B7744);">
+        <h4 class="rpt-chart-title">Follow-on Sizing — ${ord(foN)} Follow-on (accounts for prior rounds)</h4>
+        <p class="rpt-narrative">VoLo has already deployed <strong>$${fmt(totalPrior,2)}M</strong> to this company across ${priors.length} prior round${priors.length>1?'s':''} (treated as sunk cost). The follow-on is sized on top of that exposure — combined invested becomes <strong>$${fmt(comb.total_invested_m,2)}M</strong>. Sizing basis: <strong>${modeLbl}</strong>.</p>
+        <div class="rpt-hero-row compact">
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">$${fmt(recCheck,2)}M</div><div class="rpt-hero-label">Recommended Follow-on</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">$${fmt(comb.total_invested_m,2)}M</div><div class="rpt-hero-label">Total Invested (prior + new)</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(pr.current_diluted_ownership_pct,1)}% &rarr; ${fmt(combinedOwn,1)}%</div><div class="rpt-hero-label">Ownership (entering &rarr; post-round)</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">$${fmt(pr.pro_rata_check_m,2)}M</div><div class="rpt-hero-label">Pro-rata Check${pr.recommended_vs_pro_rata ? ` (${pr.recommended_vs_pro_rata})` : ''}</div></div>
+        </div>
+        <table class="rpt-table" style="margin-top:12px;">
+            <thead><tr><th>Capital Deployed</th><th class="rpt-num">Check</th><th class="rpt-num">Fund Yr</th><th class="rpt-num">Own%</th></tr></thead>
+            <tbody>
+                ${priorRows}
+                <tr style="font-weight:600;background:var(--accent-light);"><td>Follow-on (recommended)</td><td class="rpt-num">$${fmt(recCheck,2)}M</td><td class="rpt-num">Yr ${foInv.fund_year ?? '–'}</td><td class="rpt-num">${fmt(foInv.ownership_pct,1)}%</td></tr>
+                <tr style="font-weight:700;"><td>Combined exposure</td><td class="rpt-num">$${fmt(comb.total_invested_m,2)}M</td><td></td><td class="rpt-num">${fmt(combinedOwn,1)}%</td></tr>
+            </tbody>
+        </table>
+        ${bl.blended_moic_p50 != null ? `<table class="rpt-table" style="margin-top:10px;">
+            <thead><tr><th>Blended MOIC (all-in: prior + follow-on)</th><th class="rpt-num">P10</th><th class="rpt-num">P50</th><th class="rpt-num">P90</th></tr></thead>
+            <tbody><tr><td>Return on $${fmt(comb.total_invested_m,2)}M total deployed</td><td class="rpt-num">${fmt(bl.blended_moic_p10,2)}x</td><td class="rpt-num">${fmt(bl.blended_moic_p50,2)}x</td><td class="rpt-num">${fmt(bl.blended_moic_p90,2)}x</td></tr></tbody>
+        </table>` : ''}
+        ${pr.pro_rata_exceeds_headroom ? `<p class="rpt-narrative" style="color:#b45309;">&#9888; Full pro-rata ($${fmt(pr.pro_rata_check_m,2)}M) exceeds the concentration headroom — recommendation capped at $${fmt(recCheck,2)}M.</p>` : ''}
+    </div>`;
+}
+
 function wizRenderReport(r) {
     const el = document.getElementById('deal-report');
     Object.values(_wizReportCharts).forEach(c => { try { c.destroy(); } catch(e) {} });
@@ -3739,9 +3790,11 @@ function wizRenderReport(r) {
                     <tr><td>Half Kelly</td><td class="rpt-num">$${fmt(kellyRef.half_kelly_check_m,2)}M</td><td>~75% of Kelly growth, substantially lower drawdown</td></tr>
                     <tr><td>Fund Average</td><td class="rpt-num">$${fmt(constraints.avg_check_m,2)}M</td><td>Investable capital / ${constraints.n_deals || 25} deals</td></tr>
                     <tr><td>Fund Maximum</td><td class="rpt-num">$${fmt(constraints.max_check_m,2)}M</td><td>${fmt(constraints.max_concentration_pct,0)}% concentration limit</td></tr>
+                    ${comp.prior_exposure_m > 0 ? `<tr><td>Exposure-Adjusted Max</td><td class="rpt-num">$${fmt(comp.exposure_adjusted_max_m,2)}M</td><td>Concentration cap minus $${fmt(comp.prior_exposure_m,2)}M already deployed to this company (prior rounds)</td></tr>` : ''}
                     <tr><td>Current</td><td class="rpt-num">$${fmt(comp.current_check_m,2)}M</td><td>As specified in deal terms</td></tr>
                 </tbody>
             </table>
+            ${_foReportSection(r)}
         </div>`;
     }
 
