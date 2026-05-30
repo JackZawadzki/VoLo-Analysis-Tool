@@ -150,6 +150,8 @@ def generate_deal_report(
     deal_follow_on_year: int = 2,
     # Follow-on optimization: prior deal terms (sunk cost)
     investment_type: str = "first",  # "first" or "followon"
+    follow_on_is_pro_rata: bool = False,
+    follow_on_target_ownership_pct: float = None,
     # Structured multi-round list (preferred) — each item: {type, check_m, stage, year,
     #   pre_money_m/round_size_m for priced, cap_m/discount_pct for convertibles}
     prior_investments: list = None,
@@ -233,6 +235,21 @@ def generate_deal_report(
     resolved_priors: list = []
     if investment_type == "followon" and prior_investments:
         resolved_priors = _resolve_prior_investments(prior_investments, pre_money_millions)
+
+    # Total capital already deployed to this company across prior rounds. Used
+    # to (a) cap the primary check-size optimizer by *cumulative* exposure and
+    # (b) drive pro-rata / blended follow-on sizing. Zero for first checks.
+    total_prior_exposure_m = round(
+        sum(float(p.get("check_m", 0) or 0) for p in resolved_priors), 4
+    ) if resolved_priors else 0.0
+
+    # A follow-on investment is, by definition, a follow-on commitment. The
+    # primary optimizer's reserve/exposure logic keys off this, so we derive it
+    # from investment_type rather than trusting the caller to set it. Portfolio
+    # impact keeps the caller-supplied value to avoid changing its slotting.
+    effective_commitment_type = (
+        "follow_on" if investment_type == "followon" else deal_commitment_type
+    )
 
     # ── Auto-fill carbon defaults from archetype ──────────────────────────────
     carbon_defaults = get_carbon_defaults(archetype)
@@ -493,6 +510,9 @@ def generate_deal_report(
         "deal_offset_years": entry_year - fund_vintage_year,  # how many years into the fund this deal is made
         # Follow-on summary
         "investment_type": investment_type,
+        "follow_on_number": len(resolved_priors) if (investment_type == "followon" and resolved_priors) else None,
+        "follow_on_is_pro_rata": bool(follow_on_is_pro_rata) if investment_type == "followon" else False,
+        "follow_on_target_ownership_pct": follow_on_target_ownership_pct if investment_type == "followon" else None,
         "prior_investments": [
             {
                 "round_num":       i + 1,
@@ -668,8 +688,9 @@ def generate_deal_report(
                 exit_year_range=exit_year_range,
                 round_size_m=round_size_m,
                 committed_deals=committed_deals,
-                deal_commitment_type=deal_commitment_type,
+                deal_commitment_type=effective_commitment_type,
                 deal_follow_on_year=deal_follow_on_year,
+                prior_exposure_m=total_prior_exposure_m,
             )
             report["position_sizing"] = {
                 "has_data": True,
@@ -705,6 +726,8 @@ def generate_deal_report(
                 moic_conditional_mean=sim.get("moic_conditional", {}).get("mean", 3.0),
                 exit_year_range=exit_year_range,
                 committed_deals=committed_deals,
+                is_pro_rata=follow_on_is_pro_rata,
+                target_ownership_pct=follow_on_target_ownership_pct,
             )
             report["followon_position_sizing"] = {"has_data": True, **fo_sizing}
         except Exception as e:

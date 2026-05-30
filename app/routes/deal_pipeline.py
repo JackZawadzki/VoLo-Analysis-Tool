@@ -78,6 +78,8 @@ class DealPipelineRequest(BaseModel):
     deal_follow_on_year: int = 2
     # Follow-on optimization parameters
     investment_type: str = "first"  # "first" or "followon"
+    follow_on_is_pro_rata: bool = False
+    follow_on_target_ownership_pct: Optional[float] = None
     # Structured multi-round list (new, preferred)
     prior_investments: Optional[List[dict]] = None
     # Legacy flat params (preserved for backward compatibility)
@@ -174,6 +176,8 @@ def run_pipeline(req: DealPipelineRequest, user: CurrentUser = Depends(get_curre
             deal_commitment_type=req.deal_commitment_type,
             deal_follow_on_year=req.deal_follow_on_year,
             investment_type=req.investment_type,
+            follow_on_is_pro_rata=req.follow_on_is_pro_rata,
+            follow_on_target_ownership_pct=req.follow_on_target_ownership_pct,
             prior_investments=req.prior_investments,
             prior_first_check_m=req.prior_first_check_m,
             prior_first_pre_money_m=req.prior_first_pre_money_m,

@@ -46,6 +46,89 @@ def stage_weights(entry_stage: str) -> dict:
     return STAGE_WEIGHTS.get(entry_stage, {"w_p10": 0.30, "w_p50": 0.35, "w_p90": 0.35})
 
 
+def compute_followon_ownership(
+    prior_investments: list,
+    followon_pre_money_m: float,
+    followon_round_size_m: float,
+) -> dict:
+    """
+    Deterministic cap-table dilution walk across all prior rounds.
+
+    Returns the *diluted* ownership VoLo holds going INTO the follow-on round
+    (``own_pre_followon``) — i.e. after every prior round has diluted every
+    earlier one — plus the pro-rata check needed to hold that stake flat
+    through the new round.
+
+    Standard priced-round dilution: a round raising ``R`` at pre-money ``P``
+    (post = P+R) multiplies every existing holder's fractional ownership by
+    ``P/(P+R)``; a participant investing ``c`` gains ``c/(P+R)``::
+
+        own_after = own_before * P/(P+R) + c/(P+R)
+
+    This replaces the previous additive ``Σ entry_ownership`` (which ignored
+    intervening dilution and overstated the combined stake).
+
+    Prior rounds are walked in chronological order (by ``year``, then input
+    order). Convertibles use their resolved ``effective_pre_m``. Every division
+    is guarded; a round with non-positive post-money contributes no change.
+
+    Pro-rata / target ownership (P = follow-on pre, R = follow-on round,
+    post = P+R, o = ``own_pre_followon``):
+      - own(c)          = o * P/post + c/post   = own_no_followon + c/post
+      - pro-rata c      = o * R                  (holds ownership flat)
+      - target o_t      = c = o_t*post − o*P     (reaches a chosen ownership)
+    """
+    priced_priors = [
+        p for p in (prior_investments or [])
+        if float(p.get("check_m", 0) or 0) > 0
+    ]
+    # Stable chronological sort — same-year ties keep input order.
+    priors = sorted(priced_priors, key=lambda p: float(p.get("year", 0) or 0))
+
+    own = 0.0
+    trajectory = []
+    for p in priors:
+        check_m = float(p.get("check_m", 0) or 0)
+        pre_m = float(p.get("effective_pre_m") or p.get("pre_money_m") or 0)
+        round_m = float(p.get("round_size_m") or 0) or check_m
+        post_m = pre_m + round_m
+        if post_m > 0:
+            own = own * (pre_m / post_m) + (check_m / post_m)
+        # else: unknown valuation for this round → no dilution applied
+        trajectory.append({
+            "year": p.get("year"),
+            "stage": p.get("stage", ""),
+            "check_m": round(check_m, 4),
+            "pre_money_m": round(pre_m, 4),
+            "round_size_m": round(round_m, 4),
+            "ownership_after_pct": round(own * 100, 4),
+        })
+
+    own_pre_followon = own  # ownership entering the follow-on (pre new-round dilution)
+
+    fo_pre = float(followon_pre_money_m or 0)
+    fo_round = float(followon_round_size_m or 0)
+    fo_post = fo_pre + fo_round
+
+    own_no_followon = (own_pre_followon * fo_pre / fo_post) if fo_post > 0 else own_pre_followon
+    pro_rata_check_m = own_pre_followon * fo_round if fo_round > 0 else 0.0
+
+    naive_additive = sum(float(p.get("ownership", 0) or 0) for p in priors)
+
+    return {
+        "own_pre_followon": own_pre_followon,
+        "own_pre_followon_pct": round(own_pre_followon * 100, 4),
+        "own_no_followon": own_no_followon,
+        "own_no_followon_pct": round(own_no_followon * 100, 4),
+        "pro_rata_check_m": round(pro_rata_check_m, 4),
+        "naive_additive_ownership_pct": round(naive_additive * 100, 4),
+        "followon_pre_money_m": round(fo_pre, 4),
+        "followon_post_money_m": round(fo_post, 4),
+        "trajectory": trajectory,
+        "n_prior_rounds": len(priors),
+    }
+
+
 def kelly_from_moic_distribution(moic_array, check_size_m: float, fund_size_m: float) -> dict:
     """
     Compute Kelly sizing directly from a MOIC distribution (from Monte Carlo).
@@ -442,6 +525,7 @@ def optimize_position_size(
     committed_deals: list = None,
     deal_commitment_type: str = "first_check",
     deal_follow_on_year: int = 2,
+    prior_exposure_m: float = 0.0,
 ) -> dict:
     """
     Full position sizing analysis.
@@ -450,12 +534,19 @@ def optimize_position_size(
     check size by the % improvement it produces in fund-level TVPI P10/P50/P90.
     Secondary: Kelly criterion for academic comparison.
     Tertiary: Fund constraint sizing for structural bounds.
+
+    ``prior_exposure_m`` is capital VoLo has ALREADY deployed to this company
+    (sum of prior rounds, for follow-ons). When > 0, the concentration limit is
+    enforced against *total* exposure (prior + new), so the recommended NEW
+    check can never push cumulative exposure past the concentration cap. It is
+    0 for first checks, leaving that path's behaviour unchanged.
     """
     kelly = kelly_from_moic_distribution(moic_distribution, check_size_m, fund_size_m)
     constraints = fund_constraint_sizing(fund_size_m, n_deals, mgmt_fee_pct,
                                          reserve_pct, max_concentration_pct)
 
     constrained_max = constraints["max_check_m"]
+    exposure_adjusted_max = constrained_max
 
     # For follow-on deals, cap at remaining reserve capital
     if deal_commitment_type == "follow_on":
@@ -467,6 +558,14 @@ def optimize_position_size(
         )
         remaining_reserve = max(total_reserve - committed_fo_used, 0.25)
         constrained_max = min(constrained_max, remaining_reserve)
+
+    # Cumulative-exposure cap: the NEW check must fit within the concentration
+    # limit on TOTAL exposure (prior + new), not the new check alone. Without
+    # this, a follow-on could be sized up to the full concentration cap on top
+    # of capital already in the company, silently breaching cumulative limits.
+    if prior_exposure_m and prior_exposure_m > 0:
+        exposure_adjusted_max = max(constraints["max_check_m"] - prior_exposure_m, 0.25)
+        constrained_max = min(constrained_max, exposure_adjusted_max)
 
     if round_size_m is not None:
         constrained_max = min(constrained_max, round_size_m)
@@ -522,6 +621,8 @@ def optimize_position_size(
             "half_kelly_m": kelly.get("half_kelly_check_m", 0),
             "fund_avg_m": constraints["avg_check_m"],
             "fund_max_m": constrained_max,
+            "prior_exposure_m": round(prior_exposure_m, 2) if prior_exposure_m else 0,
+            "exposure_adjusted_max_m": round(exposure_adjusted_max, 2),
         },
         "references": [
             {
@@ -848,12 +949,25 @@ def optimize_followon_multi(
     moic_conditional_mean: float = 3.0,
     exit_year_range: tuple = (5, 10),
     committed_deals: list = None,
+    is_pro_rata: bool = False,
+    target_ownership_pct: Optional[float] = None,
 ) -> dict:
     """
     Follow-on optimizer for 1 or 2 prior investments (priced rounds or convertibles).
 
     All prior investments are treated as sunk cost.  Concentration limits are
     enforced against *total exposure* (sum of all priors + current follow-on).
+
+    Sizing objective:
+      - ``is_pro_rata=True``  → anchor the recommendation to the pro-rata check
+        (hold current diluted ownership flat through the round), or to
+        ``target_ownership_pct`` if supplied. Capped by concentration headroom.
+      - otherwise            → fund-TVPI optimum, evaluated against the running
+        fund that *already holds the prior rounds* (so the recommendation is a
+        blended/marginal decision, not a standalone one).
+
+    Ownership is computed with a real dilution walk (``compute_followon_ownership``),
+    replacing the previous additive sum which overstated the combined stake.
 
     Parameters
     ----------
@@ -1014,38 +1128,89 @@ def optimize_followon_multi(
             "n_prior_rounds":               len(prior_investments),
         })
 
-    # 7. Pick optimal follow-on size
-    grid_optimal = standalone_grid.get("optimal")
-    if grid_optimal:
-        recommended_followon = grid_optimal["check_m"]
-        sizing_method = standalone_grid["method"]
-    else:
-        if blended_analysis:
-            best = max(blended_analysis, key=lambda x: x["blended_moic_p50"])
-            recommended_followon = best["followon_check_m"]
-            sizing_method = "Blended MOIC P50 maximization (grid search fallback)"
-        else:
-            recommended_followon = 0.25
-            sizing_method = "Minimum allocation (no viable grid points)"
-
-    recommended_followon = max(recommended_followon, 0.25)
-
-    # Find blended stats at the recommended size
-    recommended_blended = next(
-        (ba for ba in blended_analysis
-         if abs(ba["followon_check_m"] - recommended_followon) < 0.01),
-        None,
+    # 7. Ownership / pro-rata model (real dilution walk, not additive sum)
+    own_model = compute_followon_ownership(
+        prior_investments, followon_pre_money_m, followon_round_size_m
     )
+    own_pre = own_model["own_pre_followon"]          # diluted ownership entering the round
+    fo_post_money = own_model["followon_post_money_m"] or (followon_pre_money_m + followon_round_size_m)
+    pro_rata_check = own_model["pro_rata_check_m"]    # $ to hold ownership flat
+
+    def _ownership_for_check(c: float) -> float:
+        if fo_post_money <= 0:
+            return own_pre
+        return own_pre * (followon_pre_money_m / fo_post_money) + max(c, 0.0) / fo_post_money
+
+    def _check_for_target(o_target: float) -> float:
+        if fo_post_money <= 0:
+            return 0.0
+        return max(o_target * fo_post_money - own_pre * followon_pre_money_m, 0.0)
+
+    def _round_to_step(x: float, step: float = 0.25) -> float:
+        return round(round(x / step) * step, 2)
+
+    # 8. Pick the recommended follow-on size
+    grid_optimal = standalone_grid.get("optimal")
+    fund_tvpi_optimal_m = grid_optimal["check_m"] if grid_optimal else None
+    pro_rata_capped = False
+
+    if is_pro_rata:
+        # Anchor to pro-rata (hold ownership flat) or to an explicit target.
+        if target_ownership_pct and target_ownership_pct > 0:
+            raw_anchor = _check_for_target(target_ownership_pct / 100.0)
+            sizing_method = f"Target-ownership sizing — reach {target_ownership_pct:.1f}% post-round"
+        else:
+            raw_anchor = pro_rata_check
+            sizing_method = f"Pro-rata maintenance — hold {own_pre * 100:.1f}% through the round"
+        # Respect the concentration / reserve headroom.
+        capped_anchor = min(raw_anchor, max_followon)
+        pro_rata_capped = raw_anchor > max_followon + 1e-9
+        recommended_followon = max(_round_to_step(capped_anchor), 0.25)
+        if pro_rata_capped:
+            sizing_method += " (capped by concentration limit)"
+        selection_objective = "pro_rata" if not target_ownership_pct else "target_ownership"
+    elif grid_optimal:
+        # Fund-TVPI optimum, evaluated against the running fund that already
+        # holds the prior rounds (blended/marginal decision).
+        recommended_followon = max(grid_optimal["check_m"], 0.25)
+        sizing_method = standalone_grid["method"]
+        selection_objective = "fund_tvpi_with_priors_committed"
+    elif blended_analysis:
+        best = max(blended_analysis, key=lambda x: x["blended_moic_p50"])
+        recommended_followon = max(best["followon_check_m"], 0.25)
+        sizing_method = "Blended MOIC P50 maximization (grid search fallback)"
+        selection_objective = "blended_moic_fallback"
+    else:
+        recommended_followon = 0.25
+        sizing_method = "Minimum allocation (no viable grid points)"
+        selection_objective = "min_allocation"
+
+    # Find blended stats at the recommended size (nearest grid candidate)
+    recommended_blended = min(
+        blended_analysis,
+        key=lambda ba: abs(ba["followon_check_m"] - recommended_followon),
+        default=None,
+    ) if blended_analysis else None
 
     # Kelly reference for the follow-on increment
     kelly_fo = kelly_from_moic_distribution(
         followon_moic_distribution, recommended_followon, fund_size_m
     )
 
-    # Ownership at the follow-on round
-    fo_post_money  = followon_pre_money_m + followon_round_size_m
-    fo_ownership   = recommended_followon / fo_post_money if fo_post_money > 0 else 0
-    total_ownership_approx = sum(float(inv.get("ownership", 0)) for inv in prior_investments) + fo_ownership
+    # Ownership at the follow-on round (diluted-correct)
+    fo_marginal_ownership = recommended_followon / fo_post_money if fo_post_money > 0 else 0
+    combined_ownership = _ownership_for_check(recommended_followon)
+
+    # How the recommendation sits relative to pro-rata
+    if pro_rata_check > 1e-9:
+        if recommended_followon > pro_rata_check * 1.05:
+            prorata_position = "super pro-rata"
+        elif recommended_followon < pro_rata_check * 0.95:
+            prorata_position = "sub pro-rata"
+        else:
+            prorata_position = "pro-rata"
+    else:
+        prorata_position = "n/a"
 
     return {
         "recommended_followon_check_m": round(recommended_followon, 2),
@@ -1071,15 +1236,40 @@ def optimize_followon_multi(
             "round_size_m":        followon_round_size_m,
             "fund_year":           followon_fund_year,
             "inferred_stage":      followon_stage,
-            "ownership_pct":       round(fo_ownership * 100, 2),
+            "ownership_pct":       round(fo_marginal_ownership * 100, 2),
             "max_followon_m":      round(max_followon, 2),
         },
         "combined": {
             "total_prior_m":           round(total_prior_check, 2),
             "n_prior_rounds":          len(prior_investments),
             "total_invested_m":        round(total_prior_check + recommended_followon, 2),
-            "total_ownership_pct_approx": round(total_ownership_approx * 100, 2),
+            # Diluted-correct post-round ownership (prior stake diluted by every
+            # intervening round + the new check). Replaces the old additive sum.
+            "total_ownership_pct_approx": round(combined_ownership * 100, 2),
+            "combined_ownership_pct":     round(combined_ownership * 100, 2),
             "blended_stats":           recommended_blended,
+        },
+        # Pro-rata / ownership decision context.
+        # followon_number = which follow-on this check is = number of prior
+        # rounds (1 prior round → this is the 1st follow-on).
+        "followon_number": own_model["n_prior_rounds"],
+        "selection_objective": selection_objective,
+        "prorata": {
+            "is_pro_rata_mode":             is_pro_rata,
+            "target_ownership_pct":         target_ownership_pct,
+            "current_diluted_ownership_pct": own_model["own_pre_followon_pct"],
+            "ownership_no_followon_pct":    own_model["own_no_followon_pct"],
+            "pro_rata_check_m":             round(pro_rata_check, 2),
+            "recommended_check_m":          round(recommended_followon, 2),
+            "recommended_vs_pro_rata":      prorata_position,
+            "pro_rata_exceeds_headroom":    pro_rata_capped,
+            "fund_tvpi_optimal_check_m":    round(fund_tvpi_optimal_m, 2) if fund_tvpi_optimal_m else None,
+        },
+        "ownership_model": {
+            "current_diluted_ownership_pct":  own_model["own_pre_followon_pct"],
+            "combined_post_round_ownership_pct": round(combined_ownership * 100, 2),
+            "naive_additive_ownership_pct":   own_model["naive_additive_ownership_pct"],
+            "trajectory":                     own_model["trajectory"],
         },
         "fund_constraints": {
             "investable_capital_m":      round(investable, 2),

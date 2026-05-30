@@ -471,8 +471,21 @@
                                 <!-- ── Current follow-on round details ─────────────── -->
                                 <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);">
                                     <div class="form-row">
-                                        <div class="form-group"><label>New Round Size ($M)</label><input type="number" id="wiz-fo-round-size" step="0.5" min="0.25" placeholder="Current round size"></div>
+                                        <div class="form-group"><label>New Round Size ($M)</label><input type="number" id="wiz-fo-round-size" step="0.5" min="0.25" placeholder="Current round size" oninput="_wizUpdateExposure()"></div>
                                         <div class="form-group"><label>Follow-on Fund Year</label><input type="number" id="wiz-fo-fund-year" value="3" step="1" min="1" max="12"></div>
+                                    </div>
+                                </div>
+
+                                <!-- ── Pro-rata / target ownership ─────────────────── -->
+                                <div style="margin-top:10px;">
+                                    <div id="wiz-fo-number-readout" style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:8px;"></div>
+                                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.9rem;">
+                                        <input type="checkbox" id="wiz-fo-prorata" onchange="_wizProRataChanged()" style="width:auto;">
+                                        <span>This is a <strong>pro-rata</strong> follow-on (size the check to hold our ownership through the round)</span>
+                                    </label>
+                                    <div class="form-group" id="wiz-fo-target-group" style="display:none;margin-top:8px;">
+                                        <label>Target Ownership (%) <em class="field-opt">opt. — leave blank to maintain current</em></label>
+                                        <input type="number" id="wiz-fo-target-own" step="0.5" min="0" max="100" placeholder="Maintain current ownership">
                                     </div>
                                 </div>
 

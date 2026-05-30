@@ -2947,6 +2947,12 @@ function _wizPriorTypeChanged(idx) {
     _wizUpdateExposure();
 }
 
+function _wizProRataChanged() {
+    const checked = document.getElementById('wiz-fo-prorata')?.checked;
+    const grp = document.getElementById('wiz-fo-target-group');
+    if (grp) grp.style.display = checked ? '' : 'none';
+}
+
 function _wizConvOwnership(checkM, capM, discPct, preMoney) {
     /* Returns ownership fraction for a convertible at the current priced round.
        Investor gets the more-favourable (lower) price. */
@@ -3009,6 +3015,14 @@ function _wizUpdateExposure() {
     if (priorEl)   priorEl.textContent   = totalPrior   > 0 ? `$${totalPrior.toFixed(2)}M`   : '—';
     if (currEl)    currEl.textContent    = currentCheck > 0 ? `$${currentCheck.toFixed(2)}M`  : '—';
     if (totalEl)   totalEl.textContent   = totalExp     > 0 ? `$${totalExp.toFixed(2)}M`      : '—';
+
+    // Follow-on number readout: prior rounds = which follow-on this is
+    // (1 prior round → 1st follow-on / investment #2 overall).
+    const foNumEl = document.getElementById('wiz-fo-number-readout');
+    if (foNumEl) {
+        const ord = (n) => (['0th','1st','2nd','3rd'][n] || `${n}th`);
+        foNumEl.innerHTML = `This is your <strong>${ord(_wizPriorCount)} follow-on</strong> into this company (investment #${_wizPriorCount + 1} overall).`;
+    }
 }
 
 async function _wizExtractDealTerms() {
@@ -3269,6 +3283,8 @@ async function wizRunPipeline() {
         investment_type: document.getElementById('wiz-investment-type')?.value || 'first',
         followon_round_size_m_actual: parseFloat(document.getElementById('wiz-fo-round-size')?.value || 0) || null,
         followon_fund_year: parseInt(document.getElementById('wiz-fo-fund-year')?.value || 0) || null,
+        follow_on_is_pro_rata: document.getElementById('wiz-fo-prorata')?.checked || false,
+        follow_on_target_ownership_pct: parseFloat(document.getElementById('wiz-fo-target-own')?.value || 0) || null,
         prior_investments: (() => {
             const invType = document.getElementById('wiz-investment-type')?.value;
             if (invType !== 'followon') return null;
@@ -10468,6 +10484,21 @@ function _memoInjectCharts(container, report) {
                         <tr><td>Ownership</td><td style="text-align:right;">${priorOwnCell2}</td><td style="text-align:right;">${fmt(foInv2.ownership_pct,1)}%</td><td style="text-align:right;font-weight:700;">${fmt(combinedOwn2,1)}%</td></tr>
                     </tbody>
                 </table>
+                ${(() => {
+                    const pr = foPs2.prorata || {};
+                    if (pr.current_diluted_ownership_pct == null) return '';
+                    const foN = foPs2.followon_number;
+                    const foLbl = foN ? (foN === 1 ? '1st' : foN === 2 ? '2nd' : foN === 3 ? '3rd' : foN + 'th') + ' follow-on' : 'Follow-on';
+                    const modeLbl = pr.is_pro_rata_mode
+                        ? (pr.target_ownership_pct ? `Target ownership ${fmt(pr.target_ownership_pct,1)}%` : 'Pro-rata — maintain ownership')
+                        : 'Fund-TVPI optimum (priors held in fund)';
+                    return `<div style="margin-top:8px;padding:8px 10px;background:#f0f4ec;border:1px solid #5B7744;border-radius:4px;font-size:12px;line-height:1.5;">
+                        <strong>${foLbl}</strong> &middot; Sizing basis: <strong>${modeLbl}</strong><br>
+                        Diluted ownership entering this round: <strong>${fmt(pr.current_diluted_ownership_pct,1)}%</strong>${pr.ownership_no_followon_pct != null ? ` (dilutes to ${fmt(pr.ownership_no_followon_pct,1)}% if we don't participate)` : ''}.<br>
+                        Pro-rata check to hold flat: <strong>$${fmt(pr.pro_rata_check_m,2)}M</strong> &middot; Recommended: <strong>$${fmt(pr.recommended_check_m,2)}M</strong> (${pr.recommended_vs_pro_rata})${pr.fund_tvpi_optimal_check_m != null ? ` &middot; fund-TVPI optimum $${fmt(pr.fund_tvpi_optimal_check_m,2)}M` : ''}.
+                        ${pr.pro_rata_exceeds_headroom ? '<br><span style="color:#b45309;">&#9888; Full pro-rata exceeds concentration headroom — recommendation capped.</span>' : ''}
+                    </div>`;
+                })()}
                 ${blStats2.blended_moic_p50 != null ? `
                 <table class="memo-rvm-table" style="margin-top:8px;">
                     <thead><tr>
