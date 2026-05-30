@@ -3954,20 +3954,15 @@ function wizRenderReport(r) {
 
     // ── COMMIT TO FUND ACTION ─────────────────────────────────────────────
     if (_wizReportId) {
+        // Commitment type is derived from the Investment Type chosen in the
+        // wizard — no separate first/follow-on selector here.
+        const isFollowOn = ov.investment_type === 'followon';
         html += `<div class="rpt-section rpt-fund-actions" style="text-align:center;padding:24px 0;">
-            <div style="display:flex;justify-content:center;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
-                    <input type="radio" name="commit-type" value="first_check" checked onchange="document.getElementById('fo-year-group').style.display='none';document.getElementById('fo-parent-group').style.display='none';">
-                    <strong>First Check</strong>
-                    <span style="color:#586069;font-size:11px;">(displaces baseline slot)</span>
-                </label>
-                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:13px;">
-                    <input type="radio" name="commit-type" value="follow_on" onchange="document.getElementById('fo-year-group').style.display='flex';document.getElementById('fo-parent-group').style.display='flex';">
-                    <strong>Follow-On</strong>
-                    <span style="color:#586069;font-size:11px;">(from reserve pool)</span>
-                </label>
+            <div style="margin-bottom:12px;font-size:13px;color:#374151;">
+                Committing as <strong>${isFollowOn ? 'Follow-On' : 'First Check'}</strong>
+                <span style="color:#586069;font-size:11px;">${isFollowOn ? '(from reserve pool)' : '(displaces baseline slot)'} &mdash; set via Investment Type at the top of the wizard</span>
             </div>
-            <div id="fo-year-group" style="display:none;justify-content:center;align-items:center;gap:8px;margin-bottom:8px;">
+            <div id="fo-year-group" style="${isFollowOn ? 'display:flex' : 'display:none'};justify-content:center;align-items:center;gap:8px;margin-bottom:8px;">
                 <label style="font-size:12px;color:#586069;">Deploy Year:</label>
                 <select id="fo-year-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;">
                     <option value="2">Year 2</option>
@@ -3975,7 +3970,7 @@ function wizRenderReport(r) {
                     <option value="4">Year 4</option>
                 </select>
             </div>
-            <div id="fo-parent-group" style="display:none;justify-content:center;align-items:center;gap:8px;margin-bottom:8px;">
+            <div id="fo-parent-group" style="${isFollowOn ? 'display:flex' : 'display:none'};justify-content:center;align-items:center;gap:8px;margin-bottom:8px;">
                 <label style="font-size:12px;color:#586069;">Parent Deal:</label>
                 <select id="fo-parent-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;">
                     <option value="">— none —</option>
@@ -4452,9 +4447,10 @@ async function wizCommitToFund() {
     const btn = document.getElementById('btn-commit-fund');
     if (btn) { btn.disabled = true; btn.textContent = 'Committing...'; }
 
-    // Read commitment type from radio buttons
-    const ctypeRadio = document.querySelector('input[name="commit-type"]:checked');
-    const commitmentType = ctypeRadio ? ctypeRadio.value : 'first_check';
+    // Commitment type is derived from the wizard's Investment Type, not a
+    // separate selector (removed — it was redundant).
+    const commitmentType = (_wizReport?.deal_overview?.investment_type === 'followon')
+        ? 'follow_on' : 'first_check';
     const foYearSel = document.getElementById('fo-year-select');
     const foParentSel = document.getElementById('fo-parent-select');
     const followOnYear = (commitmentType === 'follow_on' && foYearSel) ? parseInt(foYearSel.value) : 2;
