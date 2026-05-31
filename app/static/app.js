@@ -946,6 +946,72 @@ let _wizReportId = null;
 let _wizReportCharts = {};
 let _wizSavedInputs = null;   // Persisted inputs from a loaded report
 
+// ── Linear/Log toggle for the Revenue-section charts ──────────────────────
+// Log mode makes deals whose founder and band differ by orders of magnitude
+// readable. Chart.js's default log axis labels every 1..9 in each decade and
+// they overlap, so we thin ticks/gridlines to a clean 1-2-5 cadence. Early $0
+// years can't sit on a log axis, so we hide them in log mode and restore on
+// linear.
+function _wizLogNiceVal(v) {
+    if (v == null || v <= 0) return false;
+    const exp = Math.floor(Math.log10(v) + 1e-9);
+    const m = v / Math.pow(10, exp);   // mantissa in [1, 10)
+    return Math.abs(m - 1) < 0.02 || Math.abs(m - 2) < 0.02 || Math.abs(m - 5) < 0.02;
+}
+// Single self-adapting tick formatter: comma-formats on a linear axis, and on
+// a log axis labels only the clean 1-2-5 values (hiding the rest). Attached
+// permanently so there's no per-mode callback to clear.
+function _wizScaleTick(value) {
+    if (this && this.type === 'logarithmic') {
+        return _wizLogNiceVal(value) ? Number(value).toLocaleString() : '';
+    }
+    return Number(value).toLocaleString();
+}
+function _wizThinLogTicks(scale) {
+    if (scale.type !== 'logarithmic') return;
+    const f = scale.ticks.filter(t => _wizLogNiceVal(t.value));
+    if (f.length >= 2) scale.ticks = f;
+}
+function _wizToggleRevScale(mode, btn) {
+    const isLog = mode === 'log';
+    ['scurve', 'revSanity', 'revScurveProj'].forEach(k => {
+        const c = _wizReportCharts && _wizReportCharts[k];
+        if (!c || !c.options || !c.options.scales || !c.options.scales.y) return;
+        const y = c.options.scales.y;
+        // Smallest positive value in the chart = the log floor. Band areas are
+        // floored to it (keeps the shaded fan continuous instead of stepping
+        // where early $0 years would drop out); overlay lines (founder,
+        // reconciled) keep their nulls so they start at their first real value.
+        let m0 = Infinity;
+        c.data.datasets.forEach(ds => (ds._linData || ds.data).forEach(v => {
+            if (v != null && v > 0 && v < m0) m0 = v;
+        }));
+        if (!isFinite(m0)) m0 = 1;
+        c.data.datasets.forEach(ds => {
+            const isBand = /^(p\d+|.*median.*)$/i.test(ds.label || '');
+            if (isLog) {
+                if (!ds._linData) ds._linData = ds.data.slice();
+                ds.data = ds._linData.map(v => (v != null && v > 0) ? v : (isBand ? m0 : null));
+            } else if (ds._linData) {
+                ds.data = ds._linData.slice();
+                delete ds._linData;
+            }
+        });
+        y.type = isLog ? 'logarithmic' : 'linear';
+        if (!y.ticks) y.ticks = {};
+        y.ticks.callback = _wizScaleTick;
+        y.afterBuildTicks = _wizThinLogTicks;
+        c.update();
+    });
+    if (btn && btn.parentElement) {
+        btn.parentElement.querySelectorAll('button').forEach(b => {
+            const on = b === btn;
+            b.style.background = on ? '#5B7744' : '#fff';
+            b.style.color = on ? '#fff' : '#374151';
+        });
+    }
+}
+
 function wizGoStep(n) {
     _wizStep = n;
     if (n > _wizMaxStep) _wizMaxStep = n;
@@ -3542,6 +3608,13 @@ function wizRenderReport(r) {
             <p><strong>2. S-Curve Revenue Projection</strong>: the same expected-adoption bands as chart 1, plus the raw founder forecast and a third line — the founder's forecast <em>reconciled to the S-curve</em>. We read off the market share the founder's numbers imply${revSan.implied_share != null ? ` (~${fmt(revSan.implied_share*100,1)}%)` : ''} and compare it to the sector-typical share${revSan.typical_share != null ? ` (the middle of your penetration range, ${fmt(revSan.typical_share*100,1)}%)` : ''}: a more-ambitious founder places the line in the upper half of the band (P50–P90), a more-conservative one in the lower half (P10–P50) — it never leaves the band. Near-term the line leans on the founder's own numbers, but those are capped at the realistic P90 ceiling so a wild near-term claim can't escape the band; it then fades to the placed line over ${revSan.horizon_years || 10} years (faster at higher TRL).</p>
             <p><strong>Note</strong>: these charts are a presentation-layer sanity check and do not (yet) alter the MOIC/IRR returns model, which still uses the ${revSource === 'founder_anchored' ? 'founder-anchored' : 'S-curve-derived'} revenue.</p>
         `)}
+        <div style="display:flex;align-items:center;gap:8px;margin:2px 0 12px;font-size:12px;color:#6B7280;">
+            <span>Chart y-axis:</span>
+            <div style="display:inline-flex;border:1px solid #d1d5db;border-radius:6px;overflow:hidden;">
+                <button type="button" onclick="_wizToggleRevScale('linear', this)" style="border:none;padding:4px 14px;font:inherit;cursor:pointer;background:#5B7744;color:#fff;">Linear</button>
+                <button type="button" onclick="_wizToggleRevScale('log', this)" style="border:none;padding:4px 14px;font:inherit;cursor:pointer;background:#fff;color:#374151;">Log</button>
+            </div>
+        </div>
         <div class="rpt-two-col">
             <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Adoption S-Curve (${archLabel(ov.archetype)}) ${infoTip('adoption_scurve')}</h4><canvas id="rpt-scurve-chart" height="300"></canvas></div>
             <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Revenue Projection Sanity Check ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-sanity-chart" height="300"></canvas></div>
