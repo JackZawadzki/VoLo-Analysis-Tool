@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from ..auth import CurrentUser, get_current_user
 from ..database import get_db
-from ..engine.deal_report import generate_deal_report
+from ..engine.deal_report import generate_deal_report, backfill_revenue_sanity
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ def get_report(rid: int, user: CurrentUser = Depends(get_current_user)):
             "company_name": row["company_name"],
             "archetype": row["archetype"],
             "entry_stage": row["entry_stage"],
-            "report": json.loads(row["report_json"]),
+            "report": backfill_revenue_sanity(json.loads(row["report_json"])),
             "inputs": json.loads(row["inputs_json"]),
             "created_at": row["created_at"],
             "owner_username": row["owner_username"],

@@ -1414,6 +1414,70 @@ def _build_revenue_sanity_charts(
     }
 
 
+def backfill_revenue_sanity(report: dict) -> dict:
+    """Populate report['revenue_sanity'] for reports saved before that field
+    existed, reusing the report's own stored fields. No-op if already present.
+    Never raises — on any problem the report is returned unchanged (the charts
+    stay empty, as before, rather than breaking the load)."""
+    if not isinstance(report, dict):
+        return report
+    # Skip only if revenue_sanity is already in the CURRENT structure; reports
+    # from an earlier revenue_sanity revision (missing adjusted_founder /
+    # typical_share) are recomputed so the chart stays consistent.
+    rs = report.get("revenue_sanity")
+    if (isinstance(rs, dict) and rs.get("has_data")
+            and "adjusted_founder" in rs and "typical_share" in rs):
+        return report
+    try:
+        ov = report.get("deal_overview") or {}
+        archetype = ov.get("archetype")
+        tam_millions = ov.get("tam_millions")
+        trl = ov.get("trl")
+        if not archetype or not tam_millions or trl is None:
+            return report
+
+        pen = ov.get("penetration_share") or [0.01, 0.05]
+        penetration_share = (float(pen[0]), float(pen[1]))
+        entry_year = ov.get("entry_year")
+
+        # Reconstruct the founder revenue ($M, entry-year aligned) and its
+        # calendar years from the stored founder_comparison — these ARE the
+        # founder projections that built the report.
+        founder_revenue, fm_calendar_years = None, None
+        fc_rev = (report.get("founder_comparison") or {}).get("revenue") or {}
+        rows = sorted(
+            (d for d in (fc_rev.get("year_by_year") or [])
+             if isinstance(d, dict) and d.get("calendar_year") is not None),
+            key=lambda d: d["calendar_year"],
+        )
+        if rows:
+            founder_revenue = [float(d.get("founder") or 0.0) for d in rows]
+            fm_calendar_years = [d["calendar_year"] for d in rows]
+
+        # Match the Bass means already shown on the adoption S-curve so the
+        # bands stay consistent (covers custom-Bass deals too).
+        custom_p = custom_q = None
+        sc = (report.get("adoption_analysis") or {}).get("scurve") or {}
+        bp, bq = sc.get("bass_p_mean"), sc.get("bass_q_mean")
+        if bp is not None and bq is not None:
+            defp = DEFAULT_BASS_PARAMS.get(archetype, {})
+            p_std = defp["p"][1] if "p" in defp else float(bp) * 0.3
+            q_std = defp["q"][1] if "q" in defp else float(bq) * 0.2
+            custom_p = (float(bp), float(p_std))
+            custom_q = (float(bq), float(q_std))
+
+        report["revenue_sanity"] = _build_revenue_sanity_charts(
+            archetype=archetype, tam_millions=float(tam_millions), trl=int(trl),
+            penetration_share=penetration_share,
+            founder_revenue=founder_revenue,
+            entry_year=entry_year, fm_calendar_years=fm_calendar_years,
+            custom_p=custom_p, custom_q=custom_q, horizon_years=10,
+        )
+    except Exception as e:
+        logger.warning("revenue_sanity backfill failed: %s", e)
+    return report
+
+
 def _opt_float(v):
     if v is None or v == "":
         return None
