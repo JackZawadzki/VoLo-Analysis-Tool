@@ -3533,31 +3533,21 @@ function wizRenderReport(r) {
     const revSan = r.revenue_sanity || {};
     const rsVerdict = revSan.verdict || {};
     const rsPen = revSan.penetration_share || (ov.penetration_share || [0.01, 0.05]);
-    const verdictColor = {
-        'Supported': '#16a34a',
-        'Conservative': '#2563eb',
-        'Above expected adoption': '#d97706',
-        'Unsupported by expected adoption': '#dc2626',
-    }[rsVerdict.label] || '#6B7280';
     html += `<div class="rpt-section">${secNum()}
         <h3 class="rpt-section-title">Technology Adoption &amp; Revenue Sanity Check ${infoTip('adoption_scurve')}</h3>
-        <p class="rpt-narrative">Founder revenue projections are sanity-checked against the industry S-curve. The probability bands below are generated from expected market adoption (Bass diffusion, p=${scBp?.toFixed(4) || 'N/A'}, q=${scBq?.toFixed(3) || 'N/A'}) and TAM penetration — <em>not</em> from the founder's forecast — so an unrealistic projection lands outside the band rather than on the median.</p>
-        ${trace('Sanity-check methodology', `
+        <p class="rpt-narrative">Founder revenue projections are sanity-checked against the industry S-curve. The probability bands below are generated from expected market adoption (Bass diffusion, p=${scBp?.toFixed(4) || 'N/A'}, q=${scBq?.toFixed(3) || 'N/A'}) and TAM penetration. The diffusion parameters are calibrated from historical technology deployment data (NREL Annual Technology Baseline) for the ${archLabel(ov.archetype)} sector.</p>
+        ${trace('Methodology', `
             <p><strong>Bass diffusion model</strong>: F(t) = M x (1 - e^(-(p+q)t)) / (1 + (q/p) x e^(-(p+q)t)), where M = TAM ($${fmt(ov.tam_millions || 0, 0)}M), p = ${scBp?.toFixed(5) || '?'} (innovation), q = ${scBq?.toFixed(4) || '?'} (imitation). Parameters from NREL ATB deployment patterns for ${archLabel(ov.archetype)}. Market maturity: ${adoptInfo.maturity || 'N/A'}; inflection year: ${adoptInfo.inflection_year || 'N/A'}.</p>
             <p><strong>1. Revenue Projection Sanity Check</strong>: P10-P90 bands = annual adoption increments x penetration share (U(${fmt(rsPen[0],3)}, ${fmt(rsPen[1],3)})), cumulated, with TRL ${ov.trl} revenue lag. Generated from the S-curve alone; the founder's projection is <em>overlaid</em> for comparison. Answers: do founder projections make sense relative to expected adoption?</p>
-            <p><strong>2. S-Curve Revenue Projection</strong>: the founder's projection brought into scope of the S-curve. Each Bass curve is scaled by a least-squares fit to the founder's near-term revenue, capped at the TAM penetration ceiling ($${fmt(revSan.tam_ceiling_m || 0, 1)}M = ${fmt(rsPen[1]*100,1)}% of TAM), and extended to ${revSan.horizon_years || 10} years. Answers: what does the trajectory look like under realistic adoption?</p>
+            <p><strong>2. S-Curve Revenue Projection</strong>: the same expected-adoption bands as chart 1, plus the raw founder forecast and a third line — the founder's forecast <em>reconciled to the S-curve</em>. We read off the market share the founder's numbers imply${revSan.implied_share != null ? ` (~${fmt(revSan.implied_share*100,1)}%)` : ''} and compare it to the sector-typical share${revSan.typical_share != null ? ` (the middle of your penetration range, ${fmt(revSan.typical_share*100,1)}%)` : ''}: a more-ambitious founder places the line in the upper half of the band (P50–P90), a more-conservative one in the lower half (P10–P50) — it never leaves the band. Near-term the line leans on the founder's own numbers, but those are capped at the realistic P90 ceiling so a wild near-term claim can't escape the band; it then fades to the placed line over ${revSan.horizon_years || 10} years (faster at higher TRL).</p>
             <p><strong>Note</strong>: these charts are a presentation-layer sanity check and do not (yet) alter the MOIC/IRR returns model, which still uses the ${revSource === 'founder_anchored' ? 'founder-anchored' : 'S-curve-derived'} revenue.</p>
         `)}
         <div class="rpt-two-col">
             <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Adoption S-Curve (${archLabel(ov.archetype)}) ${infoTip('adoption_scurve')}</h4><canvas id="rpt-scurve-chart" height="300"></canvas></div>
             <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Revenue Projection Sanity Check ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-sanity-chart" height="300"></canvas></div>
         </div>
-        <div class="rpt-chart-wrap" style="margin-top:16px;"><h4 class="rpt-chart-title">S-Curve Revenue Projection (founder forecast constrained to industry adoption, ${revSan.horizon_years || 10}-yr) ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-scurve-chart" height="300"></canvas></div>`;
-    if (revSan.has_founder && rsVerdict.label) {
-        html += `<div class="rpt-verdict" style="margin-top:14px;padding:10px 14px;border-left:4px solid ${verdictColor};background:#f7f8f5;border-radius:4px;">
-            <span style="font-weight:700;color:${verdictColor};">${rsVerdict.label}</span>
-            <span style="color:#374151;"> &mdash; ${rsVerdict.narrative || ''}</span>
-        </div>`;
+        <div class="rpt-chart-wrap" style="margin-top:16px;"><h4 class="rpt-chart-title">S-Curve Revenue Projection &mdash; Founder Forecast vs. Realistic In-Band Adjustment (${revSan.horizon_years || 10}-yr) ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-scurve-chart" height="300"></canvas></div>`;
+    if (revSan.has_founder) {
         const yby = rsVerdict.year_by_year || [];
         if (yby.length) {
             html += `<table class="rpt-table" style="margin-top:10px;"><thead><tr><th>Year</th><th>Founder ($M) ${infoTip('founder_projections')}</th><th>Expected Median ($M) ${infoTip('sim_median')}</th><th>Expected P10</th><th>Expected P90</th><th>vs Median</th><th>In Band ${infoTip('in_band')}</th></tr></thead><tbody>`;
@@ -4133,7 +4123,9 @@ function _wizRenderCharts(r) {
     // (NOT founder-anchored), and the founder line is overlaid for comparison.
     const revSanC = r.revenue_sanity || {};
     const _rsLabels = (revSanC.calendar_years || []).map(y => String(y));
-    const _renderRevBands = (canvasId, bands, chartKey, medianLabel) => {
+    // extraLine (optional): {label, data, color} — a deterministic overlay line
+    // drawn on top of the bands (used for the TAM-adjusted founder on chart 3).
+    const _renderRevBands = (canvasId, bands, chartKey, medianLabel, extraLine) => {
         const ctx = document.getElementById(canvasId);
         if (!ctx || !bands || !(bands.median || bands.p50)) return;
         const med = bands.median || bands.p50 || [];
@@ -4143,8 +4135,11 @@ function _wizRenderCharts(r) {
         datasets.push({label:medianLabel,data:med,borderColor:BLU,fill:false,pointRadius:0,borderWidth:2.5,tension:0.3,order:2});
         if (bands.p25) datasets.push({label:'P25',data:bands.p25,borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:'-1',pointRadius:0,borderWidth:1,order:4});
         if (bands.p10) datasets.push({label:'P10',data:bands.p10,borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:'-1',pointRadius:0,order:6});
+        if (extraLine && extraLine.data && extraLine.data.some(v => v != null)) {
+            datasets.push({label:extraLine.label,data:extraLine.data,borderColor:extraLine.color,backgroundColor:extraLine.color,fill:false,pointRadius:0,borderWidth:2.5,borderDash:[6,3],tension:0.3,spanGaps:true,order:1});
+        }
         if (bands.founder && bands.founder.some(v => v != null)) {
-            datasets.push({label:'Founder Projection',data:bands.founder,borderColor:'#dc2626',backgroundColor:'#dc2626',fill:false,pointRadius:5,pointStyle:'circle',borderWidth:3,tension:0.2,spanGaps:true,order:1});
+            datasets.push({label:'Founder Projection',data:bands.founder,borderColor:'#dc2626',backgroundColor:'#dc2626',fill:false,pointRadius:5,pointStyle:'circle',borderWidth:3,tension:0.2,spanGaps:true,order:0});
         }
         _wizReportCharts[chartKey] = new Chart(ctx, {
             type:'line', data:{labels:_rsLabels,datasets},
@@ -4158,7 +4153,11 @@ function _wizRenderCharts(r) {
         });
     };
     _renderRevBands('rpt-rev-sanity-chart', revSanC.sanity, 'revSanity', 'Industry-Expected Median');
-    _renderRevBands('rpt-rev-scurve-chart', revSanC.scurve_projection, 'revScurveProj', 'S-Curve Projection (Median)');
+    // Chart 3: same expected-adoption bands + raw founder, plus the adjusted
+    // founder line (implied-share reconciliation + near-term credibility =
+    // founder forecast brought within realistic sector adoption).
+    _renderRevBands('rpt-rev-scurve-chart', revSanC.sanity, 'revScurveProj', 'Industry-Expected Median',
+        {label: 'Founder — reconciled to S-curve', data: revSanC.adjusted_founder, color: '#16a34a'});
 
     // Position sizing charts
     const ps = r.position_sizing || {};

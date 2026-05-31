@@ -1267,28 +1267,10 @@ def _build_revenue_sanity_charts(
         sanity[i] = np.cumsum(a * shares[i] * price_per_unit_m)
     sanity_bands = _pctls(sanity)
 
-    # ── Chart 2: founder projection constrained to the S-curve ───────────────
-    ceiling = pen_hi * tam_millions * price_per_unit_m
+    # ── Chart 2 inputs: founder series + TAM reference ───────────────────────
+    ceiling = pen_hi * tam_millions * price_per_unit_m  # max realistic revenue (ref)
     fr = [max(float(v or 0.0), 0.0) for v in (founder_revenue or [])]
     has_founder = any(v > 0 for v in fr)
-
-    if has_founder:
-        # Least-squares scale per curve: s* = Σ(curve·F) / Σ(curve²) over the
-        # founder window, using only years where both are positive. This pins
-        # the trajectory's scale to the founder's stated revenue while letting
-        # the S-curve dictate the shape (robust to Bass(t=0)=0).
-        n_f = min(len(fr), H + 1)
-        f_win = np.array(fr[:n_f])
-        c_win = curves[:, :n_f]
-        mask = (f_win > 0)[None, :] & (c_win > 0)
-        num = np.where(mask, c_win * f_win[None, :], 0.0).sum(axis=1)
-        den = np.where(mask, c_win * c_win, 0.0).sum(axis=1)
-        scale = np.divide(num, den, out=np.zeros_like(num), where=den > 0)
-        proj = curves * scale[:, None]
-        proj = np.minimum(proj, ceiling)
-        scurve_proj = _pctls(proj)
-    else:
-        scurve_proj = dict(sanity_bands)
 
     # ── Founder overlay + calendar axis ──────────────────────────────────────
     base_yr = entry_year or (fm_calendar_years[0] if fm_calendar_years else None)
@@ -1299,7 +1281,56 @@ def _build_revenue_sanity_charts(
             founder_overlay[i] = round(v, 2) if v > 0 else None
 
     sanity_bands["founder"] = founder_overlay
-    scurve_proj["founder"] = founder_overlay
+
+    # ── Adjusted-founder line: implied share → band position + near-term ─────
+    # credibility. We read off the market share the founder's numbers imply
+    # (least-squares fit onto the S-curve) and place the long-run line WITHIN
+    # the band by it, pivoting on the median: a founder more ambitious than the
+    # sector-typical share (middle of the penetration range) lands in the upper
+    # half (P50→P90), a more conservative one in the lower half (P10→P50) — it
+    # never leaves the band. Near-term we lean on the founder's own numbers,
+    # capped at the realistic P90 ceiling so wild claims can't escape the band,
+    # fading to the placed line over the horizon (credibility scaled by TRL).
+    p10b = sanity_bands["p10"]
+    p50b = sanity_bands["median"]
+    p90b = sanity_bands["p90"]
+    m_median = np.percentile(curves, 50, axis=0)   # adopted market $ (median S-curve)
+    s_mid = 0.5 * (pen_lo + pen_hi)                 # sector-typical share (range middle)
+    adjusted_founder = [None] * (H + 1)
+    implied_share = None
+    overshoot_ratio = None
+    if has_founder:
+        n_fr = min(len(fr), H + 1)
+        fv = np.array(fr[:n_fr])
+        mv = m_median[:n_fr]
+        msk = (fv > 0) & (mv > 0)
+        # implied founder share s_F = Σ F·M / Σ M²  over the founder window
+        s_F = float((fv[msk] * mv[msk]).sum() / (mv[msk] ** 2).sum()) if msk.any() else 0.0
+        implied_share = round(s_F, 5)
+        overshoot_ratio = round(s_F / s_mid, 2) if s_mid > 0 else None
+        # map implied share → band fraction (0 = P10, 0.5 = P50, 1 = P90),
+        # pivoting at the sector-typical share s_mid
+        if s_F <= pen_lo:
+            frac = 0.0
+        elif s_F <= s_mid:
+            frac = 0.5 * (s_F - pen_lo) / (s_mid - pen_lo) if s_mid > pen_lo else 0.5
+        elif s_F < pen_hi:
+            frac = 0.5 + 0.5 * (s_F - s_mid) / (pen_hi - s_mid) if pen_hi > s_mid else 1.0
+        else:
+            frac = 1.0
+        tau_c = 1.0 + trl / 4.0                      # higher TRL → trust founder longer
+        for i in range(H + 1):
+            if frac <= 0.5:
+                r_long = p10b[i] + (frac / 0.5) * (p50b[i] - p10b[i])
+            else:
+                r_long = p50b[i] + ((frac - 0.5) / 0.5) * (p90b[i] - p50b[i])
+            if i < n_fr and fr[i] > 0:
+                f_clip = min(fr[i], p90b[i])
+                a = float(np.exp(-i / tau_c))
+                val = a * f_clip + (1.0 - a) * r_long
+            else:
+                val = r_long
+            adjusted_founder[i] = round(float(max(0.0, min(val, p90b[i]))), 2)
 
     # ── Verdict: founder vs the industry band, year by year ──────────────────
     yby = []
@@ -1369,7 +1400,10 @@ def _build_revenue_sanity_charts(
         "bass_p_mean": p_mean,
         "bass_q_mean": q_mean,
         "sanity": sanity_bands,
-        "scurve_projection": scurve_proj,
+        "adjusted_founder": adjusted_founder,
+        "implied_share": implied_share,
+        "typical_share": round(s_mid, 5),
+        "overshoot_ratio": overshoot_ratio,
         "verdict": {
             "label": label,
             "narrative": narrative,
