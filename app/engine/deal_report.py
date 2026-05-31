@@ -16,7 +16,7 @@ import numpy as np
 from typing import Optional, Tuple
 
 from .monte_carlo import run_simulation
-from .adoption import DEFAULT_BASS_PARAMS, bass_diffusion_cumulative
+from .adoption import DEFAULT_BASS_PARAMS, bass_diffusion_cumulative, TRL_PARAMETERS
 from .valuation_comps import get_comps_for_archetype
 from .market_sizing import get_market_sizing
 from .rvm_carbon import (
@@ -665,6 +665,18 @@ def generate_deal_report(
     }
 
     report["founder_comparison"] = founder_comparison
+    report["revenue_sanity"] = _build_revenue_sanity_charts(
+        archetype=archetype,
+        tam_millions=tam_millions,
+        trl=trl,
+        penetration_share=penetration_share,
+        founder_revenue=founder_revenue_projections,
+        entry_year=entry_year,
+        fm_calendar_years=fm_future_years or None,
+        custom_p=custom_bass_p,
+        custom_q=custom_bass_q,
+        horizon_years=10,
+    )
 
     report["sensitivity"] = sensitivity
 
@@ -1183,6 +1195,188 @@ def _build_scurve_data(archetype, tam_millions, custom_p=None, custom_q=None) ->
         "p90": [round(float(v), 2) for v in np.percentile(curves, 90, axis=0)],
         "bass_p_mean": p_mean,
         "bass_q_mean": q_mean,
+    }
+
+
+def _build_revenue_sanity_charts(
+    archetype, tam_millions, trl, penetration_share,
+    founder_revenue, entry_year=None, fm_calendar_years=None,
+    custom_p=None, custom_q=None, horizon_years=10, price_per_unit_m=1.0,
+) -> dict:
+    """
+    Build the two revenue charts that sanity-check founder projections against
+    the industry S-curve — independent of the returns simulation.
+
+    Chart 1 ("sanity"): P10-P90 revenue bands derived purely from expected
+    market adoption (Bass S-curve increments x penetration share). The founder's
+    projection is overlaid, NOT used to generate the bands — so an unrealistic
+    forecast lands above the band instead of on the median.
+
+    Chart 2 ("scurve_projection"): the founder's projection brought into scope
+    of the S-curve. Each sampled Bass curve is scaled by a least-squares fit to
+    the founder's near-term revenue (anchoring the trajectory's scale), then
+    capped at the TAM penetration ceiling and extended to `horizon_years`.
+
+    Returns a JSON-serialisable dict consumed by the Deal Report frontend.
+    """
+    H = int(horizon_years)
+    t = np.arange(0, H + 1, dtype=float)
+    rng = np.random.default_rng(42)
+
+    # ── Bass parameter family (same source as the adoption S-curve) ──────────
+    if custom_p and custom_q:
+        p_mean, p_std = custom_p
+        q_mean, q_std = custom_q
+    elif archetype in DEFAULT_BASS_PARAMS:
+        prm = DEFAULT_BASS_PARAMS[archetype]
+        p_mean, p_std = prm["p"]
+        q_mean, q_std = prm["q"]
+    else:
+        p_mean, p_std = 0.005, 0.002
+        q_mean, q_std = 0.30, 0.08
+
+    N = 500
+    p_draws = np.clip(rng.normal(p_mean, p_std, N), 0.0005, 0.05)
+    q_draws = np.clip(rng.normal(q_mean, q_std, N), 0.02, 0.8)
+    curves = np.zeros((N, H + 1))
+    for i in range(N):
+        curves[i] = bass_diffusion_cumulative(t, p_draws[i], q_draws[i], tam_millions)
+
+    pen_lo, pen_hi = penetration_share or (0.01, 0.05)
+    lag_mean, lag_std = TRL_PARAMETERS.get(trl, TRL_PARAMETERS[5])["revenue_lag"]
+    lags = np.clip(rng.normal(lag_mean, lag_std, N), 0, H).astype(int)
+    shares = rng.uniform(pen_lo, pen_hi, N)
+
+    def _pctls(arr):
+        return {
+            "p10": [round(float(v), 2) for v in np.percentile(arr, 10, axis=0)],
+            "p25": [round(float(v), 2) for v in np.percentile(arr, 25, axis=0)],
+            "median": [round(float(v), 2) for v in np.percentile(arr, 50, axis=0)],
+            "p75": [round(float(v), 2) for v in np.percentile(arr, 75, axis=0)],
+            "p90": [round(float(v), 2) for v in np.percentile(arr, 90, axis=0)],
+        }
+
+    # ── Chart 1: industry-supported revenue = adoption increments x share ────
+    annual = np.maximum(np.diff(curves, axis=1, prepend=0.0), 0.0)
+    sanity = np.zeros((N, H + 1))
+    for i in range(N):
+        a = annual[i].copy()
+        lg = int(lags[i])
+        if 0 < lg <= H:
+            a[:lg] = 0.0
+        sanity[i] = np.cumsum(a * shares[i] * price_per_unit_m)
+    sanity_bands = _pctls(sanity)
+
+    # ── Chart 2: founder projection constrained to the S-curve ───────────────
+    ceiling = pen_hi * tam_millions * price_per_unit_m
+    fr = [max(float(v or 0.0), 0.0) for v in (founder_revenue or [])]
+    has_founder = any(v > 0 for v in fr)
+
+    if has_founder:
+        # Least-squares scale per curve: s* = Σ(curve·F) / Σ(curve²) over the
+        # founder window, using only years where both are positive. This pins
+        # the trajectory's scale to the founder's stated revenue while letting
+        # the S-curve dictate the shape (robust to Bass(t=0)=0).
+        n_f = min(len(fr), H + 1)
+        f_win = np.array(fr[:n_f])
+        c_win = curves[:, :n_f]
+        mask = (f_win > 0)[None, :] & (c_win > 0)
+        num = np.where(mask, c_win * f_win[None, :], 0.0).sum(axis=1)
+        den = np.where(mask, c_win * c_win, 0.0).sum(axis=1)
+        scale = np.divide(num, den, out=np.zeros_like(num), where=den > 0)
+        proj = curves * scale[:, None]
+        proj = np.minimum(proj, ceiling)
+        scurve_proj = _pctls(proj)
+    else:
+        scurve_proj = dict(sanity_bands)
+
+    # ── Founder overlay + calendar axis ──────────────────────────────────────
+    base_yr = entry_year or (fm_calendar_years[0] if fm_calendar_years else None)
+    calendar_years = [(base_yr + k) if base_yr else k for k in range(H + 1)]
+    founder_overlay = [None] * (H + 1)
+    for i, v in enumerate(fr):
+        if i <= H:
+            founder_overlay[i] = round(v, 2) if v > 0 else None
+
+    sanity_bands["founder"] = founder_overlay
+    scurve_proj["founder"] = founder_overlay
+
+    # ── Verdict: founder vs the industry band, year by year ──────────────────
+    yby = []
+    med, p10b, p90b = sanity_bands["median"], sanity_bands["p10"], sanity_bands["p90"]
+    for i, v in enumerate(fr):
+        if v <= 0 or i > H:
+            continue
+        m, lo, hi = med[i], p10b[i], p90b[i]
+        ratio = (v / m) if m > 0 else None
+        yby.append({
+            "year": i,
+            "calendar_year": calendar_years[i],
+            "founder": round(v, 2),
+            "expected_median": round(m, 2),
+            "p10": round(lo, 2),
+            "p90": round(hi, 2),
+            "ratio_to_median": round(ratio, 2) if ratio is not None else None,
+            "in_band": bool(lo <= v <= hi),
+        })
+
+    ratios = [d["ratio_to_median"] for d in yby if d["ratio_to_median"] is not None]
+    avg_ratio = (sum(ratios) / len(ratios)) if ratios else None
+    in_band_pct = (sum(1 for d in yby if d["in_band"]) / len(yby) * 100) if yby else 0.0
+
+    if not has_founder or avg_ratio is None:
+        label = "No founder revenue to evaluate"
+        narrative = (
+            "No founder revenue projections were supplied, so only the "
+            "industry-expected adoption bands are shown."
+        )
+    elif in_band_pct >= 60:
+        label = "Supported"
+        narrative = (
+            f"Founder projections track the industry S-curve: {in_band_pct:.0f}% of "
+            f"projected years fall within the P10-P90 adoption band "
+            f"(avg {avg_ratio:.1f}x the expected median)."
+        )
+    elif avg_ratio < 0.7:
+        label = "Conservative"
+        narrative = (
+            f"Founder projections sit below the industry-expected median "
+            f"(avg {avg_ratio:.1f}x), implying conservative adoption assumptions."
+        )
+    elif avg_ratio <= 3:
+        label = "Above expected adoption"
+        narrative = (
+            f"Founder projections run above the S-curve-implied band "
+            f"(avg {avg_ratio:.1f}x the expected median; only {in_band_pct:.0f}% of "
+            f"years in-band) — aggressive relative to expected market adoption."
+        )
+    else:
+        label = "Unsupported by expected adoption"
+        narrative = (
+            f"Founder projections are far above what the industry S-curve supports "
+            f"(avg {avg_ratio:.1f}x the expected median) — implausible given realistic "
+            f"TAM penetration."
+        )
+
+    return {
+        "has_data": True,
+        "has_founder": bool(has_founder),
+        "horizon_years": H,
+        "calendar_years": calendar_years,
+        "penetration_share": [pen_lo, pen_hi],
+        "tam_ceiling_m": round(ceiling, 2),
+        "tam_millions": tam_millions,
+        "bass_p_mean": p_mean,
+        "bass_q_mean": q_mean,
+        "sanity": sanity_bands,
+        "scurve_projection": scurve_proj,
+        "verdict": {
+            "label": label,
+            "narrative": narrative,
+            "avg_ratio": round(avg_ratio, 2) if avg_ratio is not None else None,
+            "in_band_pct": round(in_band_pct, 1),
+            "year_by_year": yby,
+        },
     }
 
 

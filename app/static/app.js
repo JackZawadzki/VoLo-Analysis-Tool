@@ -3526,35 +3526,49 @@ function wizRenderReport(r) {
     }
     html += '</div>';
 
-    // ── SECTION 2: S-CURVE & FOUNDER COMPARISON ─────────────────────────────
+    // ── SECTION 2: ADOPTION S-CURVE & REVENUE SANITY CHECK ──────────────────
     const scBp = adoption.scurve?.bass_p_mean;
     const scBq = adoption.scurve?.bass_q_mean;
     const adoptInfo = adoption.adoption_info || {};
+    const revSan = r.revenue_sanity || {};
+    const rsVerdict = revSan.verdict || {};
+    const rsPen = revSan.penetration_share || (ov.penetration_share || [0.01, 0.05]);
+    const verdictColor = {
+        'Supported': '#16a34a',
+        'Conservative': '#2563eb',
+        'Above expected adoption': '#d97706',
+        'Unsupported by expected adoption': '#dc2626',
+    }[rsVerdict.label] || '#6B7280';
     html += `<div class="rpt-section">${secNum()}
-        <h3 class="rpt-section-title">Technology Adoption &amp; Founder Comparison ${infoTip('adoption_scurve')}</h3>
-        <p class="rpt-narrative">S-curve adoption trajectories calibrated from NREL ATB deployment data using Bass diffusion (p=${scBp?.toFixed(4) || 'N/A'}, q=${scBq?.toFixed(3) || 'N/A'}). Revenue simulation cone shows P10-P90 range of ${(sim.n_simulations||5000).toLocaleString()} Monte Carlo paths.</p>
-        ${trace('S-curve and revenue methodology', `
-            <p><strong>Bass diffusion model</strong>: F(t) = M x (1 - e^(-(p+q)t)) / (1 + (q/p) x e^(-(p+q)t)), where M = TAM ($${fmt(ov.tam_millions || 0, 0)}M), p = ${scBp?.toFixed(5) || '?'} (innovation coefficient), q = ${scBq?.toFixed(4) || '?'} (imitation coefficient). Parameters drawn from NREL ATB historical deployment patterns for ${archLabel(ov.archetype)}.</p>
-            <p><strong>Market maturity</strong>: ${adoptInfo.maturity || 'N/A'}. Inflection year: ${adoptInfo.inflection_year || 'N/A'}.</p>
-            <p><strong>Revenue source</strong>: ${revSource === 'founder_anchored'
-                ? 'FOUNDER-ANCHORED. Founder revenue projections are the base trajectory. S-curve Bass parameter draws create a fan of market scenarios that scale founder projections up/down. Beyond the founder projection window, extrapolates at per-path S-curve growth rates.'
-                : 'S-CURVE DERIVED. No valid founder revenue detected. Revenue = annual adoption increments x penetration share (U(' + fmt((ov.penetration_share||[])[0]||0.01,3) + ', ' + fmt((ov.penetration_share||[])[1]||0.05,3) + ')), cumulated. TRL ' + ov.trl + ' revenue lag: ' + (trlImp.revenue_lag_years || '?') + ' years.'
-            }</p>
-            <p><strong>Divergence table</strong>: Founder projections vs. P25-P75 simulation band, year by year.</p>
+        <h3 class="rpt-section-title">Technology Adoption &amp; Revenue Sanity Check ${infoTip('adoption_scurve')}</h3>
+        <p class="rpt-narrative">Founder revenue projections are sanity-checked against the industry S-curve. The probability bands below are generated from expected market adoption (Bass diffusion, p=${scBp?.toFixed(4) || 'N/A'}, q=${scBq?.toFixed(3) || 'N/A'}) and TAM penetration — <em>not</em> from the founder's forecast — so an unrealistic projection lands outside the band rather than on the median.</p>
+        ${trace('Sanity-check methodology', `
+            <p><strong>Bass diffusion model</strong>: F(t) = M x (1 - e^(-(p+q)t)) / (1 + (q/p) x e^(-(p+q)t)), where M = TAM ($${fmt(ov.tam_millions || 0, 0)}M), p = ${scBp?.toFixed(5) || '?'} (innovation), q = ${scBq?.toFixed(4) || '?'} (imitation). Parameters from NREL ATB deployment patterns for ${archLabel(ov.archetype)}. Market maturity: ${adoptInfo.maturity || 'N/A'}; inflection year: ${adoptInfo.inflection_year || 'N/A'}.</p>
+            <p><strong>1. Revenue Projection Sanity Check</strong>: P10-P90 bands = annual adoption increments x penetration share (U(${fmt(rsPen[0],3)}, ${fmt(rsPen[1],3)})), cumulated, with TRL ${ov.trl} revenue lag. Generated from the S-curve alone; the founder's projection is <em>overlaid</em> for comparison. Answers: do founder projections make sense relative to expected adoption?</p>
+            <p><strong>2. S-Curve Revenue Projection</strong>: the founder's projection brought into scope of the S-curve. Each Bass curve is scaled by a least-squares fit to the founder's near-term revenue, capped at the TAM penetration ceiling ($${fmt(revSan.tam_ceiling_m || 0, 1)}M = ${fmt(rsPen[1]*100,1)}% of TAM), and extended to ${revSan.horizon_years || 10} years. Answers: what does the trajectory look like under realistic adoption?</p>
+            <p><strong>Note</strong>: these charts are a presentation-layer sanity check and do not (yet) alter the MOIC/IRR returns model, which still uses the ${revSource === 'founder_anchored' ? 'founder-anchored' : 'S-curve-derived'} revenue.</p>
         `)}
         <div class="rpt-two-col">
             <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Adoption S-Curve (${archLabel(ov.archetype)}) ${infoTip('adoption_scurve')}</h4><canvas id="rpt-scurve-chart" height="300"></canvas></div>
-            <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Revenue Cone vs Founder Projections${fComp.scenario_revenue && Object.keys(fComp.scenario_revenue).length ? ' (w/ Scenarios)' : ''} ${infoTip('revenue_cone')}</h4><canvas id="rpt-revenue-cone-chart" height="300"></canvas></div>
+            <div class="rpt-chart-wrap"><h4 class="rpt-chart-title">Revenue Projection Sanity Check ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-sanity-chart" height="300"></canvas></div>
+        </div>
+        <div class="rpt-chart-wrap" style="margin-top:16px;"><h4 class="rpt-chart-title">S-Curve Revenue Projection (founder forecast constrained to industry adoption, ${revSan.horizon_years || 10}-yr) ${infoTip('revenue_cone')}</h4><canvas id="rpt-rev-scurve-chart" height="300"></canvas></div>`;
+    if (revSan.has_founder && rsVerdict.label) {
+        html += `<div class="rpt-verdict" style="margin-top:14px;padding:10px 14px;border-left:4px solid ${verdictColor};background:#f7f8f5;border-radius:4px;">
+            <span style="font-weight:700;color:${verdictColor};">${rsVerdict.label}</span>
+            <span style="color:#374151;"> &mdash; ${rsVerdict.narrative || ''}</span>
         </div>`;
-    if (fComp.has_data && fComp.revenue) {
-        html += `<p class="rpt-narrative">${fComp.revenue.narrative || ''}</p>
-        <table class="rpt-table"><thead><tr><th>Year</th><th>Founder ($M) ${infoTip('founder_projections')}</th><th>Sim Median ($M) ${infoTip('sim_median')}</th><th>Sim P25 ${infoTip('sim_p25')}</th><th>Sim P75 ${infoTip('sim_p75')}</th><th>Divergence ${infoTip('divergence')}</th><th>In Band ${infoTip('in_band')}</th></tr></thead><tbody>`;
-        (fComp.revenue.year_by_year || []).forEach(y => {
-            const cls = y.in_band ? '' : (y.divergence_pct > 0 ? ' class="rpt-above"' : ' class="rpt-below"');
-            const yearLbl = y.calendar_year || `Y${y.year}`;
-            html += `<tr${cls}><td>${yearLbl}</td><td class="rpt-num">${fmt(y.founder,1)}</td><td class="rpt-num">${fmt(y.simulated_median,1)}</td><td class="rpt-num">${fmt(y.simulated_p25,1)}</td><td class="rpt-num">${fmt(y.simulated_p75,1)}</td><td class="rpt-num">${y.divergence_pct > 0 ? '+' : ''}${fmt(y.divergence_pct,1)}%</td><td>${y.in_band ? 'Yes' : 'No'}</td></tr>`;
-        });
-        html += '</tbody></table>';
+        const yby = rsVerdict.year_by_year || [];
+        if (yby.length) {
+            html += `<table class="rpt-table" style="margin-top:10px;"><thead><tr><th>Year</th><th>Founder ($M) ${infoTip('founder_projections')}</th><th>Expected Median ($M) ${infoTip('sim_median')}</th><th>Expected P10</th><th>Expected P90</th><th>vs Median</th><th>In Band ${infoTip('in_band')}</th></tr></thead><tbody>`;
+            yby.forEach(y => {
+                const cls = y.in_band ? '' : (y.ratio_to_median != null && y.ratio_to_median > 1 ? ' class="rpt-above"' : ' class="rpt-below"');
+                const yearLbl = y.calendar_year || `Y${y.year}`;
+                const ratioTxt = y.ratio_to_median != null ? y.ratio_to_median.toFixed(1) + 'x' : 'N/A';
+                html += `<tr${cls}><td>${yearLbl}</td><td class="rpt-num">${fmt(y.founder,1)}</td><td class="rpt-num">${fmt(y.expected_median,1)}</td><td class="rpt-num">${fmt(y.p10,1)}</td><td class="rpt-num">${fmt(y.p90,1)}</td><td class="rpt-num">${ratioTxt}</td><td>${y.in_band ? 'Yes' : 'No'}</td></tr>`;
+            });
+            html += '</tbody></table>';
+        }
     }
     html += '</div>';
 
@@ -4114,80 +4128,37 @@ function _wizRenderCharts(r) {
         }
     }
 
-    // Revenue cone with founder overlay
-    const revTraj = sim.revenue_trajectories || {};
-    {
-        const ctxRev = document.getElementById('rpt-revenue-cone-chart');
-        if (ctxRev) {
-            const med = revTraj.median || revTraj.p50 || [];
-            const n = med.length;
-            // Anchor X-axis to fund_vintage_year (Year 1 of fund); pad MC data with nulls for deal_offset_years
-            const entryYr = r.deal_overview?.entry_year || new Date().getFullYear();
-            const fundVintageYr = r.deal_overview?.fund_vintage_year || entryYr;
-            const dealOffset = r.deal_overview?.deal_offset_years || 0;
-            const totalN = dealOffset + n;
-            const labels = Array.from({length: totalN}, (_, i) => String(fundVintageYr + i));
-            // Helper: prepend dealOffset nulls to an MC array
-            const padMC = arr => arr ? [...new Array(dealOffset).fill(null), ...arr] : null;
-            const datasets = [];
-            if (revTraj.p90) datasets.push({label:'P90',data:padMC(revTraj.p90),borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:true,pointRadius:0,order:6});
-            if (revTraj.p75) datasets.push({label:'P75',data:padMC(revTraj.p75),borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:true,pointRadius:0,borderWidth:1,order:5});
-            datasets.push({label:'Sim Median',data:padMC(med),borderColor:BLU,fill:false,pointRadius:0,borderWidth:2.5,tension:0.3,order:2});
-            if (revTraj.p25) datasets.push({label:'P25',data:padMC(revTraj.p25),borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:'-1',pointRadius:0,borderWidth:1,order:4});
-            if (revTraj.p10) datasets.push({label:'P10',data:padMC(revTraj.p10),borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:'-1',pointRadius:0,order:6});
-
-            if (fComp.has_data && fComp.revenue?.year_by_year?.length) {
-                // Authoritative calendar years from r.financial_model.fiscal_years (same source as FM summary table)
-                const _rptFm = r.financial_model || {};
-                const _rptFmFiscalYrs = (_rptFm.has_data && _rptFm.fiscal_years?.length)
-                    ? _rptFm.fiscal_years.filter(y => !entryYr || y >= entryYr)
-                    : null;
-                const founderData = new Array(totalN).fill(null);
-                fComp.revenue.year_by_year.forEach((y, i) => {
-                    const calYr = (_rptFmFiscalYrs && i < _rptFmFiscalYrs.length)
-                        ? _rptFmFiscalYrs[i]
-                        : (y.calendar_year || (entryYr + i));
-                    const t = calYr - fundVintageYr;
-                    if (t >= 0 && t < totalN) founderData[t] = y.founder;
-                });
-                datasets.push({label:'Founder Projection (Base)',data:founderData,borderColor:'#dc2626',backgroundColor:'#dc2626',fill:false,pointRadius:5,pointStyle:'circle',borderWidth:3,tension:0.2,order:1});
-            }
-
-            const scenarioRev = fComp.scenario_revenue || {};
-            const scStartYr = fComp.scenario_start_year || entryYr;
-            if (scenarioRev.bear) {
-                const bearData = new Array(totalN).fill(null);
-                scenarioRev.bear.forEach((v, i) => {
-                    const t = (scStartYr - fundVintageYr) + i;
-                    if (t >= 0 && t < totalN && v) bearData[t] = v;
-                });
-                if (bearData.some(v => v != null)) {
-                    datasets.push({label:'Bear Case',data:bearData,borderColor:'#dc3545',backgroundColor:'transparent',fill:false,pointRadius:3,pointStyle:'triangle',borderWidth:2,borderDash:[6,3],tension:0.2,order:1});
-                }
-            }
-            if (scenarioRev.bull) {
-                const bullData = new Array(totalN).fill(null);
-                scenarioRev.bull.forEach((v, i) => {
-                    const t = (scStartYr - fundVintageYr) + i;
-                    if (t >= 0 && t < totalN && v) bullData[t] = v;
-                });
-                if (bullData.some(v => v != null)) {
-                    datasets.push({label:'Bull Case',data:bullData,borderColor:'#007bff',backgroundColor:'transparent',fill:false,pointRadius:3,pointStyle:'triangle',borderWidth:2,borderDash:[6,3],tension:0.2,order:1});
-                }
-            }
-
-            _wizReportCharts.revenueCone = new Chart(ctxRev, {
-                type:'line', data:{labels,datasets},
-                options: chartOpts({
-                    plugins:{legend:{position:'bottom',labels:{font:chartFont,usePointStyle:true,filter:it=>!['P10','P90'].includes(it.text)}}},
-                    scales:{
-                        x:{title:{display:true,text:'Calendar Year',font:chartFont},ticks:{font:chartFont,maxRotation:45,autoSkip:true,maxTicksLimit:10}},
-                        y:{title:{display:true,text:'Revenue ($M)',font:chartFont},beginAtZero:true,ticks:{font:chartFont}}
-                    }
-                })
-            });
+    // Revenue sanity-check charts — industry-S-curve bands with founder overlay.
+    // Both charts share a banded-cone layout; bands come from r.revenue_sanity
+    // (NOT founder-anchored), and the founder line is overlaid for comparison.
+    const revSanC = r.revenue_sanity || {};
+    const _rsLabels = (revSanC.calendar_years || []).map(y => String(y));
+    const _renderRevBands = (canvasId, bands, chartKey, medianLabel) => {
+        const ctx = document.getElementById(canvasId);
+        if (!ctx || !bands || !(bands.median || bands.p50)) return;
+        const med = bands.median || bands.p50 || [];
+        const datasets = [];
+        if (bands.p90) datasets.push({label:'P90',data:bands.p90,borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:true,pointRadius:0,order:6});
+        if (bands.p75) datasets.push({label:'P75',data:bands.p75,borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:true,pointRadius:0,borderWidth:1,order:5});
+        datasets.push({label:medianLabel,data:med,borderColor:BLU,fill:false,pointRadius:0,borderWidth:2.5,tension:0.3,order:2});
+        if (bands.p25) datasets.push({label:'P25',data:bands.p25,borderColor:_c(34,87,122,0.25),backgroundColor:_c(34,87,122,0.12),fill:'-1',pointRadius:0,borderWidth:1,order:4});
+        if (bands.p10) datasets.push({label:'P10',data:bands.p10,borderColor:'transparent',backgroundColor:_c(34,87,122,0.06),fill:'-1',pointRadius:0,order:6});
+        if (bands.founder && bands.founder.some(v => v != null)) {
+            datasets.push({label:'Founder Projection',data:bands.founder,borderColor:'#dc2626',backgroundColor:'#dc2626',fill:false,pointRadius:5,pointStyle:'circle',borderWidth:3,tension:0.2,spanGaps:true,order:1});
         }
-    }
+        _wizReportCharts[chartKey] = new Chart(ctx, {
+            type:'line', data:{labels:_rsLabels,datasets},
+            options: chartOpts({
+                plugins:{legend:{position:'bottom',labels:{font:chartFont,usePointStyle:true,filter:it=>!['P10','P90'].includes(it.text)}}},
+                scales:{
+                    x:{title:{display:true,text:'Calendar Year',font:chartFont},ticks:{font:chartFont,maxRotation:45,autoSkip:true,maxTicksLimit:11}},
+                    y:{title:{display:true,text:'Revenue ($M)',font:chartFont},beginAtZero:true,ticks:{font:chartFont}}
+                }
+            })
+        });
+    };
+    _renderRevBands('rpt-rev-sanity-chart', revSanC.sanity, 'revSanity', 'Industry-Expected Median');
+    _renderRevBands('rpt-rev-scurve-chart', revSanC.scurve_projection, 'revScurveProj', 'S-Curve Projection (Median)');
 
     // Position sizing charts
     const ps = r.position_sizing || {};
