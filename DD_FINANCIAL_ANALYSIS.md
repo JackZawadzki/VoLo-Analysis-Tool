@@ -6,6 +6,53 @@ plus the auto-loaded project memory before changing anything.
 
 ---
 
+## 0. Theory & point — READ THIS FIRST (the most important part)
+
+**The problem it addresses.** Underwriting an early-stage venture means deciding under
+deep uncertainty. A single point-estimate "answer" is false precision. The questions
+that actually matter to an investor are: *what would have to be true for this to be a
+good investment? how sensitive is the outcome to each of those things? and where should
+I spend my diligence and negotiating energy?*
+
+**What the section is for.** It turns an analyst's **judgment** into investment returns
+under three explicit cases (Conservative / Base / Best) built on **one shared set of
+assumptions**, and then makes that reasoning **transparent and stress-testable**. It
+surfaces (a) which assumptions the outcome hinges on, (b) how much of the
+downside↔upside spread each lever owns, and (c) how the outcome travels from Base to
+each case lever-by-lever. It is a **structured-thinking and sensitivity tool, not a
+prediction engine** — its value is rigor and transparency, and the output is exactly as
+good as the analyst's inputs. There is no hidden oracle; the assumptions *are* the model.
+
+**The core theory (the through-line behind every design choice):**
+1. **Three cases bound the uncertainty** without pretending to know a full probability
+   distribution. Conservative/Base/Best is how investors reason about a range.
+2. **"Sensitivity" and "what determines success" are two views of ONE response surface.**
+   Sensitivity = how much the outcome moves when you flex one assumption (a slope).
+   Impact/variance = how much of the total spread each assumption owns. In this
+   deterministic tool, the "variance" is the **Conservative→Best range**, decomposed into
+   per-lever contributions plus an interaction residual (the bridges) — *exact arithmetic,
+   not statistical estimation.* (Tornado bar ∝ slope×range; impact ∝ its square.)
+3. **Deterministic on purpose.** Running the sensitivity/variance engine on a
+   deterministic model (NOT the deal report's Monte Carlo) removes sampling noise — and
+   that noise is exactly what made the deal report's sensitivity untrustworthy. So this
+   section is also a **methodology lab**: prove the clean, honest approach here, then port
+   it into the deal report's Risk/Sensitivity/Variance sections.
+4. **"Which assumptions matter" is metric-relative.** It depends on the outcome you care
+   about (Expected MOIC vs MOIC vs IRR vs DCF vs Cash-to-Breakeven). Hence the
+   primary-metric selector — and why a lever with no effect on the chosen metric is
+   honestly labelled "n/a" rather than hidden or given a fabricated number.
+5. **Everything must mean something.** Each input drives exactly the outputs it
+   mathematically feeds — no decorative inputs, no faked effects. If a number can't be
+   defended by the math, it doesn't belong.
+
+**Why it matters / the bigger goal.** It makes underwriting judgment explicit, comparable
+across cases, and defensible in an IC discussion — and it is the proving ground for the
+sensitivity/variance methodology that will eventually replace the noisier,
+partly-mislabeled versions currently in the deal report. When designing anything here,
+optimise for *clarity and honesty of the analyst's reasoning*, not for more numbers.
+
+---
+
 ## 1. What this section is
 
 An **interactive underwriting tool**. An analyst picks a saved deal report, sets
