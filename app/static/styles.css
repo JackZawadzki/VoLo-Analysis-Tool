@@ -5120,3 +5120,81 @@ h2 .info-tip-body {
     transition: background 0.15s, color 0.15s;
 }
 .memo-sect-btn-lock:hover { background: #5B7744; color: #fff; }
+
+
+/* ── DD Financial Analysis v2 (interactive underwriting) ───────────────────── */
+.dd-deal-strip { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 16px; }
+.dd-deal-chip { background:#f0f4ec; border:1px solid #d8e0cd; color:#3a5228; border-radius:6px; padding:4px 10px; font-size:12px; }
+.dd-empty { padding:48px; text-align:center; color:#6B7280; background:#fafaf8; border:1px dashed #d1d5db; border-radius:10px; }
+
+.dd-global-row { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; margin-bottom:14px; }
+.dd-global-field { display:flex; flex-direction:column; gap:4px; font-size:12px; font-weight:600; color:#374151; }
+.dd-global-field select, .dd-global-field input { font:inherit; font-weight:400; padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; min-width:120px; }
+.dd-global-field input { width:90px; min-width:0; }
+
+/* Core assumption table */
+.dd-assump-table { width:100%; border-collapse:collapse; font-size:13px; }
+.dd-assump-table th, .dd-assump-table td { padding:6px 10px; border-bottom:1px solid #eef0ea; text-align:right; }
+.dd-assump-table thead th { position:sticky; top:0; background:#5B7744; color:#fff; font-size:11px; text-transform:uppercase; letter-spacing:.04em; z-index:1; }
+.dd-assump-table .dd-a-th-label { text-align:left; }
+.dd-a-th-base { background:#4a6337 !important; }
+.dd-a-group td { background:#f0f4ec; color:#3a5228; font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; text-align:left; }
+.dd-a-label { text-align:left; font-weight:600; color:#1f2937; }
+.dd-a-unit { color:#9ca3af; font-weight:400; font-size:11px; }
+.dd-a-current { color:#6B7280; }
+.dd-a-input { width:78px; text-align:right; font:inherit; padding:4px 6px; border:1px solid #d1d5db; border-radius:5px; }
+.dd-a-input:focus { outline:none; border-color:#5B7744; box-shadow:0 0 0 2px rgba(91,119,68,.15); }
+.dd-input-na { background:#f3f4f6; color:#9ca3af; }
+.dd-row-na .dd-a-label, .dd-row-na .dd-a-current { opacity:.45; }
+.dd-a-na { text-align:center; }
+.dd-muted { color:#c0c4bd; }
+.dd-sens-val.pos { color:#16a34a; font-weight:600; } .dd-sens-val.neg { color:#dc2626; font-weight:600; }
+.dd-a-impact { position:relative; min-width:70px; }
+.dd-impact-bar { display:inline-block; height:8px; background:#9bb37e; border-radius:3px; vertical-align:middle; margin-right:6px; }
+.dd-impact-num { font-size:11px; color:#4b5563; }
+
+/* Tornado / impact */
+.dd-two-col-output { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+@media (max-width:1100px){ .dd-two-col-output { grid-template-columns:1fr; } }
+.dd-tornado { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+.dd-torn-row { display:grid; grid-template-columns:160px 1fr 110px; align-items:center; gap:8px; font-size:12px; }
+.dd-torn-label { text-align:right; color:#374151; }
+.dd-torn-track { background:#f1f2ee; border-radius:4px; height:16px; overflow:hidden; }
+.dd-torn-bar { height:100%; border-radius:4px; }
+.dd-torn-bar.pos { background:#5B7744; } .dd-torn-bar.neg { background:#b45309; } .dd-torn-bar.int { background:#9ca3af; }
+.dd-torn-val { text-align:left; font-variant-numeric:tabular-nums; }
+.dd-torn-interaction .dd-torn-label { font-style:italic; color:#6B7280; }
+.dd-help { color:#9ca3af; font-size:11px; font-weight:400; }
+.dd-hero-tag { font-size:10px; color:#6B7280; font-weight:400; }
+
+/* Two-way grid heatmap */
+.dd-grid-table { border-collapse:collapse; font-size:12px; margin-top:8px; }
+.dd-grid-table th { background:#f0f4ec; color:#3a5228; padding:5px 8px; border:1px solid #e5e7eb; font-weight:600; }
+.dd-grid-corner { font-size:10px; color:#6B7280; }
+.dd-grid-cell { padding:6px 10px; border:1px solid rgba(255,255,255,.5); color:#1f2937; text-align:center; font-variant-numeric:tabular-nums; }
+.dd-grid-base { outline:2px solid #1f2937; font-weight:700; }
+
+/* Detail pills */
+.dd-detail-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.dd-scenario-pills { display:flex; gap:6px; }
+.dd-pill { border:1px solid #d1d5db; background:#fff; border-radius:999px; padding:4px 14px; font:inherit; font-size:12px; cursor:pointer; }
+.dd-pill.active { background:#5B7744; color:#fff; border-color:#5B7744; }
+
+/* ── DD v2 additions: case bridges + inert markers ───────────────── */
+.dd-bridges { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+@media (max-width: 980px){ .dd-bridges { grid-template-columns:1fr; } }
+.dd-bridge { border:1px solid #eef1ea; border-radius:8px; padding:10px 12px; }
+.dd-wf-head { font-weight:600; font-size:13px; color:#3a5228; margin-bottom:8px; }
+.dd-wf-row, .dd-wf-anchor { display:grid; grid-template-columns:1fr 80px 80px; align-items:center; gap:8px; font-size:12px; padding:3px 0; }
+.dd-wf-label { color:#374151; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dd-wf-delta { text-align:right; font-weight:600; }
+.dd-wf-pos { color:#15803d; } .dd-wf-neg { color:#b91c1c; }
+.dd-wf-run { text-align:right; color:#6B7280; }
+.dd-wf-anchor { font-weight:700; color:#1f2937; border-top:1px dashed #d8e0cc; border-bottom:1px dashed #d8e0cc; }
+.dd-wf-anchor span:last-child { text-align:right; }
+.dd-wf-anchor.dd-wf-end { background:#f7faf4; border:1px solid #5B7744; border-radius:6px; padding:5px 6px; margin-top:4px; }
+.dd-torn-inert .dd-torn-label { color:#9ca3af; }
+.dd-inert-tag { font-size:10px; color:#9ca3af; font-style:italic; padding-left:2px; }
+
+/* ── DD caveat banner (e.g. DCF indicative warning) ──────────────── */
+.dd-caveat { font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-left:3px solid #d97706; border-radius:6px; padding:8px 12px; margin:0 0 10px; line-height:1.5; }

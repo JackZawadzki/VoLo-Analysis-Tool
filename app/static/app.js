@@ -11572,795 +11572,593 @@ switchTab = function(tab) {
     }
 };
 
-// ══════════════════════════════════════════════════════════════════════
-// DD FINANCIAL ANALYSIS TAB
-// ══════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
+// DD FINANCIAL ANALYSIS — interactive underwriting tool (v2)
+// One core-assumption table → Conservative / Base / Best → Run Simulation →
+// scenario comparison + sensitivity/impact + two-way grid + per-scenario detail.
+// ════════════════════════════════════════════════════════════════════════════
 
 const _dd = {
-    currentScenario: 'conservative',
-    scenarios: {},       // {name: assumptions}
-    results: null,       // last compute result
     reportId: null,
-    reportData: null,    // selected deal report data
-    charts: {},          // Chart.js instances
+    reportData: null,
+    deal: { check_size_m: 2.0, pre_money_m: 15.0, round_size_m: null, exit_year: null },
+    result: null,
+    charts: {},
+    detailScenario: 'base',
 };
 
-// ── Scenario tab switching ────────────────────────────────────────
-function ddSwitchScenario(name) {
-    _dd.currentScenario = name;
-    document.querySelectorAll('.dd-scenario-tab').forEach(t => t.classList.remove('active'));
-    const tab = document.querySelector(`.dd-scenario-tab[data-scenario="${name}"]`);
-    if (tab) tab.classList.add('active');
+// Core assumption schema. dft = [conservative, base, best]. driver:false = excluded
+// from the sensitivity/impact decomposition (structural inputs, not levers).
+const DD_FIELDS = [
+    { group: 'Revenue' },
+    { key: 'revenue_y1_m', label: 'Year-1 Revenue', unit: '$M', step: 0.1, dft: [0.5, 1.0, 1.5] },
+    { key: 'revenue_cagr_pct', label: 'Revenue CAGR', unit: '%', step: 5, dft: [60, 90, 130] },
+    { key: 'time_to_launch_years', label: 'Time to Commercial Launch', unit: 'yrs', step: 0.5, dft: [2, 1, 0] },
+    { key: 'projection_years', label: 'Projection Horizon', unit: 'yrs', step: 1, dft: [8, 8, 8], driver: false },
+    { group: 'Margins & Costs' },
+    { key: 'gross_margin_start_pct', label: 'Gross Margin — start', unit: '%', step: 1, dft: [35, 40, 45] },
+    { key: 'gross_margin_end_pct', label: 'Gross Margin — mature', unit: '%', step: 1, dft: [55, 65, 72] },
+    { key: 'opex_pct_rev', label: 'Operating Expense — start', unit: '% rev', step: 5, dft: [90, 80, 70] },
+    { key: 'opex_end_pct_rev', label: 'Operating Expense — mature', unit: '% rev', step: 1, dft: [35, 25, 18] },
+    { key: 'capex_pct_rev', label: 'Capex Intensity', unit: '% rev', step: 1, dft: [8, 5, 3] },
+    { group: 'Valuation & Exit' },
+    { key: 'exit_multiple', label: 'Exit Multiple', unit: 'x', step: 0.5, dft: [6, 10, 16] },
+    { key: 'discount_rate_pct', label: 'Discount Rate (WACC)', unit: '%', step: 1, dft: [35, 25, 20] },
+    { key: 'terminal_growth_pct', label: 'Terminal Growth', unit: '%', step: 0.5, dft: [2, 3, 3] },
+    { key: 'exit_year', label: 'Exit Year', unit: 'yr · blank = end of horizon', step: 1, dft: ['', '', ''] },
+    { group: 'Risk & Dilution' },
+    { key: 'prob_success_pct', label: 'Probability of Success', unit: '%', step: 5, dft: [35, 60, 85] },
+    { key: 'dilution_per_round_pct', label: 'Dilution per Round', unit: '%', step: 1, dft: [25, 20, 15] },
+    { key: 'future_rounds', label: 'Future Financing Rounds', unit: '#', step: 1, dft: [2, 2, 2], driver: false },
+];
+const DD_CASES = ['conservative', 'base', 'best_case'];
+const DD_CASE_PREFIX = { conservative: 'c', base: 'b', best_case: 'x' };
+const DD_CASE_LABEL = { conservative: 'Conservative', base: 'Base', best_case: 'Best' };
 
-    const editorPanel = document.getElementById('dd-editor-panel');
-    const resultsPanel = document.getElementById('dd-results-panel');
-    const compPanel = document.getElementById('dd-comparison-panel');
-    const dilutionPanel = document.getElementById('dd-dilution-panel');
+// ── helpers ───────────────────────────────────────────────────────
+function _ddFmt(v, dp) {
+    if (v == null || v === '' || isNaN(v)) return '—';
+    const a = Math.abs(v);
+    if (dp != null) return v.toFixed(dp);
+    if (a >= 1000) return v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (a >= 10) return v.toFixed(1);
+    if (a >= 1) return v.toFixed(2);
+    return v.toFixed(3);
+}
+function _ddSignFmt(v, dp) { if (v == null || isNaN(v)) return '—'; return (v >= 0 ? '+' : '') + _ddFmt(v, dp); }
+function _ddCellId(prefix, key) { return `dd-${prefix}-${key}`; }
+function _ddInjectInfoTips() { /* tips are inline in the JS-built table */ }
 
-    if (name === 'comparison') {
-        editorPanel.style.display = 'none';
-        resultsPanel.style.display = 'none';
-        if (dilutionPanel) dilutionPanel.style.display = 'none';
-        compPanel.style.display = _dd.results ? '' : 'none';
-        if (_dd.results) ddRenderComparison();
-    } else {
-        editorPanel.style.display = '';
-        compPanel.style.display = 'none';
-        // Load this scenario's assumptions into the editor
-        ddLoadScenarioToEditor(name);
-        // Show results for this scenario if available
-        if (_dd.results && _dd.results.scenarios && _dd.results.scenarios[name]) {
-            resultsPanel.style.display = '';
-            if (dilutionPanel) dilutionPanel.style.display = '';
-            ddRenderScenarioResults(name);
-        } else {
-            resultsPanel.style.display = 'none';
-            if (dilutionPanel) dilutionPanel.style.display = 'none';
-        }
-    }
+// Authenticated fetch helper — mirrors the app's _rvmToken / Bearer pattern.
+function _apiFetch(url, opts) {
+    opts = opts || {};
+    const headers = Object.assign({}, opts.headers || {});
+    let tok = (typeof _rvmToken !== 'undefined' && _rvmToken) ? _rvmToken : null;
+    try { if (!tok) tok = localStorage.getItem('rvm_token'); } catch (e) {}
+    if (tok) headers['Authorization'] = 'Bearer ' + tok;
+    return fetch(url, Object.assign({}, opts, { headers }));
 }
 
-// ── Load deal reports into the dropdown ────────────────────────────
+// ── Metric formatting (unit-aware: MOIC=x, IRR=%, DCF/Cash=$M) ─────
+const _DD_METRIC_NAME = {
+    expected_moic: 'Expected MOIC', moic: 'MOIC', irr: 'IRR', expected_irr: 'Expected IRR',
+    dcf_value: 'DCF Value', cash_breakeven: 'Cash to Breakeven',
+};
+function _ddMetricName(m) { return _DD_METRIC_NAME[m] || m; }
+function _ddMetricUnit(m) {
+    if (m === 'irr' || m === 'expected_irr') return '%';
+    if (m === 'dcf_value' || m === 'cash_breakeven') return '$M';
+    return 'x';
+}
+function _ddMetricFmt(v, m, signed) {
+    if (v == null || isNaN(v)) return '—';
+    const u = _ddMetricUnit(m);
+    const sign = v < 0 ? '-' : (signed ? '+' : '');   // sign sits before the unit
+    const a = _ddFmt(Math.abs(v), u === 'x' ? 2 : 1);
+    if (u === '$M') return sign + '$' + a + 'M';
+    if (u === '%') return sign + a + '%';
+    return sign + a + 'x';
+}
+
+// Re-run automatically when the metric/basis changes (so the view tracks the choice).
+function _ddMaybeRerun() { if (_dd.result) ddRun(); }
+
+// ── TRL seeder: pre-fill POS + Time-to-Launch from the calibrated TRL tables ──
+function _ddApplyTRL() {
+    const sel = document.getElementById('dd-trl');
+    const note = document.getElementById('dd-trl-note');
+    const trl = sel ? sel.value : '';
+    if (!trl) { if (note) note.textContent = ''; return; }
+    _apiFetch('/api/dd/trl-profile/' + trl).then(r => r.json()).then(data => {
+        if (data.status !== 'ok') return;
+        const p = data.profile;
+        const seed = (key, vals) => {
+            const na = document.getElementById('dd-na-' + key);
+            if (na && na.checked) { na.checked = false; ddToggleNA(key); }
+            DD_CASES.forEach(cs => {
+                const el = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], key));
+                if (el && vals[cs] != null) el.value = vals[cs];
+            });
+        };
+        seed('prob_success_pct', p.prob_success_pct);
+        seed('time_to_launch_years', p.time_to_launch_years);
+        if (note) note.textContent = `Seeded POS & launch from ${p.label}. TRL exit-multiple haircut ≈ ${p.exit_multiple_discount}× (apply to Exit Multiple if desired).`;
+        if (_dd.result) ddRun();
+    }).catch(() => {});
+}
+
+// ── Report loading ────────────────────────────────────────────────
 function ddLoadReports() {
-    const sel = document.getElementById('dd-report-select');
-    if (!sel) return;
     _apiFetch('/api/deal-pipeline/reports')
         .then(r => r.json())
         .then(data => {
-            sel.innerHTML = '<option value="">Select a Deal Report...</option>';
-            (data.reports || []).forEach(rpt => {
-                const opt = document.createElement('option');
-                opt.value = rpt.id;
-                opt.textContent = `${rpt.company_name} — ${rpt.entry_stage} (${rpt.created_at?.split('T')[0] || ''})`;
-                sel.appendChild(opt);
-            });
-        }).catch(() => {});
+            const sel = document.getElementById('dd-report-select');
+            if (!sel) return;
+            const reports = data.reports || data || [];
+            const cur = sel.value;
+            sel.innerHTML = '<option value="">Select a Deal Report…</option>' +
+                reports.map(r => `<option value="${r.id}">${r.company_name || ('Report #' + r.id)}</option>`).join('');
+            if (cur) sel.value = cur;
+        })
+        .catch(() => {});
 }
 
 function ddReportChanged() {
     const sel = document.getElementById('dd-report-select');
-    const id = sel ? parseInt(sel.value) : null;
-    _dd.reportId = id || null;
-    _dd.reportData = null;
-
-    const btns = ['dd-defaults-btn', 'dd-run-btn', 'dd-save-btn'];
-    btns.forEach(b => { const el = document.getElementById(b); if (el) el.disabled = !id; });
-
-    if (id) {
-        _apiFetch(`/api/deal-pipeline/report/${id}`)
-            .then(r => r.json())
-            .then(data => {
-                _dd.reportData = data;
-                // Also try to load saved scenarios
-                ddLoadSavedScenarios(id);
-            }).catch(() => {});
+    const id = sel ? parseInt(sel.value, 10) : NaN;
+    if (!id) {
+        _dd.reportId = null; _dd.reportData = null;
+        document.getElementById('dd-workspace').style.display = 'none';
+        document.getElementById('dd-empty').style.display = '';
+        _ddSetButtons(false);
+        return;
     }
-}
-
-// ── Load default assumptions from backend ─────────────────────────
-function ddLoadDefaults() {
-    const stage = _dd.reportData?.inputs?.entry_stage || 'Seed';
-    _apiFetch('/api/dd/defaults', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entry_stage: stage }),
-    })
-    .then(r => r.json())
-    .then(data => {
-        _dd.scenarios = data;
-        ddLoadScenarioToEditor(_dd.currentScenario);
-    }).catch(e => console.error('DD defaults error', e));
-}
-
-// ── Load saved scenarios ──────────────────────────────────────────
-function ddLoadSavedScenarios(reportId) {
-    _apiFetch(`/api/dd/scenarios/${reportId}`)
+    _apiFetch(`/api/deal-pipeline/report/${id}`)
         .then(r => r.json())
         .then(data => {
-            if (data.count > 0) {
-                _dd.scenarios = data.scenarios;
-                ddLoadScenarioToEditor(_dd.currentScenario);
-            } else {
-                ddLoadDefaults();
+            _dd.reportId = id;
+            _dd.reportData = data;
+            const inp = (data && data.inputs) || {};
+            // deal_overview is nested under report_json (data.report), not top-level.
+            const ov = (data && data.report && data.report.deal_overview) || data.deal_overview || {};
+            _dd.overview = ov;
+            _dd.deal = {
+                check_size_m: inp.check_size_millions || ov.check_size_millions || 2.0,
+                pre_money_m: inp.pre_money_millions || ov.pre_money_millions || 15.0,
+                round_size_m: inp.round_size_m || ov.round_size_m || null,
+                exit_year: null,
+            };
+            _ddRenderDealStrip();
+            ddBuildTable();
+            // Seed the TRL selector (and POS/launch defaults) from the report's TRL.
+            const trl = ov.trl || inp.trl;
+            const trlSel = document.getElementById('dd-trl');
+            if (trlSel) {
+                trlSel.value = trl ? String(trl) : '';
+                if (trl) _ddApplyTRL();
             }
-        }).catch(() => ddLoadDefaults());
+            document.getElementById('dd-empty').style.display = 'none';
+            document.getElementById('dd-workspace').style.display = '';
+            document.getElementById('dd-outputs').style.display = 'none';
+            _ddSetButtons(true);
+        })
+        .catch(e => alert('Could not load report: ' + e.message));
 }
 
-// ── Editor ↔ Scenario Data Binding ────────────────────────────────
-function ddLoadScenarioToEditor(name) {
-    const a = _dd.scenarios[name];
-    if (!a) return;
-    _ddSet('dd-time-to-launch', a.time_to_launch_years || 0);
-    _ddSet('dd-revenue-y1', a.revenue_y1_m);
-    _ddSet('dd-revenue-cagr', a.revenue_cagr_pct);
-    _ddSet('dd-proj-years', a.projection_years);
-    _ddSet('dd-custom-rev', '');
-    _ddSet('dd-gm-start', a.gross_margin_start_pct);
-    _ddSet('dd-gm-end', a.gross_margin_end_pct);
-    _ddSet('dd-rd-start', a.opex_rd_pct_rev);
-    _ddSet('dd-rd-end', a.opex_rd_end_pct_rev);
-    _ddSet('dd-sm-start', a.opex_sm_pct_rev);
-    _ddSet('dd-sm-end', a.opex_sm_end_pct_rev);
-    _ddSet('dd-ga-start', a.opex_ga_pct_rev);
-    _ddSet('dd-ga-end', a.opex_ga_end_pct_rev);
-    _ddSet('dd-da-pct', a.da_pct_rev);
-    _ddSet('dd-exit-type', a.exit_multiple_type || 'ev_revenue');
-    _ddSet('dd-exit-mult', a.exit_multiple);
-    _ddSet('dd-discount', a.discount_rate_pct);
-    _ddSet('dd-terminal-g', a.terminal_growth_pct);
-    _ddSet('dd-tax', a.tax_rate_pct);
-    _ddSet('dd-capex', a.capex_pct_rev);
-    _ddSet('dd-nwc', a.nwc_pct_rev);
-    _ddSet('dd-dilution-rounds', a.future_rounds || 2);
-    _ddSet('dd-dilution-pct', a.dilution_per_round_pct || 20);
-    // Fundraising plan
-    _ddRenderFundraisingPlan(a.fundraising_plan || []);
-}
-
-function ddReadEditorToScenario() {
-    return {
-        time_to_launch_years: _ddNum('dd-time-to-launch', 0),
-        projection_years: _ddNum('dd-proj-years', 10),
-        revenue_y1_m: _ddNum('dd-revenue-y1', 1),
-        revenue_cagr_pct: _ddNum('dd-revenue-cagr', 100),
-        gross_margin_start_pct: _ddNum('dd-gm-start', 40),
-        gross_margin_end_pct: _ddNum('dd-gm-end', 65),
-        opex_rd_pct_rev: _ddNum('dd-rd-start', 50),
-        opex_sm_pct_rev: _ddNum('dd-sm-start', 30),
-        opex_ga_pct_rev: _ddNum('dd-ga-start', 15),
-        opex_rd_end_pct_rev: _ddNum('dd-rd-end', 15),
-        opex_sm_end_pct_rev: _ddNum('dd-sm-end', 12),
-        opex_ga_end_pct_rev: _ddNum('dd-ga-end', 7),
-        da_pct_rev: _ddNum('dd-da-pct', 3),
-        capex_pct_rev: _ddNum('dd-capex', 5),
-        nwc_pct_rev: _ddNum('dd-nwc', 10),
-        tax_rate_pct: _ddNum('dd-tax', 0),
-        terminal_growth_pct: _ddNum('dd-terminal-g', 3),
-        discount_rate_pct: _ddNum('dd-discount', 25),
-        exit_multiple_type: _ddVal('dd-exit-type') || 'ev_revenue',
-        exit_multiple: _ddNum('dd-exit-mult', 10),
-        scenario: _dd.currentScenario,
-        fundraising_plan: _ddReadFundraisingPlan(),
-    };
-}
-
-function _ddSet(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
-function _ddVal(id) { const el = document.getElementById(id); return el ? el.value : ''; }
-function _ddNum(id, def) { const v = parseFloat(_ddVal(id)); return isNaN(v) ? def : v; }
-
-// ── Run Analysis ──────────────────────────────────────────────────
-function ddRunAnalysis() {
-    // Save current editor state to current scenario
-    _dd.scenarios[_dd.currentScenario] = ddReadEditorToScenario();
-
-    // Make sure all three scenarios exist (use defaults for missing)
-    ['conservative', 'base', 'best_case'].forEach(s => {
-        if (!_dd.scenarios[s]) {
-            const stage = _dd.reportData?.inputs?.entry_stage || 'Seed';
-            // We'll let the backend fill missing
-        }
+function _ddSetButtons(on) {
+    ['dd-run-btn', 'dd-defaults-btn'].forEach(id => {
+        const b = document.getElementById(id); if (b) b.disabled = !on;
     });
+}
 
-    // Parse custom revenues
-    const customRevenues = {};
-    const crInput = _ddVal('dd-custom-rev').trim();
-    if (crInput) {
-        const revs = crInput.split(',').map(v => { const n = parseFloat(v.trim()); return isNaN(n) ? null : n; });
-        customRevenues[_dd.currentScenario] = revs;
+function _ddRenderDealStrip() {
+    const el = document.getElementById('dd-deal-strip');
+    if (!el) return;
+    const d = _dd.deal;
+    const inp = (_dd.reportData && _dd.reportData.inputs) || {};
+    const ev = _dd.overview || {};
+    const company = (_dd.reportData && _dd.reportData.company_name) || inp.company_name || ev.company_name || 'Company';
+    const stage = (_dd.reportData && _dd.reportData.entry_stage) || inp.entry_stage || ev.entry_stage || '—';
+    el.innerHTML = `
+        <span class="dd-deal-chip"><b>${company}</b></span>
+        <span class="dd-deal-chip">Stage: ${stage}</span>
+        <span class="dd-deal-chip">Check: $${_ddFmt(d.check_size_m)}M</span>
+        <span class="dd-deal-chip">Pre-money: $${_ddFmt(d.pre_money_m)}M</span>
+        ${d.round_size_m ? `<span class="dd-deal-chip">Round: $${_ddFmt(d.round_size_m)}M</span>` : ''}`;
+}
+
+// ── Build the core assumption table ───────────────────────────────
+function _ddCurrentValue(key) {
+    // "Current" reference value pulled from the deal report where one exists.
+    const inp = (_dd.reportData && _dd.reportData.inputs) || {};
+    const ov = _dd.overview || {};
+    if (key === 'exit_multiple') {
+        const r = ov.exit_multiple_range || inp.exit_multiple_range;
+        if (Array.isArray(r) && r.length === 2) return ((r[0] + r[1]) / 2);
+        if (ov.exit_multiple != null) return ov.exit_multiple;
     }
-
-    const inputs = _dd.reportData?.inputs || {};
-    const payload = {
-        report_id: _dd.reportId,
-        entry_stage: inputs.entry_stage || 'Seed',
-        check_size_m: inputs.check_size_millions || 2.0,
-        pre_money_m: inputs.pre_money_millions || 15.0,
-        round_size_m: inputs.round_size_m || null,
-        exit_year: null,
-        dilution_per_round_pct: _ddNum('dd-dilution-pct', 20),
-        future_rounds: _ddNum('dd-dilution-rounds', 2),
-        scenarios: _dd.scenarios,
-        custom_revenues: Object.keys(customRevenues).length ? customRevenues : null,
-        fundraising_plans: _ddBuildFundraisingPlans(),
-    };
-
-    const runBtn = document.getElementById('dd-run-btn');
-    if (runBtn) { runBtn.disabled = true; runBtn.textContent = 'Computing...'; }
-
-    _apiFetch('/api/dd/compute', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            _dd.results = data.result;
-            ddSwitchScenario(_dd.currentScenario);
-        } else {
-            alert('Analysis failed: ' + (data.detail || 'Unknown error'));
-        }
-    })
-    .catch(e => alert('Analysis error: ' + e.message))
-    .finally(() => {
-        if (runBtn) { runBtn.disabled = false; runBtn.textContent = 'Run Analysis'; }
-    });
+    if (key === 'discount_rate_pct' && ov.discount_rate_pct != null) return ov.discount_rate_pct;
+    return null;
 }
 
-// ── Save Scenarios ────────────────────────────────────────────────
-function ddSaveScenarios() {
-    if (!_dd.reportId) return;
-    // Capture current editor state
-    _dd.scenarios[_dd.currentScenario] = ddReadEditorToScenario();
-
-    const payload = {
-        report_id: _dd.reportId,
-        scenarios: _dd.scenarios,
-        deal_params: {
-            check_size_m: _dd.reportData?.inputs?.check_size_millions || 2.0,
-            pre_money_m: _dd.reportData?.inputs?.pre_money_millions || 15.0,
-        },
-        notes: '',
-    };
-
-    _apiFetch('/api/dd/scenarios', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            const btn = document.getElementById('dd-save-btn');
-            if (btn) { btn.textContent = 'Saved!'; setTimeout(() => btn.textContent = 'Save', 2000); }
-        }
-    }).catch(e => alert('Save failed: ' + e.message));
-}
-
-// ── Render Single Scenario Results ────────────────────────────────
-function ddRenderScenarioResults(name) {
-    const s = _dd.results.scenarios[name];
-    if (!s) return;
-    const pnl = s.pnl;
-    const ret = s.returns;
-
-    // Hero metrics
-    const heroEl = document.getElementById('dd-hero');
-    const moicClass = ret.moic >= 3 ? 'dd-positive' : ret.moic < 1 ? 'dd-negative' : '';
-    const prelaunch = pnl.pre_launch_years || 0;
-    const bridgeDelay = ret.bridge_delay_years || 0;
-    const totalHold = ret.hold_years_total || (ret.exit_year + prelaunch);
-    const holdParts = [];
-    if (prelaunch > 0) holdParts.push(`${prelaunch}yr pre-launch`);
-    if (bridgeDelay > 0) holdParts.push(`${bridgeDelay}yr bridge delay`);
-    const holdSub = holdParts.length > 0 ? ` (${holdParts.join(' + ')})` : '';
-    heroEl.innerHTML = `
-        <div class="dd-hero-card dd-hero-highlight">
-            <div class="dd-hero-label">Implied MOIC</div>
-            <div class="dd-hero-value ${moicClass}">${ret.moic.toFixed(1)}x</div>
-            <div class="dd-hero-sub">${totalHold}yr hold${holdSub}</div>
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">Implied IRR</div>
-            <div class="dd-hero-value">${ret.irr_pct.toFixed(1)}%</div>
-            ${bridgeDelay > 0 ? `<div class="dd-hero-sub dd-warn">bridge adds +${bridgeDelay}yr</div>` : ''}
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">Exit EV</div>
-            <div class="dd-hero-value">$${_ddFmt(ret.exit_ev_m)}M</div>
-            <div class="dd-hero-sub">${s.assumptions.exit_multiple_type === 'ev_ebitda' ? 'EV/EBITDA' : 'EV/Rev'} × ${s.assumptions.exit_multiple}</div>
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">DCF Value</div>
-            <div class="dd-hero-value">$${_ddFmt(pnl.enterprise_value)}M</div>
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">Exit Revenue</div>
-            <div class="dd-hero-value">$${_ddFmt(pnl.revenue[pnl.revenue.length - 1])}M</div>
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">Exit EBITDA Margin</div>
-            <div class="dd-hero-value">${pnl.ebitda_margin_pct[pnl.ebitda_margin_pct.length - 1].toFixed(1)}%</div>
-        </div>
-        <div class="dd-hero-card">
-            <div class="dd-hero-label">Entry Ownership</div>
-            <div class="dd-hero-value">${ret.entry_ownership_pct.toFixed(1)}%</div>
-            <div class="dd-hero-sub">→ ${ret.exit_ownership_pct.toFixed(1)}% at exit</div>
-        </div>
-    `;
-
-    // Render dilution waterfall if schedule exists
-    _ddRenderDilutionWaterfall(ret);
-
-    // P&L table
-    ddRenderPnlTable(pnl, 'dd-pnl-table');
-
-    // Charts
-    ddRenderScenarioCharts(pnl, name);
-}
-
-function ddRenderPnlTable(pnl, tableId) {
-    const tbl = document.getElementById(tableId);
+function ddBuildTable(preset) {
+    const tbl = document.getElementById('dd-assump-table');
     if (!tbl) return;
-    const yrs = pnl.years;
-    const prelaunch = pnl.pre_launch_years || 0;
-    const hdr = '<tr><th>Line Item</th>' + yrs.map(y => {
-        if (y <= prelaunch) return `<th class="dd-prelaunch-hdr">Pre-L ${y}</th>`;
-        return `<th>Yr ${y - prelaunch}</th>`;
-    }).join('') + '</tr>';
-    const rows = [
-        { label: 'Revenue', data: pnl.revenue, cls: 'dd-row-header' },
-        { label: 'COGS', data: pnl.cogs, neg: true },
-        { label: 'Gross Profit', data: pnl.gross_profit, cls: 'dd-row-subtotal' },
-        { label: 'Gross Margin %', data: pnl.gross_margin_pct, pct: true },
-        { label: 'R&D', data: pnl.opex_rd, neg: true },
-        { label: 'Sales & Marketing', data: pnl.opex_sm, neg: true },
-        { label: 'G&A', data: pnl.opex_ga, neg: true },
-        { label: 'EBITDA', data: pnl.ebitda, cls: 'dd-row-subtotal' },
-        { label: 'EBITDA Margin %', data: pnl.ebitda_margin_pct, pct: true },
-        { label: 'D&A', data: pnl.da, neg: true },
-        { label: 'EBIT', data: pnl.ebit },
-        { label: 'Taxes', data: pnl.taxes, neg: true },
-        { label: 'Net Income', data: pnl.net_income, cls: 'dd-row-subtotal' },
-        { label: 'CapEx', data: pnl.capex, neg: true },
-        { label: 'Δ Working Capital', data: pnl.delta_nwc, neg: true },
-        { label: 'Free Cash Flow', data: pnl.fcf, cls: 'dd-row-total' },
-    ];
+    let html = `<thead><tr>
+        <th class="dd-a-th-label">Assumption</th>
+        <th>Current</th>
+        <th class="dd-a-th-case">Conservative</th>
+        <th class="dd-a-th-case dd-a-th-base">Base</th>
+        <th class="dd-a-th-case">Best</th>
+        <th>Sensitivity</th>
+        <th>Impact</th>
+        <th>N/A</th>
+    </tr></thead><tbody>`;
 
-    let html = '<thead>' + hdr + '</thead><tbody>';
-    for (const row of rows) {
-        const cls = row.cls ? ` class="${row.cls}"` : '';
-        html += `<tr${cls}><td>${row.label}</td>`;
-        for (const val of row.data) {
-            const isNeg = val < 0;
-            const cellCls = row.pct ? 'dd-pct' : (isNeg ? 'dd-neg' : '');
-            const display = row.pct ? `${val.toFixed(1)}%` : _ddFmt(val);
-            html += `<td class="${cellCls}">${display}</td>`;
-        }
-        html += '</tr>';
+    for (const f of DD_FIELDS) {
+        if (f.group) { html += `<tr class="dd-a-group"><td colspan="8">${f.group}</td></tr>`; continue; }
+        const cur = _ddCurrentValue(f.key);
+        const vals = (preset && preset[f.key]) || f.dft;
+        const inputs = DD_CASES.map((cs, i) => {
+            const pid = _ddCellId(DD_CASE_PREFIX[cs], f.key);
+            return `<td><input class="dd-a-input" id="${pid}" type="number" step="${f.step}" value="${vals[i]}" oninput="_ddOnEdit()"></td>`;
+        }).join('');
+        html += `<tr data-key="${f.key}">
+            <td class="dd-a-label">${f.label} <span class="dd-a-unit">${f.unit}</span></td>
+            <td class="dd-a-current">${cur != null ? _ddFmt(cur) : '<span class="dd-muted">—</span>'}</td>
+            ${inputs}
+            <td class="dd-a-sens" id="dd-sens-${f.key}"><span class="dd-muted">—</span></td>
+            <td class="dd-a-impact" id="dd-impact-${f.key}"><span class="dd-muted">—</span></td>
+            <td class="dd-a-na"><input type="checkbox" id="dd-na-${f.key}" onchange="ddToggleNA('${f.key}')" ${f.driver === false ? '' : ''}></td>
+        </tr>`;
     }
     html += '</tbody>';
     tbl.innerHTML = html;
 }
 
-function _ddFmt(v) {
-    if (v == null || isNaN(v)) return '-';
-    const abs = Math.abs(v);
-    if (abs >= 1000) return (v < 0 ? '(' : '') + abs.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (v < 0 ? ')' : '');
-    if (abs >= 10) return v.toFixed(1);
-    if (abs >= 1) return v.toFixed(2);
-    return v.toFixed(3);
+function ddToggleNA(key) {
+    const on = document.getElementById('dd-na-' + key).checked;
+    DD_CASES.forEach(cs => {
+        const inp = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], key));
+        if (inp) { inp.disabled = on; inp.classList.toggle('dd-input-na', on); }
+    });
+    const row = document.querySelector(`#dd-assump-table tr[data-key="${key}"]`);
+    if (row) row.classList.toggle('dd-row-na', on);
 }
 
-// ── Scenario Charts ───────────────────────────────────────────────
-function ddRenderScenarioCharts(pnl, name) {
-    const prelaunch = pnl.pre_launch_years || 0;
-    const labels = pnl.years.map(y => y <= prelaunch ? `Pre-L ${y}` : `Yr ${y - prelaunch}`);
-    const base = { tension: 0.3, pointRadius: 3, borderWidth: 2 };
+function ddResetDefaults() { ddBuildTable(); document.getElementById('dd-outputs').style.display = 'none'; }
 
-    // Destroy old charts
-    Object.values(_dd.charts).forEach(c => { try { c.destroy(); } catch(e) {} });
-    _dd.charts = {};
+function _ddOnEdit() { /* live-edit hook (kept light; results refresh on Run) */ }
 
-    // Revenue & EBITDA
-    _dd.charts.revEbitda = new Chart(document.getElementById('dd-chart-rev-ebitda'), {
-        type: 'line', data: {
-            labels,
-            datasets: [
-                { ...base, label: 'Revenue', data: pnl.revenue, borderColor: VOLO.green, backgroundColor: VOLO.greenLight },
-                { ...base, label: 'EBITDA', data: pnl.ebitda, borderColor: VOLO.blueSteel, backgroundColor: VOLO.blueSteelLight },
-            ]
-        },
-        options: _ddChartOpts('$M'),
-    });
-
-    // Margins
-    _dd.charts.margins = new Chart(document.getElementById('dd-chart-margins'), {
-        type: 'line', data: {
-            labels,
-            datasets: [
-                { ...base, label: 'Gross Margin %', data: pnl.gross_margin_pct, borderColor: VOLO.green },
-                { ...base, label: 'EBITDA Margin %', data: pnl.ebitda_margin_pct, borderColor: VOLO.blueSteel },
-            ]
-        },
-        options: _ddChartOpts('%'),
-    });
-
-    // FCF
-    _dd.charts.fcf = new Chart(document.getElementById('dd-chart-fcf'), {
-        type: 'bar', data: {
-            labels,
-            datasets: [{
-                label: 'Free Cash Flow',
-                data: pnl.fcf,
-                backgroundColor: pnl.fcf.map(v => v >= 0 ? 'rgba(91,119,68,0.6)' : 'rgba(220,53,69,0.5)'),
-                borderColor: pnl.fcf.map(v => v >= 0 ? 'rgba(91,119,68,1)' : 'rgba(220,53,69,0.8)'),
-                borderWidth: 1,
-            }]
-        },
-        options: _ddChartOpts('$M'),
-    });
-
-    // OpEx breakdown
-    const totalRev = pnl.revenue;
-    _dd.charts.opex = new Chart(document.getElementById('dd-chart-opex'), {
-        type: 'bar', data: {
-            labels,
-            datasets: [
-                { label: 'R&D %', data: pnl.opex_rd.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(91,119,68,0.7)' },
-                { label: 'S&M %', data: pnl.opex_sm.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(157,181,196,0.7)' },
-                { label: 'G&A %', data: pnl.opex_ga.map((v, i) => totalRev[i] > 0 ? (v / totalRev[i] * 100) : 0), backgroundColor: 'rgba(44,62,80,0.4)' },
-            ]
-        },
-        options: { ..._ddChartOpts('%'), scales: { x: { stacked: true }, y: { stacked: true, title: { display: true, text: '% of Revenue' } } } },
-    });
-}
-
-function _ddChartOpts(yLabel) {
-    return {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
-        scales: { y: { title: { display: true, text: yLabel } } },
-    };
-}
-
-// ── Comparison View ───────────────────────────────────────────────
-function ddRenderComparison() {
-    if (!_dd.results) return;
-    const comp = _dd.results.comparison;
-    const scenarios = comp.scenarios;
-
-    // Hero comparison
-    const heroEl = document.getElementById('dd-comp-hero');
-    let heroHtml = '';
-    for (const s of scenarios) {
-        const label = s === 'conservative' ? 'Conservative' : s === 'base' ? 'Base Case' : 'Best Case';
-        const moic = comp.moic[s] || 0;
-        const bridgeD = comp.bridge_delay[s] || 0;
-        const holdYrs = comp.hold_years[s] || 0;
-        const cls = moic >= 3 ? 'dd-positive' : moic < 1 ? 'dd-negative' : '';
-        heroHtml += `
-            <div class="dd-hero-card">
-                <div class="dd-hero-label">${label} MOIC</div>
-                <div class="dd-hero-value ${cls}">${moic.toFixed(1)}x</div>
-                <div class="dd-hero-sub">IRR: ${(comp.irr[s] || 0).toFixed(1)}% · ${holdYrs}yr hold${bridgeD > 0 ? ` (${bridgeD}yr bridge)` : ''}</div>
-            </div>`;
-    }
-    heroEl.innerHTML = heroHtml;
-
-    // Comparison charts
-    Object.values(_dd.charts).forEach(c => { try { c.destroy(); } catch(e) {} });
-    _dd.charts = {};
-
-    const colors = { conservative: '#dc2626', base: '#5b7744', best_case: '#1e40af' };
-    const labels_map = { conservative: 'Conservative', base: 'Base Case', best_case: 'Best Case' };
-
-    // Get year labels from first available scenario
-    const firstKey = scenarios[0];
-    const yrs = _dd.results.scenarios[firstKey]?.pnl?.years || [];
-    const yearLabels = yrs.map(y => `Yr ${y}`);
-
-    // Revenue comparison
-    const revDatasets = scenarios.map(s => ({
-        label: labels_map[s],
-        data: _dd.results.scenarios[s]?.pnl?.revenue || [],
-        borderColor: colors[s],
-        backgroundColor: colors[s] + '22',
-        tension: 0.3, pointRadius: 3, borderWidth: 2, fill: true,
-    }));
-    _dd.charts.compRev = new Chart(document.getElementById('dd-chart-comp-rev'), {
-        type: 'line', data: { labels: yearLabels, datasets: revDatasets },
-        options: _ddChartOpts('Revenue ($M)'),
-    });
-
-    // EBITDA comparison
-    const ebitdaDatasets = scenarios.map(s => ({
-        label: labels_map[s],
-        data: _dd.results.scenarios[s]?.pnl?.ebitda || [],
-        borderColor: colors[s],
-        backgroundColor: colors[s] + '22',
-        tension: 0.3, pointRadius: 3, borderWidth: 2, fill: true,
-    }));
-    _dd.charts.compEbitda = new Chart(document.getElementById('dd-chart-comp-ebitda'), {
-        type: 'line', data: { labels: yearLabels, datasets: ebitdaDatasets },
-        options: _ddChartOpts('EBITDA ($M)'),
-    });
-
-    // MOIC bar chart
-    _dd.charts.compMoic = new Chart(document.getElementById('dd-chart-comp-moic'), {
-        type: 'bar', data: {
-            labels: scenarios.map(s => labels_map[s]),
-            datasets: [{ label: 'MOIC', data: scenarios.map(s => comp.moic[s] || 0),
-                backgroundColor: scenarios.map(s => colors[s] + 'aa'), borderColor: scenarios.map(s => colors[s]), borderWidth: 1 }]
-        },
-        options: { ..._ddChartOpts('MOIC (x)'), plugins: { legend: { display: false } } },
-    });
-
-    // IRR bar chart
-    _dd.charts.compIrr = new Chart(document.getElementById('dd-chart-comp-irr'), {
-        type: 'bar', data: {
-            labels: scenarios.map(s => labels_map[s]),
-            datasets: [{ label: 'IRR %', data: scenarios.map(s => comp.irr[s] || 0),
-                backgroundColor: scenarios.map(s => colors[s] + 'aa'), borderColor: scenarios.map(s => colors[s]), borderWidth: 1 }]
-        },
-        options: { ..._ddChartOpts('IRR (%)'), plugins: { legend: { display: false } } },
-    });
-
-    // Comparison summary table
-    const tbl = document.getElementById('dd-comp-table');
-    if (tbl) {
-        let html = '<thead><tr><th>Metric</th>';
-        for (const s of scenarios) html += `<th>${labels_map[s]}</th>`;
-        html += '</tr></thead><tbody>';
-
-        const metrics = [
-            ['Exit Revenue ($M)', s => _ddFmt(comp.exit_year_revenue[s])],
-            ['Exit EBITDA ($M)', s => _ddFmt(comp.exit_year_ebitda[s])],
-            ['Exit EBITDA Margin', s => (comp.exit_year_ebitda_margin[s] || 0).toFixed(1) + '%'],
-            ['Exit EV ($M)', s => _ddFmt(comp.exit_ev[s])],
-            ['DCF EV ($M)', s => _ddFmt(comp.dcf_ev[s])],
-            ['MOIC', s => (comp.moic[s] || 0).toFixed(1) + 'x'],
-            ['IRR', s => (comp.irr[s] || 0).toFixed(1) + '%'],
-            ['Exit Ownership', s => (comp.exit_ownership[s] || 0).toFixed(1) + '%'],
-            ['Hold Period (yr)', s => (comp.hold_years[s] || 0).toFixed(1)],
-            ['Bridge Delay (yr)', s => (comp.bridge_delay[s] || 0).toFixed(1)],
-        ];
-
-        for (const [label, fn] of metrics) {
-            html += `<tr><td>${label}</td>`;
-            for (const s of scenarios) html += `<td>${fn(s)}</td>`;
-            html += '</tr>';
+// ── Read the table into scenario dicts ────────────────────────────
+function _ddReadScenarios() {
+    const exitType = (document.getElementById('dd-exit-type') || {}).value || 'ev_revenue';
+    const scenarios = {};
+    for (const cs of DD_CASES) {
+        const a = { exit_multiple_type: exitType };
+        for (const f of DD_FIELDS) {
+            if (f.group) continue;
+            const naEl = document.getElementById('dd-na-' + f.key);
+            if (naEl && naEl.checked) { a[f.key] = null; continue; }
+            const inp = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], f.key));
+            if (!inp || inp.value === '') { a[f.key] = null; continue; }
+            const v = parseFloat(inp.value);
+            a[f.key] = isNaN(v) ? null : v;
         }
-        html += '</tbody>';
-        tbl.innerHTML = html;
+        scenarios[cs] = a;
     }
+    return scenarios;
 }
 
-// ── Info-tip injection for DD labels ──────────────────────────────
-// ── Fundraising Plan UI ───────────────────────────────────────────
-function _ddRenderFundraisingPlan(plan) {
-    const container = document.getElementById('dd-fundraising-rounds');
-    if (!container) return;
-    container.innerHTML = '';
-    if (!plan || plan.length === 0) {
-        plan = [{ label: 'Series A', year: 2, dilution_pct: 20, needs_bridge: false, bridge_dilution_pct: 8, bridge_delay_years: 0.5 }];
-    }
-    plan.forEach((rnd, idx) => {
-        container.appendChild(_ddCreateRoundRow(rnd, idx));
-    });
-    _ddReindexRounds();
-}
-
-function _ddCreateRoundRow(rnd, idx) {
-    const div = document.createElement('div');
-    div.className = 'dd-fundraising-round';
-    div.dataset.roundIdx = idx;
-    const bridgeChecked = rnd.needs_bridge ? 'checked' : '';
-    const bridgeVis = rnd.needs_bridge ? '' : 'style="display:none"';
-    div.innerHTML = `
-        <div class="dd-round-header">
-            <span class="dd-round-num">#${idx + 1}</span>
-            <button class="dd-round-remove" title="Remove round" onclick="_ddRemoveRound(${idx})">×</button>
-        </div>
-        <div class="dd-field-row">
-            <div class="dd-field dd-field-sm">
-                <label data-tip="dd_round_label">Round</label>
-                <input type="text" class="dd-fp-label" value="${rnd.label || 'Round'}" placeholder="e.g. Series A">
-            </div>
-            <div class="dd-field dd-field-sm">
-                <label data-tip="dd_round_year">Year</label>
-                <input type="number" class="dd-fp-year" value="${rnd.year || 2}" step="1" min="1" max="15">
-            </div>
-            <div class="dd-field dd-field-sm">
-                <label data-tip="dd_round_dilution">Dilution %</label>
-                <input type="number" class="dd-fp-dilution" value="${rnd.dilution_pct || 20}" step="1" min="0" max="50">
-            </div>
-        </div>
-        <div class="dd-field-row dd-bridge-row">
-            <div class="dd-field dd-field-sm">
-                <label data-tip="dd_needs_bridge">
-                    <input type="checkbox" class="dd-fp-bridge-toggle" ${bridgeChecked} onchange="_ddToggleBridge(this)"> Needs Bridge
-                </label>
-            </div>
-            <div class="dd-bridge-fields" ${bridgeVis}>
-                <div class="dd-field dd-field-sm">
-                    <label data-tip="dd_bridge_dilution">Bridge Dilution %</label>
-                    <input type="number" class="dd-fp-bridge-dilution" value="${rnd.bridge_dilution_pct || 8}" step="1" min="0" max="30">
-                </div>
-                <div class="dd-field dd-field-sm">
-                    <label data-tip="dd_bridge_delay">Bridge Delay (yr)</label>
-                    <input type="number" class="dd-fp-bridge-delay" value="${rnd.bridge_delay_years || 0.5}" step="0.1" min="0" max="3">
-                </div>
-            </div>
-        </div>
-    `;
-    return div;
-}
-
-function _ddToggleBridge(checkbox) {
-    const row = checkbox.closest('.dd-fundraising-round');
-    const fields = row.querySelector('.dd-bridge-fields');
-    if (fields) fields.style.display = checkbox.checked ? '' : 'none';
-}
-
-function _ddRemoveRound(idx) {
-    const container = document.getElementById('dd-fundraising-rounds');
-    if (!container) return;
-    const rows = container.querySelectorAll('.dd-fundraising-round');
-    if (rows.length <= 1) return; // keep at least one
-    if (rows[idx]) rows[idx].remove();
-    _ddReindexRounds();
-}
-
-function _ddReindexRounds() {
-    const container = document.getElementById('dd-fundraising-rounds');
-    if (!container) return;
-    container.querySelectorAll('.dd-fundraising-round').forEach((row, i) => {
-        row.dataset.roundIdx = i;
-        const num = row.querySelector('.dd-round-num');
-        if (num) num.textContent = '#' + (i + 1);
-        const removeBtn = row.querySelector('.dd-round-remove');
-        if (removeBtn) removeBtn.setAttribute('onclick', `_ddRemoveRound(${i})`);
-    });
-    // Re-inject info-tips for new round rows
-    _ddInjectInfoTips();
-}
-
-function _ddAddFundraisingRound() {
-    const container = document.getElementById('dd-fundraising-rounds');
-    if (!container) return;
-    const count = container.querySelectorAll('.dd-fundraising-round').length;
-    const labels = ['Series A', 'Series B', 'Series C', 'Series D', 'Series E'];
-    const rnd = {
-        label: labels[Math.min(count, labels.length - 1)],
-        year: (count + 1) * 2,
-        dilution_pct: 18,
-        needs_bridge: false,
-        bridge_dilution_pct: 8,
-        bridge_delay_years: 0.5,
+// ── Run ───────────────────────────────────────────────────────────
+function ddRun() {
+    if (!_dd.reportId) return;
+    const metric = (document.getElementById('dd-metric') || {}).value || 'expected_moic';
+    const recovery = parseFloat((document.getElementById('dd-recovery') || {}).value) || 0;
+    const payload = {
+        report_id: _dd.reportId,
+        check_size_m: _dd.deal.check_size_m,
+        pre_money_m: _dd.deal.pre_money_m,
+        round_size_m: _dd.deal.round_size_m,
+        exit_year: _dd.deal.exit_year,
+        scenarios: _ddReadScenarios(),
+        recovery_moic: recovery,
+        primary_metric: metric,
     };
-    container.appendChild(_ddCreateRoundRow(rnd, count));
-    _ddReindexRounds();
+    const btn = document.getElementById('dd-run-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+    _apiFetch('/api/dd/analyze', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    }).then(r => r.json()).then(data => {
+        if (data.status !== 'ok') { alert('Run failed: ' + (data.detail || 'error')); return; }
+        _dd.result = data.result;
+        _dd.detailScenario = 'base';
+        _ddRenderAll();
+        document.getElementById('dd-outputs').style.display = '';
+    }).catch(e => alert('Run error: ' + e.message))
+      .finally(() => { if (btn) { btn.disabled = false; btn.textContent = 'Run Simulation'; } });
 }
 
-function _ddReadFundraisingPlan() {
-    const container = document.getElementById('dd-fundraising-rounds');
-    if (!container) return [];
-    const rounds = [];
-    container.querySelectorAll('.dd-fundraising-round').forEach(row => {
-        const label = (row.querySelector('.dd-fp-label') || {}).value || 'Round';
-        const year = parseInt((row.querySelector('.dd-fp-year') || {}).value) || 2;
-        const dilution = parseFloat((row.querySelector('.dd-fp-dilution') || {}).value) || 20;
-        const needsBridge = (row.querySelector('.dd-fp-bridge-toggle') || {}).checked || false;
-        const bridgeDilution = parseFloat((row.querySelector('.dd-fp-bridge-dilution') || {}).value) || 8;
-        const bridgeDelay = parseFloat((row.querySelector('.dd-fp-bridge-delay') || {}).value) || 0.5;
-        rounds.push({
-            label: label,
-            year: year,
-            dilution_pct: dilution,
-            needs_bridge: needsBridge,
-            bridge_dilution_pct: bridgeDilution,
-            bridge_delay_years: bridgeDelay,
-        });
-    });
-    return rounds;
+function _ddRenderAll() {
+    _ddRenderHero();
+    _ddRenderComparison();
+    _ddRenderSensitivity();
+    _ddRenderBridges();
+    _ddRenderTwoWay();
+    _ddRenderDetailPills();
+    _ddRenderDetail(_dd.detailScenario);
 }
 
-function _ddBuildFundraisingPlans() {
-    // Build fundraising plans dict from each scenario's assumptions
-    const plans = {};
-    let hasPlan = false;
-    for (const [name, assumptions] of Object.entries(_dd.scenarios)) {
-        if (assumptions.fundraising_plan && assumptions.fundraising_plan.length > 0) {
-            plans[name] = assumptions.fundraising_plan;
-            hasPlan = true;
-        }
+// ── Hero (Base case headline) ─────────────────────────────────────
+function _ddRenderHero() {
+    const el = document.getElementById('dd-hero'); if (!el) return;
+    const b = _dd.result.scenarios.base.returns;
+    const metric = _dd.result.primary_metric;
+    el.innerHTML = `
+        <div class="dd-hero-card dd-hero-highlight">
+            <div class="dd-hero-label">Expected MOIC <span class="dd-hero-tag">Base · risk-adjusted</span></div>
+            <div class="dd-hero-value">${_ddFmt(b.expected_moic)}x</div>
+            <div class="dd-hero-sub">${_ddFmt(b.moic)}x if successful · ${_ddFmt(b.prob_success_pct, 0)}% POS</div>
+        </div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Expected IRR</div><div class="dd-hero-value">${_ddFmt(b.expected_irr_pct, 1)}%</div><div class="dd-hero-sub">${_ddFmt(b.irr_pct, 1)}% if successful</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(b.exit_ev_m)}M</div><div class="dd-hero-sub">${b.exit_multiple_na ? 'DCF-implied (no multiple)' : 'EV × exit multiple'}</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Cash to Breakeven</div><div class="dd-hero-value">$${_ddFmt(b.peak_cumulative_burn_m)}M</div><div class="dd-hero-sub">${b.fcf_breakeven_year ? 'FCF+ in Yr ' + b.fcf_breakeven_year : 'no FCF breakeven in horizon'}</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Entry → Exit Ownership</div><div class="dd-hero-value">${_ddFmt(b.entry_ownership_pct, 1)}%</div><div class="dd-hero-sub">→ ${_ddFmt(b.exit_ownership_pct, 1)}% at exit</div></div>`;
+}
+
+// ── Scenario comparison table ─────────────────────────────────────
+function _ddRenderComparison() {
+    const c = _dd.result.comparison;
+    const rows = [
+        { label: 'Expected MOIC', f: 'expected_moic', suf: 'x', hi: true },
+        { label: 'MOIC (if successful)', f: 'moic', suf: 'x' },
+        { label: 'Expected IRR', f: 'expected_irr_pct', suf: '%', dp: 1 },
+        { label: 'IRR (if successful)', f: 'irr_pct', suf: '%', dp: 1 },
+        { label: 'Probability of Success', f: 'prob_success_pct', suf: '%', dp: 0 },
+        { label: 'Exit Enterprise Value', f: 'exit_ev_m', pre: '$', suf: 'M' },
+        { label: 'DCF Value (PV) <span class="dd-help" title="Indicative only. A DCF built on coarse early-stage cash-flow assumptions is dominated by the terminal value — which here is just the exit-multiple bet, discounted. Use as a cross-check, not a primary valuation; most meaningful for later-stage, cash-generating companies.">ⓘ indicative</span>', f: 'dcf_ev_m', pre: '$', suf: 'M' },
+        { label: 'Exit-Year Revenue', f: 'exit_revenue_m', pre: '$', suf: 'M' },
+        { label: 'Exit EBITDA Margin', f: 'exit_ebitda_margin_pct', suf: '%', dp: 1 },
+        { label: 'Exit Ownership', f: 'exit_ownership_pct', suf: '%', dp: 1 },
+        { label: 'Hold Period', f: 'hold_years', suf: ' yrs', dp: 1 },
+        { label: 'Cash to Breakeven', f: 'peak_burn_m', pre: '$', suf: 'M' },
+        { label: 'FCF Breakeven Year', f: 'fcf_breakeven_year', raw: true },
+    ];
+    let html = `<thead><tr><th>Metric</th><th>Conservative</th><th class="dd-a-th-base">Base</th><th>Best</th></tr></thead><tbody>`;
+    for (const r of rows) {
+        const cells = DD_CASES.map(cs => {
+            const v = (c[r.f] || {})[cs];
+            if (r.raw) return `<td class="dd-num">${v == null ? '—' : 'Yr ' + v}</td>`;
+            const disp = v == null ? '—' : (r.pre || '') + _ddFmt(v, r.dp) + (r.suf || '');
+            return `<td class="dd-num">${disp}</td>`;
+        }).join('');
+        html += `<tr class="${r.hi ? 'dd-row-total' : ''}"><td>${r.label}</td>${cells}</tr>`;
     }
-    return hasPlan ? plans : null;
+    html += '</tbody>';
+    document.getElementById('dd-comp-table').innerHTML = html;
 }
 
-// ── Dilution Waterfall Renderer ──────────────────────────────────
-function _ddRenderDilutionWaterfall(ret) {
-    const panel = document.getElementById('dd-dilution-panel');
-    const container = document.getElementById('dd-dilution-waterfall');
-    if (!panel || !container) return;
-    const schedule = ret.dilution_schedule;
-    if (!schedule || schedule.length === 0) {
-        panel.style.display = 'none';
+// ── Sensitivity / impact (tornado + table columns) ────────────────
+function _ddRenderSensitivity() {
+    const s = _dd.result.sensitivity;
+    const host = document.getElementById('dd-tornado');
+    // reset table cols
+    DD_FIELDS.forEach(f => { if (f.key) {
+        const se = document.getElementById('dd-sens-' + f.key); if (se) se.innerHTML = '<span class="dd-muted">—</span>';
+        const ie = document.getElementById('dd-impact-' + f.key); if (ie) ie.innerHTML = '<span class="dd-muted">—</span>';
+    }});
+    if (!s || !s.available) {
+        host.innerHTML = `<p class="dd-field-hint">${(s && s.reason) || 'Set differing Conservative and Best values, then run, to see what moves the outcome.'}</p>`;
         return;
     }
-    panel.style.display = '';
-    let html = '<div class="dd-waterfall-chart">';
-    // Entry ownership bar
-    html += `<div class="dd-wf-step">
-        <div class="dd-wf-label">Entry</div>
-        <div class="dd-wf-bar-container">
-            <div class="dd-wf-bar dd-wf-entry" style="width:${Math.min(ret.entry_ownership_pct, 100)}%">
-                ${ret.entry_ownership_pct.toFixed(1)}%
-            </div>
-        </div>
-    </div>`;
-    // Each dilution event
-    for (const evt of schedule) {
-        const isbridge = evt.type === 'bridge';
-        const barClass = isbridge ? 'dd-wf-bridge' : 'dd-wf-priced';
-        const label = evt.label + (isbridge ? '' : (evt.year ? ` (Yr ${evt.year})` : ''));
-        const dilNote = `-${evt.dilution_pct}%${isbridge ? ` +${evt.delay_years}yr` : ''}`;
-        html += `<div class="dd-wf-step">
-            <div class="dd-wf-label">${label}<span class="dd-wf-dil">${dilNote}</span></div>
-            <div class="dd-wf-bar-container">
-                <div class="dd-wf-bar ${barClass}" style="width:${Math.min(evt.ownership_after_pct * (100 / ret.entry_ownership_pct), 100)}%">
-                    ${evt.ownership_after_pct.toFixed(1)}%
-                </div>
-            </div>
-        </div>`;
+    const mName = _ddMetricName(s.metric);
+    const fmt = (v, signed) => _ddMetricFmt(v, s.metric, signed);
+    const maxAbs = Math.max(...s.drivers.map(d => d.abs_swing), Math.abs(s.interaction), 0.001);
+    let inertCount = 0;
+    let html = '';
+    if (s.metric === 'dcf_value') {
+        html += `<p class="dd-caveat">⚠ <b>DCF Value is indicative for early-stage deals.</b> It's dominated by the terminal (exit-multiple) value and highly sensitive to the discount rate, so treat it as a cross-check on the multiple-based MOIC — not a primary valuation. It's most reliable for later-stage, cash-generating companies.</p>`;
     }
-    // Final ownership
-    html += `<div class="dd-wf-step dd-wf-final">
-        <div class="dd-wf-label">Exit Ownership</div>
-        <div class="dd-wf-bar-container">
-            <div class="dd-wf-bar dd-wf-exit" style="width:${Math.min(ret.exit_ownership_pct * (100 / ret.entry_ownership_pct), 100)}%">
-                ${ret.exit_ownership_pct.toFixed(1)}%
-            </div>
-        </div>
+    html += `<p class="dd-field-hint">Each bar = the change in <b>${mName}</b> when that assumption alone moves from its Conservative to its Best value (others held at Base). Total swing ${fmt(s.total_swing, true)} (Conservative ${fmt(s.metric_conservative)} → Best ${fmt(s.metric_best)}).</p>`;
+    html += '<div class="dd-tornado">';
+    for (const d of s.drivers) {
+        const inert = d.abs_swing < 0.005;
+        if (inert) inertCount++;
+        const w = Math.max(2, 100 * d.abs_swing / maxAbs);
+        const dir = d.swing >= 0 ? 'pos' : 'neg';
+        html += `<div class="dd-torn-row${inert ? ' dd-torn-inert' : ''}">
+            <div class="dd-torn-label">${d.label}</div>
+            <div class="dd-torn-track">${inert ? `<span class="dd-inert-tag">no effect on ${mName}</span>` : `<div class="dd-torn-bar ${dir}" style="width:${w}%"></div>`}</div>
+            <div class="dd-torn-val">${inert ? '<span class="dd-muted">0</span>' : fmt(d.swing, true) + ' <span class="dd-muted">' + d.impact_pct + '%</span>'}</div>
+        </div>`;
+        // fill the assumption-table columns
+        const se = document.getElementById('dd-sens-' + d.key);
+        if (se) se.innerHTML = inert
+            ? `<span class="dd-muted" title="Does not affect ${mName} on the current basis">n/a</span>`
+            : `<span class="dd-sens-val ${dir}">${fmt(d.swing, true)}</span>`;
+        const ie = document.getElementById('dd-impact-' + d.key);
+        if (ie) ie.innerHTML = inert
+            ? '<span class="dd-muted">—</span>'
+            : `<span class="dd-impact-bar" style="width:${Math.max(4, d.impact_pct)}%"></span><span class="dd-impact-num">${d.impact_pct}%</span>`;
+    }
+    // interaction residual
+    const iw = Math.max(2, 100 * Math.abs(s.interaction) / maxAbs);
+    html += `<div class="dd-torn-row dd-torn-interaction">
+        <div class="dd-torn-label">Interactions <span class="dd-help" title="Combined effects that can't be attributed to a single assumption">(combined)</span></div>
+        <div class="dd-torn-track"><div class="dd-torn-bar int" style="width:${iw}%"></div></div>
+        <div class="dd-torn-val">${fmt(s.interaction, true)} <span class="dd-muted">${s.interaction_pct}%</span></div>
     </div>`;
     html += '</div>';
-    if (ret.bridge_delay_years > 0) {
-        html += `<p class="dd-wf-note">Bridge financing adds <strong>${ret.bridge_delay_years} year(s)</strong> to the hold period, extending total hold to <strong>${ret.hold_years_total} years</strong>.</p>`;
+    if (inertCount > 0) {
+        html += `<p class="dd-field-hint" style="margin-top:8px;">Levers marked <em>no effect</em> don't enter ${mName} on this basis — e.g. margins &amp; opex only matter under EV/EBITDA; discount rate, terminal growth, capex and time-to-launch drive DCF Value / IRR / cash, not a multiple-based MOIC. Switch the basis or primary metric to test them.</p>`;
     }
-    container.innerHTML = html;
+    host.innerHTML = html;
 }
 
-function _ddInjectInfoTips() {
-    document.querySelectorAll('#tab-ddanalysis label[data-tip]').forEach(label => {
-        const key = label.getAttribute('data-tip');
-        if (key && !label.querySelector('.info-tip')) {
-            label.insertAdjacentHTML('beforeend', ' ' + infoTip(key));
-        }
+// ── Case bridges: Base → Conservative (downside) and Base → Best (upside) ──
+// Each lever's marginal contribution to the case outcome; contributions + the
+// interaction residual sum exactly to (case outcome − base outcome).
+function _ddRenderBridges() {
+    const s = _dd.result.sensitivity;
+    const metric = _dd.result.primary_metric;
+    const fmt = (v, signed) => _ddMetricFmt(v, metric, signed);
+    const down = document.getElementById('dd-bridge-down');
+    const up = document.getElementById('dd-bridge-up');
+    if (!down || !up) return;
+    if (!s || !s.available) {
+        down.innerHTML = '<p class="dd-field-hint">Vary assumptions between cases and run to see how each case is built.</p>';
+        up.innerHTML = '';
+        return;
+    }
+    const render = (host, title, endLabel, startV, endV, contribKey, interaction) => {
+        const steps = s.drivers
+            .map(d => ({ label: d.label, c: d[contribKey] }))
+            .filter(x => Math.abs(x.c) > 0.005)
+            .sort((a, b) => Math.abs(b.c) - Math.abs(a.c));
+        let running = startV, rows = '';
+        const stepRow = (label, c) => {
+            const dir = c >= 0 ? 'pos' : 'neg';
+            running += c;
+            return `<div class="dd-wf-row">
+                <div class="dd-wf-label">${label}</div>
+                <div class="dd-wf-delta dd-wf-${dir}">${fmt(c, true)}</div>
+                <div class="dd-wf-run">${fmt(running)}</div>
+            </div>`;
+        };
+        for (const st of steps) rows += stepRow(st.label, st.c);
+        if (Math.abs(interaction) > 0.005) rows += stepRow('Interactions', interaction);
+        host.innerHTML = `
+            <div class="dd-wf-head">${title}</div>
+            <div class="dd-wf-anchor"><span>Base</span><span>${fmt(startV)}</span></div>
+            ${rows}
+            <div class="dd-wf-anchor dd-wf-end"><span>${endLabel}</span><span>${fmt(endV)}</span></div>`;
+    };
+    render(down, 'Downside · Base → Conservative', 'Conservative', s.metric_base, s.metric_conservative, 'contrib_down', s.interaction_down);
+    render(up, 'Upside · Base → Best', 'Best', s.metric_base, s.metric_best, 'contrib_up', s.interaction_up);
+}
+
+// ── Two-way grid ──────────────────────────────────────────────────
+function _ddRenderTwoWay() {
+    const tw = _dd.result.two_way;
+    const host = document.getElementById('dd-twoway');
+    if (!tw || !tw.available) { host.innerHTML = '<p class="dd-field-hint">Two-way grid needs a defined Exit Multiple and Revenue CAGR in the Base case.</p>'; return; }
+    const flat = tw.grid.flat();
+    const lo = Math.min(...flat), hi = Math.max(...flat);
+    const color = (v) => {
+        const t = hi > lo ? (v - lo) / (hi - lo) : 0.5;
+        const r = Math.round(220 - t * 130), g = Math.round(150 + t * 70), b = Math.round(120 - t * 40);
+        return `rgb(${r},${g},${b})`;
+    };
+    let html = `<p class="dd-field-hint">${_ddMetricName(tw.metric)} across ${tw.x_label} (→) and ${tw.y_label} (↓). Base = ${tw.base_x}x / ${tw.base_y}%.</p>`;
+    html += '<table class="dd-grid-table"><thead><tr><th class="dd-grid-corner">' + tw.y_label + ' ↓ / ' + tw.x_label + ' →</th>';
+    tw.x_axis.forEach(x => html += `<th>${x}x</th>`);
+    html += '</tr></thead><tbody>';
+    tw.y_axis.forEach((y, ri) => {
+        html += `<tr><th>${y}%</th>`;
+        tw.grid[ri].forEach((v, ci) => {
+            const isBase = Math.abs(tw.x_axis[ci] - tw.base_x) < 1e-6 && Math.abs(y - tw.base_y) < 1e-6;
+            html += `<td class="dd-grid-cell ${isBase ? 'dd-grid-base' : ''}" style="background:${color(v)}">${_ddMetricFmt(v, tw.metric)}</td>`;
+        });
+        html += '</tr>';
     });
+    html += '</tbody></table>';
+    host.innerHTML = html;
+}
+
+// ── Per-scenario detail (P&L + charts) ────────────────────────────
+function _ddRenderDetailPills() {
+    const el = document.getElementById('dd-detail-pills'); if (!el) return;
+    el.innerHTML = DD_CASES.map(cs =>
+        `<button class="dd-pill ${cs === _dd.detailScenario ? 'active' : ''}" onclick="ddShowDetail('${cs}')">${DD_CASE_LABEL[cs]}</button>`
+    ).join('');
+}
+function ddShowDetail(cs) { _dd.detailScenario = cs; _ddRenderDetailPills(); _ddRenderDetail(cs); }
+
+function _ddRenderDetail(cs) {
+    const sc = _dd.result.scenarios[cs]; if (!sc) return;
+    const pnl = sc.pnl, ret = sc.returns;
+    const hero = document.getElementById('dd-detail-hero');
+    if (hero) hero.innerHTML = `
+        <div class="dd-hero-card"><div class="dd-hero-label">${DD_CASE_LABEL[cs]} · Expected MOIC</div><div class="dd-hero-value">${_ddFmt(ret.expected_moic)}x</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">MOIC (if success)</div><div class="dd-hero-value">${_ddFmt(ret.moic)}x</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(ret.exit_ev_m)}M</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">DCF Value</div><div class="dd-hero-value">$${_ddFmt(ret.dcf_enterprise_value_m)}M</div></div>`;
+    _ddRenderPnl(pnl);
+    _ddRenderCharts(pnl, cs);
+}
+
+function _ddRenderPnl(pnl) {
+    const tbl = document.getElementById('dd-pnl-table'); if (!tbl) return;
+    const pre = pnl.pre_launch_years || 0;
+    const hdr = '<tr><th>Line Item ($M)</th>' + pnl.years.map(y =>
+        y <= pre ? `<th class="dd-prelaunch-hdr">Pre ${y}</th>` : `<th>Yr ${y - pre}</th>`).join('') + '</tr>';
+    const rows = [
+        { l: 'Revenue', d: pnl.revenue, cls: 'dd-row-header' },
+        { l: 'COGS', d: pnl.cogs, neg: true },
+        { l: 'Gross Profit', d: pnl.gross_profit, cls: 'dd-row-subtotal' },
+        { l: 'Gross Margin %', d: pnl.gross_margin_pct, pct: true },
+        { l: 'Operating Expenses', d: pnl.total_opex, neg: true },
+        { l: 'EBITDA', d: pnl.ebitda, cls: 'dd-row-subtotal' },
+        { l: 'EBITDA Margin %', d: pnl.ebitda_margin_pct, pct: true },
+        { l: 'D&A', d: pnl.da, neg: true },
+        { l: 'EBIT', d: pnl.ebit },
+        { l: 'Taxes', d: pnl.taxes, neg: true },
+        { l: 'Net Income', d: pnl.net_income, cls: 'dd-row-subtotal' },
+        { l: 'CapEx', d: pnl.capex, neg: true },
+        { l: 'Δ Working Capital', d: pnl.delta_nwc, neg: true },
+        { l: 'Free Cash Flow', d: pnl.fcf, cls: 'dd-row-total' },
+        { l: 'Cumulative FCF', d: pnl.cumulative_fcf },
+    ];
+    let html = '<thead>' + hdr + '</thead><tbody>';
+    for (const r of rows) {
+        html += `<tr class="${r.cls || ''}"><td>${r.l}</td>`;
+        for (const v of (r.d || [])) {
+            const neg = v < 0;
+            html += `<td class="${r.pct ? 'dd-pct' : (neg ? 'dd-neg' : '')}">${r.pct ? _ddFmt(v, 1) + '%' : _ddFmt(v)}</td>`;
+        }
+        html += '</tr>';
+    }
+    tbl.innerHTML = html + '</tbody>';
+}
+
+function _ddDestroy(k) { if (_dd.charts[k]) { _dd.charts[k].destroy(); delete _dd.charts[k]; } }
+
+function _ddRenderCharts(pnl, cs) {
+    if (typeof Chart === 'undefined') return;
+    const pre = pnl.pre_launch_years || 0;
+    const labels = pnl.years.map(y => y <= pre ? `Pre ${y}` : `Yr ${y - pre}`);
+    const c1 = document.getElementById('dd-chart-rev-ebitda');
+    if (c1) {
+        _ddDestroy('rev');
+        _dd.charts.rev = new Chart(c1.getContext('2d'), {
+            type: 'bar',
+            data: { labels, datasets: [
+                { label: 'Revenue', data: pnl.revenue, backgroundColor: 'rgba(91,119,68,0.7)' },
+                { label: 'EBITDA', data: pnl.ebitda, type: 'line', borderColor: '#b45309', backgroundColor: 'transparent', tension: 0.3 },
+            ] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
+        });
+    }
+    const c2 = document.getElementById('dd-chart-fcf');
+    if (c2) {
+        _ddDestroy('fcf');
+        _dd.charts.fcf = new Chart(c2.getContext('2d'), {
+            type: 'bar',
+            data: { labels, datasets: [
+                { label: 'FCF', data: pnl.fcf, backgroundColor: (ctx) => (ctx.raw < 0 ? 'rgba(220,38,38,0.6)' : 'rgba(91,119,68,0.7)') },
+                { label: 'Cumulative FCF', data: pnl.cumulative_fcf, type: 'line', borderColor: '#1f2937', backgroundColor: 'transparent', tension: 0.3 },
+            ] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
+        });
+    }
 }
 
 // ── Tab init hook ─────────────────────────────────────────────────
-// Hook into the nav click to load reports when DD tab is activated
 document.addEventListener('DOMContentLoaded', () => {
-    // Inject info-tips into DD labels once DOM is ready
     _ddInjectInfoTips();
-
     const ddLink = document.querySelector('.nav-link[data-tab="ddanalysis"]');
-    if (ddLink) {
-        ddLink.addEventListener('click', () => {
-            setTimeout(() => { ddLoadReports(); }, 50);
-        });
-    }
-
-    // Wire up Add Round button
-    const addRoundBtn = document.getElementById('dd-add-round');
-    if (addRoundBtn) {
-        addRoundBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            _ddAddFundraisingRound();
-        });
-    }
+    if (ddLink) ddLink.addEventListener('click', () => setTimeout(() => ddLoadReports(), 50));
 });
 
 // ════════════════════════════════════════════════════════════════════════════

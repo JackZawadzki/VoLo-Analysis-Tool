@@ -1348,231 +1348,101 @@
     <div class="dd-header">
         <div class="dd-header-content">
             <h2 class="dd-title">DD Financial Analysis</h2>
-            <p class="dd-subtitle">Build conservative, base, and best-case financial scenarios from your due diligence findings</p>
+            <p class="dd-subtitle">Interactive underwriting — set Conservative / Base / Best assumptions and see how the investment outcome changes.</p>
         </div>
         <div class="dd-header-actions">
             <select id="dd-report-select" class="dd-select" onchange="ddReportChanged()">
-                <option value="">Select a Deal Report...</option>
+                <option value="">Select a Deal Report…</option>
             </select>
-            <button class="dd-btn dd-btn-secondary" onclick="ddLoadDefaults()" id="dd-defaults-btn" disabled>Load Defaults</button>
-            <button class="dd-btn dd-btn-primary" onclick="ddRunAnalysis()" id="dd-run-btn" disabled>Run Analysis</button>
-            <button class="dd-btn dd-btn-save" onclick="ddSaveScenarios()" id="dd-save-btn" disabled>Save</button>
+            <button class="dd-btn dd-btn-secondary" onclick="ddResetDefaults()" id="dd-defaults-btn" disabled>Reset Defaults</button>
+            <button class="dd-btn dd-btn-primary" onclick="ddRun()" id="dd-run-btn" disabled>Run Simulation</button>
         </div>
     </div>
 
-    <!-- Scenario Tabs -->
-    <div class="dd-scenario-tabs">
-        <button class="dd-scenario-tab active" data-scenario="conservative" onclick="ddSwitchScenario('conservative')">Conservative</button>
-        <button class="dd-scenario-tab" data-scenario="base" onclick="ddSwitchScenario('base')">Base Case</button>
-        <button class="dd-scenario-tab" data-scenario="best_case" onclick="ddSwitchScenario('best_case')">Best Case</button>
-        <button class="dd-scenario-tab dd-tab-comparison" data-scenario="comparison" onclick="ddSwitchScenario('comparison')">Comparison</button>
-    </div>
+    <div id="dd-deal-strip" class="dd-deal-strip"></div>
 
-    <!-- Assumption Editor Panel (shown for conservative/base/best_case) -->
-    <div id="dd-editor-panel" class="dd-editor-panel">
-        <div class="dd-editor-grid">
-            <!-- Revenue Assumptions -->
-            <div class="dd-card">
-                <h3 class="dd-card-title">Revenue Assumptions</h3>
-                <div class="dd-field">
-                    <label data-tip="dd_time_to_launch">Time to Commercial Launch (years)</label>
-                    <input type="number" id="dd-time-to-launch" step="0.5" min="0" max="8" value="0">
-                    <div class="dd-field-hint">Years of pre-revenue burn before first commercial sales (testing, certification, sales cycle)</div>
-                </div>
-                <div class="dd-field">
-                    <label data-tip="dd_revenue_y1">Year 1 Revenue ($M)</label>
-                    <input type="number" id="dd-revenue-y1" step="0.1" min="0" value="1.0">
-                </div>
-                <div class="dd-field">
-                    <label data-tip="dd_revenue_cagr">Revenue CAGR (%)</label>
-                    <input type="number" id="dd-revenue-cagr" step="5" min="0" max="500" value="100">
-                </div>
-                <div class="dd-field">
-                    <label data-tip="dd_proj_years">Projection Years</label>
-                    <input type="number" id="dd-proj-years" step="1" min="3" max="15" value="10">
-                </div>
-                <div class="dd-field dd-field-wide">
-                    <label data-tip="dd_custom_rev">Custom Revenue Override ($M per year, comma-separated)</label>
-                    <input type="text" id="dd-custom-rev" placeholder="e.g. 0, 0, 0.5, 1.2, 3.5, 8, 18, 35, 60, 90">
-                </div>
-            </div>
+    <div id="dd-empty" class="dd-empty">Select a deal report above to begin underwriting.</div>
 
-            <!-- Margin Assumptions -->
-            <div class="dd-card">
-                <h3 class="dd-card-title">Margin Profile</h3>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_gm_start">Gross Margin Start (%)</label>
-                        <input type="number" id="dd-gm-start" step="1" min="0" max="100" value="40">
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_gm_end">Gross Margin End (%)</label>
-                        <input type="number" id="dd-gm-end" step="1" min="0" max="100" value="65">
-                    </div>
-                </div>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_rd_start">R&D % Rev (Start → End)</label>
-                        <div class="dd-range-pair">
-                            <input type="number" id="dd-rd-start" step="1" min="0" max="200" value="50">
-                            <span>→</span>
-                            <input type="number" id="dd-rd-end" step="1" min="0" max="100" value="15">
-                        </div>
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_sm_start">S&M % Rev (Start → End)</label>
-                        <div class="dd-range-pair">
-                            <input type="number" id="dd-sm-start" step="1" min="0" max="200" value="30">
-                            <span>→</span>
-                            <input type="number" id="dd-sm-end" step="1" min="0" max="100" value="12">
-                        </div>
-                    </div>
-                </div>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_ga_start">G&A % Rev (Start → End)</label>
-                        <div class="dd-range-pair">
-                            <input type="number" id="dd-ga-start" step="1" min="0" max="100" value="15">
-                            <span>→</span>
-                            <input type="number" id="dd-ga-end" step="1" min="0" max="50" value="7">
-                        </div>
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_da_pct">D&A % Revenue</label>
-                        <input type="number" id="dd-da-pct" step="0.5" min="0" max="30" value="3">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Valuation & Exit -->
-            <div class="dd-card">
-                <h3 class="dd-card-title">Valuation & Exit</h3>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_exit_type">Exit Multiple Type</label>
-                        <select id="dd-exit-type">
-                            <option value="ev_revenue">EV / Revenue</option>
-                            <option value="ev_ebitda">EV / EBITDA</option>
-                        </select>
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_exit_mult">Exit Multiple</label>
-                        <input type="number" id="dd-exit-mult" step="0.5" min="0" max="100" value="10">
-                    </div>
-                </div>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_discount">Discount Rate / WACC (%)</label>
-                        <input type="number" id="dd-discount" step="1" min="5" max="60" value="25">
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_terminal_g">Terminal Growth (%)</label>
-                        <input type="number" id="dd-terminal-g" step="0.5" min="0" max="10" value="3">
-                    </div>
-                </div>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_tax">Tax Rate (%)</label>
-                        <input type="number" id="dd-tax" step="1" min="0" max="50" value="0">
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_capex">CapEx % Revenue</label>
-                        <input type="number" id="dd-capex" step="0.5" min="0" max="50" value="5">
-                    </div>
-                </div>
-                <div class="dd-field-row">
-                    <div class="dd-field">
-                        <label data-tip="dd_nwc">NWC % Revenue</label>
-                        <input type="number" id="dd-nwc" step="1" min="0" max="30" value="10">
-                    </div>
-                    <div class="dd-field">
-                        <label data-tip="dd_dilution_rounds">Future Dilution Rounds</label>
-                        <input type="number" id="dd-dilution-rounds" step="1" min="0" max="6" value="2">
-                    </div>
-                </div>
-                <div class="dd-field">
-                    <label data-tip="dd_dilution_pct">Dilution per Round (%)</label>
-                    <input type="number" id="dd-dilution-pct" step="1" min="0" max="50" value="20">
-                </div>
-            </div>
-
-            <!-- Fundraising Timeline -->
-            <div class="dd-card dd-card-wide">
-                <h3 class="dd-card-title">Fundraising Timeline</h3>
-                <p class="dd-field-hint">Model future fundraising rounds and potential bridge financing. Bridges add dilution and extend the hold period, reducing IRR.</p>
-                <div id="dd-fundraising-rounds">
-                    <!-- Dynamically populated round rows -->
-                </div>
-                <button class="dd-btn dd-btn-sm" id="dd-add-round" title="Add a planned fundraising round">+ Add Round</button>
-            </div>
+    <div id="dd-workspace" style="display:none;">
+        <div class="dd-global-row">
+            <label class="dd-global-field">Exit basis
+                <select id="dd-exit-type" onchange="_ddMaybeRerun()">
+                    <option value="ev_revenue">EV / Revenue</option>
+                    <option value="ev_ebitda">EV / EBITDA</option>
+                </select>
+            </label>
+            <label class="dd-global-field">Primary metric
+                <select id="dd-metric" onchange="_ddMaybeRerun()">
+                    <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
+                    <option value="moic">MOIC (if successful)</option>
+                    <option value="irr">IRR (if successful)</option>
+                    <option value="dcf_value">DCF Value (PV, $M)</option>
+                    <option value="cash_breakeven">Cash to Breakeven ($M)</option>
+                </select>
+            </label>
+            <label class="dd-global-field">Recovery on failure (× invested)
+                <input type="number" id="dd-recovery" value="0" step="0.25" min="0">
+            </label>
+            <label class="dd-global-field">TRL <span class="dd-help">(seeds defaults)</span>
+                <select id="dd-trl" onchange="_ddApplyTRL()">
+                    <option value="">—</option>
+                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                    <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                    <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                </select>
+            </label>
+            <span id="dd-trl-note" class="dd-help"></span>
         </div>
-    </div>
 
-    <!-- Dilution Waterfall (shown in results) -->
-    <div id="dd-dilution-panel" class="dd-results-panel" style="display:none;">
-        <h3 class="dd-section-title">Ownership & Dilution Waterfall</h3>
-        <div id="dd-dilution-waterfall" class="dd-dilution-waterfall"></div>
-    </div>
-
-    <!-- Results Panel (P&L table + charts) -->
-    <div id="dd-results-panel" class="dd-results-panel" style="display:none;">
-        <!-- Hero Metrics (shown for each scenario) -->
-        <div id="dd-hero" class="dd-hero"></div>
-
-        <!-- P&L Table -->
         <div class="dd-pnl-container">
-            <h3 class="dd-section-title">Projected P&L ($M)</h3>
+            <h3 class="dd-section-title">Core Assumptions</h3>
+            <p class="dd-field-hint">Set each case. Tick <strong>N/A</strong> for any metric that's unknown or you don't want to model — it's dropped from the run and the sensitivity decomposition. <strong>Sensitivity</strong> and <strong>Impact</strong> populate after you run.</p>
             <div class="dd-table-scroll">
-                <table id="dd-pnl-table" class="dd-pnl-table"></table>
+                <table id="dd-assump-table" class="dd-assump-table"></table>
             </div>
         </div>
 
-        <!-- Charts -->
-        <div class="dd-charts-grid">
-            <div class="dd-chart-card">
-                <h4>Revenue & EBITDA Trajectory</h4>
-                <canvas id="dd-chart-rev-ebitda"></canvas>
-            </div>
-            <div class="dd-chart-card">
-                <h4>Margin Evolution</h4>
-                <canvas id="dd-chart-margins"></canvas>
-            </div>
-            <div class="dd-chart-card">
-                <h4>Free Cash Flow</h4>
-                <canvas id="dd-chart-fcf"></canvas>
-            </div>
-            <div class="dd-chart-card">
-                <h4>OpEx Breakdown (% of Revenue)</h4>
-                <canvas id="dd-chart-opex"></canvas>
-            </div>
-        </div>
-    </div>
+        <div id="dd-outputs" style="display:none;">
+            <div id="dd-hero" class="dd-hero"></div>
 
-    <!-- Comparison Panel (shown when "Comparison" tab active) -->
-    <div id="dd-comparison-panel" class="dd-comparison-panel" style="display:none;">
-        <div id="dd-comp-hero" class="dd-hero"></div>
-        <div class="dd-charts-grid">
-            <div class="dd-chart-card dd-chart-wide">
-                <h4>Revenue Comparison by Scenario</h4>
-                <canvas id="dd-chart-comp-rev"></canvas>
+            <div class="dd-pnl-container">
+                <h3 class="dd-section-title">Scenario Comparison</h3>
+                <table id="dd-comp-table" class="dd-pnl-table"></table>
             </div>
-            <div class="dd-chart-card dd-chart-wide">
-                <h4>EBITDA Comparison by Scenario</h4>
-                <canvas id="dd-chart-comp-ebitda"></canvas>
+
+            <div class="dd-two-col-output">
+                <div class="dd-pnl-container">
+                    <h3 class="dd-section-title">What Moves the Outcome</h3>
+                    <div id="dd-tornado"></div>
+                </div>
+                <div class="dd-pnl-container">
+                    <h3 class="dd-section-title">Sensitivity Grid</h3>
+                    <div id="dd-twoway"></div>
+                </div>
             </div>
-            <div class="dd-chart-card">
-                <h4>MOIC by Scenario</h4>
-                <canvas id="dd-chart-comp-moic"></canvas>
+
+            <div class="dd-pnl-container">
+                <h3 class="dd-section-title">How Each Case Is Built <span class="dd-help">— each lever's contribution as the outcome moves from Base to that case</span></h3>
+                <div class="dd-bridges">
+                    <div id="dd-bridge-down" class="dd-bridge"></div>
+                    <div id="dd-bridge-up" class="dd-bridge"></div>
+                </div>
             </div>
-            <div class="dd-chart-card">
-                <h4>IRR by Scenario</h4>
-                <canvas id="dd-chart-comp-irr"></canvas>
+
+            <div class="dd-pnl-container">
+                <div class="dd-detail-head">
+                    <h3 class="dd-section-title">Scenario Detail</h3>
+                    <div class="dd-scenario-pills" id="dd-detail-pills"></div>
+                </div>
+                <div id="dd-detail-hero" class="dd-hero"></div>
+                <div class="dd-table-scroll">
+                    <table id="dd-pnl-table" class="dd-pnl-table"></table>
+                </div>
+                <div class="dd-charts-grid">
+                    <div class="dd-chart-card"><h4>Revenue &amp; EBITDA</h4><canvas id="dd-chart-rev-ebitda" height="260"></canvas></div>
+                    <div class="dd-chart-card"><h4>Free Cash Flow &amp; Cumulative</h4><canvas id="dd-chart-fcf" height="260"></canvas></div>
+                </div>
             </div>
-        </div>
-        <!-- Comparison table -->
-        <div class="dd-pnl-container">
-            <h3 class="dd-section-title">Scenario Comparison Summary</h3>
-            <table id="dd-comp-table" class="dd-pnl-table"></table>
         </div>
     </div>
 </div>

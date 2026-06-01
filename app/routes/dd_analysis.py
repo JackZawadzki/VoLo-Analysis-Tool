@@ -22,6 +22,8 @@ from ..engine.scenario_analysis import (
     build_pnl_projection,
     compute_deal_returns,
     run_scenario_analysis,
+    run_dd_analysis,
+    trl_profile,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,6 +92,19 @@ class DDDefaultsRequest(BaseModel):
     entry_stage: str = "Seed"
 
 
+class DDAnalyzeRequest(BaseModel):
+    """Interactive DD underwriting run. Scenario assumption values may be N/A
+    (None / '' / 'N/A') and the engine substitutes neutral defaults."""
+    report_id: Optional[int] = None
+    check_size_m: float = 2.0
+    pre_money_m: float = 15.0
+    round_size_m: Optional[float] = None
+    exit_year: Optional[int] = None
+    scenarios: dict  # {conservative|base|best_case: assumptions_dict (nullable fields)}
+    recovery_moic: float = 0.0
+    primary_metric: str = "expected_moic"
+
+
 # ── Endpoints ──────────────────────────────────────────────────────
 
 @router.post("/defaults")
@@ -121,6 +136,35 @@ def compute_scenarios(req: DDComputeRequest, user: CurrentUser = Depends(get_cur
     except Exception as e:
         logger.exception("DD compute failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze")
+def analyze(req: DDAnalyzeRequest, user: CurrentUser = Depends(get_current_user)):
+    """Run the interactive DD analysis: per-scenario P&L + returns, scenario
+    comparison, Conservative→Best sensitivity/impact decomposition, two-way grid."""
+    try:
+        deal_params = {
+            "check_size_m": req.check_size_m,
+            "pre_money_m": req.pre_money_m,
+            "round_size_m": req.round_size_m,
+            "exit_year": req.exit_year,
+        }
+        result = run_dd_analysis(
+            req.scenarios, deal_params,
+            recovery_moic=req.recovery_moic,
+            primary_metric=req.primary_metric,
+        )
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        logger.exception("DD analyze failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/trl-profile/{trl}")
+def get_trl_profile(trl: int, user: CurrentUser = Depends(get_current_user)):
+    """Suggested POS / time-to-launch / exit-multiple-discount defaults for a TRL.
+    Used to seed the assumption table — not a sensitivity driver."""
+    return {"status": "ok", "profile": trl_profile(trl)}
 
 
 @router.post("/scenarios")
