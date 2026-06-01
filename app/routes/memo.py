@@ -1053,6 +1053,13 @@ def _build_report_context(report_row) -> str:
         parts.append(f"  Pro-rata check to hold ownership flat: ${_pr.get('pro_rata_check_m', 'N/A')}M (recommendation is {_pr.get('recommended_vs_pro_rata', 'N/A')})")
         if _bl.get("blended_moic_p50") is not None:
             parts.append(f"  Blended MOIC on all capital deployed: P10 {_bl.get('blended_moic_p10')}x / P50 {_bl.get('blended_moic_p50')}x / P90 {_bl.get('blended_moic_p90')}x")
+        # Two return bases — never quote the blended total-position MOIC as the
+        # new check's expected return.
+        crf = report.get("current_round_forecast") or {}
+        hero = report.get("hero_metrics", {}) or {}
+        if crf:
+            parts.append(f"  RETURN BASIS: the headline E[MOIC] ({hero.get('expected_moic', 'N/A')}x) is the BLENDED TOTAL-POSITION return on all capital deployed — it includes markup already accrued on the prior rounds, so it overstates the new check's prospective return.")
+            parts.append(f"  CURRENT-ROUND forecast (new check only, from this round's valuation): E[MOIC] {crf.get('expected_moic', 'N/A')}x, IRR {crf.get('expected_irr', 'N/A')}, P(>3x) {crf.get('p_gt_3x', 'N/A')}, survival {crf.get('survival_rate', 'N/A')}. This is the forward, decision-relevant return for the follow-on.")
 
     # Financial model — pull from report_json["financial_model"]["financials"]
     fm = report.get("financial_model", {})

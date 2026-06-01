@@ -593,7 +593,27 @@ def generate_deal_report(
         "p_gt_3x": sim.get("probability", {}).get("gt_3x"),
         "expected_irr": sim.get("expected_irr"),
         "survival_rate": survival,
+        # For a blended follow-on these reflect VoLo's TOTAL position (return on
+        # all capital deployed, including markup already accrued on the priors).
+        "basis": "total_position" if _is_followon_blended else "single_check",
     }
+
+    # Current-round forecast — the NEW check evaluated standalone from this
+    # round's valuation (the forward, decision-relevant economics). For a first
+    # check this equals the headline; we only attach it for blended follow-ons
+    # so the report can show both "current round" and "total position" returns.
+    if _is_followon_blended:
+        report["current_round_forecast"] = {
+            "expected_moic": sim_standalone.get("moic_unconditional", {}).get("expected"),
+            "p_gt_3x": sim_standalone.get("probability", {}).get("gt_3x"),
+            "expected_irr": sim_standalone.get("expected_irr"),
+            "survival_rate": sim_standalone.get("summary", {}).get("survival_rate"),
+            "moic_conditional_mean": sim_standalone.get("moic_conditional", {}).get("mean"),
+            "new_check_m": check_size_millions,
+            "new_check_ownership_pct": round(entry_ownership * 100, 2),
+        }
+    else:
+        report["current_round_forecast"] = None
 
     _trl_mods = get_trl_modifiers(trl)
 
