@@ -3532,12 +3532,24 @@ function wizRenderReport(r) {
             `}
             <p>Exit multiples: ${fmt(ov.exit_multiple_range?.[0],1)}x - ${fmt(ov.exit_multiple_range?.[1],1)}x EV/EBITDA. ${ov.comps_derived_multiples ? 'Damodaran/NYU comps, 20% acquisition haircut.' : 'User-specified.'}</p>
         `)}
+        ${ov.is_blended_followon ? `<p style="font-size:0.82rem;color:var(--text-secondary);margin:4px 0 6px;line-height:1.5;">These headline metrics are VoLo's <strong>total position</strong> — return on all capital deployed (prior rounds + this check), which includes markup already accrued on the priors. The new check's standalone forecast is shown below.</p>` : ''}
         <div class="rpt-hero-row">
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(hero.expected_moic)}x</div><div class="rpt-hero-label">Expected MOIC ${infoTip('expected_moic')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(hero.expected_moic)}x</div><div class="rpt-hero-label">Expected MOIC${ov.is_blended_followon ? ' (total position)' : ''} ${infoTip('expected_moic')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.p_gt_3x)}</div><div class="rpt-hero-label">P(>3x) ${infoTip('p_gt_3x')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.expected_irr)}</div><div class="rpt-hero-label">Expected IRR ${infoTip('expected_irr')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.survival_rate)}</div><div class="rpt-hero-label">Survival Rate ${infoTip('survival_rate')}</div></div>
         </div>
+        ${(ov.is_blended_followon && r.current_round_forecast) ? `
+        <div style="margin-top:10px;padding:10px 14px;background:#fafaf7;border:1px solid var(--border);border-radius:6px;">
+            <div style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Current-Round Forecast — new check only ($${fmt(r.current_round_forecast.new_check_m,1)}M at ${fmt(r.current_round_forecast.new_check_ownership_pct,2)}%, from this round's valuation)</div>
+            <div class="rpt-hero-row" style="margin:0;">
+                <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(r.current_round_forecast.expected_moic)}x</div><div class="rpt-hero-label">E[MOIC] (new check)</div></div>
+                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.p_gt_3x)}</div><div class="rpt-hero-label">P(>3x)</div></div>
+                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.expected_irr)}</div><div class="rpt-hero-label">E[IRR]</div></div>
+                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.survival_rate)}</div><div class="rpt-hero-label">Survival</div></div>
+            </div>
+            <p style="font-size:0.75rem;color:var(--text-tertiary);margin:8px 0 0;line-height:1.5;">The forward, decision-relevant return on the new capital. The total-position figures above include gains already accrued on the priors, so they overstate the new check's prospective return.</p>
+        </div>` : ''}
         ${trace('Hero metrics methodology', `
             <p><strong>E[MOIC]</strong> = unconditional mean over ${(sim.n_simulations||5000).toLocaleString()} paths (~${pctFmt(prob.total_loss)} total-loss). ${ov.is_blended_followon ? `Computed on VoLo's <strong>total position</strong>: $${fmt(ov.total_invested_millions,1)}M deployed at ${fmt(ov.entry_ownership_pct,1)}% combined ownership (prior rounds + this check).` : `Fund-returner = ~${fmt((ov.check_size_millions > 0 ? ((ov.fund_size_m || 100) / ov.check_size_millions) : 33), 0)}x ($${fmt(ov.check_size_millions,1)}M into $${fmt(ov.fund_size_m || 100, 0)}M fund).`}</p>
             <p><strong>P(>3x)</strong> = fraction of paths with MOIC >= 3.0.</p>
