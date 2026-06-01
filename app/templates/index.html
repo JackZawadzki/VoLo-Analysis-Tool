@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=110">
+    <link rel="stylesheet" href="/static/styles.css?v=202">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
     <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
@@ -1351,6 +1351,7 @@
             <p class="dd-subtitle">Interactive underwriting — set Conservative / Base / Best assumptions and see how the investment outcome changes.</p>
         </div>
         <div class="dd-header-actions">
+            <input id="dd-report-search" class="dd-select dd-report-search" placeholder="Search company…" oninput="ddFilterReports()" autocomplete="off">
             <select id="dd-report-select" class="dd-select" onchange="ddReportChanged()">
                 <option value="">Select a Deal Report…</option>
             </select>
@@ -1361,7 +1362,18 @@
 
     <div id="dd-deal-strip" class="dd-deal-strip"></div>
 
-    <div id="dd-empty" class="dd-empty">Select a deal report above to begin underwriting.</div>
+    <div id="dd-empty" class="dd-empty">
+        <div class="dd-empty-card">
+            <div class="dd-empty-mark">DD</div>
+            <div class="dd-empty-title">Select a deal report to begin</div>
+            <p class="dd-empty-desc">Build Conservative / Base / Best cases on one shared set of assumptions, run them deterministically, and see exactly which levers move the investment outcome.</p>
+            <div class="dd-empty-steps">
+                <span><b>1</b> Search a company above</span>
+                <span><b>2</b> Set or TRL-seed assumptions</span>
+                <span><b>3</b> Run &amp; compare the cases</span>
+            </div>
+        </div>
+    </div>
 
     <div id="dd-workspace" style="display:none;">
         <div class="dd-global-row">
@@ -1432,7 +1444,10 @@
             <div class="dd-pnl-container">
                 <div class="dd-detail-head">
                     <h3 class="dd-section-title">Scenario Detail</h3>
-                    <div class="dd-scenario-pills" id="dd-detail-pills"></div>
+                    <div class="dd-pill-wrap">
+                        <span class="dd-pill-label">View case:</span>
+                        <div class="dd-scenario-pills" id="dd-detail-pills"></div>
+                    </div>
                 </div>
                 <div id="dd-detail-hero" class="dd-hero"></div>
                 <div class="dd-table-scroll">
@@ -2282,7 +2297,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=194"></script>
+    <script src="/static/app.js?v=201"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
     <script>

@@ -11585,6 +11585,7 @@ const _dd = {
     result: null,
     charts: {},
     detailScenario: 'base',
+    allReports: [],
 };
 
 // Core assumption schema. dft = [conservative, base, best]. driver:false = excluded
@@ -11682,25 +11683,43 @@ function _ddApplyTRL() {
         };
         seed('prob_success_pct', p.prob_success_pct);
         seed('time_to_launch_years', p.time_to_launch_years);
-        if (note) note.textContent = `Seeded POS & launch from ${p.label}. TRL exit-multiple haircut ≈ ${p.exit_multiple_discount}× (apply to Exit Multiple if desired).`;
+        if (note) note.textContent = `TRL ${p.trl} — seeded POS + launch (${p.label}). Implied exit-multiple haircut ≈ ${p.exit_multiple_discount}×.`;
         if (_dd.result) ddRun();
     }).catch(() => {});
 }
 
-// ── Report loading ────────────────────────────────────────────────
+// ── Report loading + type-to-search (mirrors the IC-memo selector) ──
 function ddLoadReports() {
     _apiFetch('/api/deal-pipeline/reports')
         .then(r => r.json())
         .then(data => {
-            const sel = document.getElementById('dd-report-select');
-            if (!sel) return;
-            const reports = data.reports || data || [];
-            const cur = sel.value;
-            sel.innerHTML = '<option value="">Select a Deal Report…</option>' +
-                reports.map(r => `<option value="${r.id}">${r.company_name || ('Report #' + r.id)}</option>`).join('');
-            if (cur) sel.value = cur;
+            _dd.allReports = (data.reports || data || []);
+            ddRenderReportOptions(_dd.allReports);
         })
         .catch(() => {});
+}
+
+function _ddReportLabel(r) {
+    const date = (r.created_at || '').slice(0, 10);
+    const stage = r.entry_stage ? ' · ' + r.entry_stage : '';
+    return (r.custom_title || r.company_name || ('Report #' + r.id)) + stage + (date ? ' (' + date + ')' : '');
+}
+
+function ddRenderReportOptions(list) {
+    const sel = document.getElementById('dd-report-select');
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">' + (list.length ? 'Select a Deal Report…' : 'No matching reports') + '</option>' +
+        list.map(r => `<option value="${r.id}">${_ddReportLabel(r)}</option>`).join('');
+    if (cur && list.some(r => String(r.id) === cur)) sel.value = cur;
+}
+
+function ddFilterReports() {
+    const q = ((document.getElementById('dd-report-search') || {}).value || '').trim().toLowerCase();
+    const list = q
+        ? (_dd.allReports || []).filter(r => (r.company_name || '').toLowerCase().includes(q) || (r.custom_title || '').toLowerCase().includes(q))
+        : (_dd.allReports || []);
+    ddRenderReportOptions(list);
 }
 
 function ddReportChanged() {

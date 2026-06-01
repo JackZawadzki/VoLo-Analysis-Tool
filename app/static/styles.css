@@ -5176,9 +5176,13 @@ h2 .info-tip-body {
 
 /* Detail pills */
 .dd-detail-head { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
-.dd-scenario-pills { display:flex; gap:6px; }
-.dd-pill { border:1px solid #d1d5db; background:#fff; border-radius:999px; padding:4px 14px; font:inherit; font-size:12px; cursor:pointer; }
-.dd-pill.active { background:#5B7744; color:#fff; border-color:#5B7744; }
+.dd-pill-wrap { display:inline-flex; align-items:center; gap:8px; }
+.dd-pill-label { font-size:12px; color:#6B7280; }
+.dd-scenario-pills { display:inline-flex; border:1px solid #c9d4ba; border-radius:8px; overflow:hidden; background:#f0f4ec; }
+.dd-pill { border:none; border-right:1px solid #c9d4ba; background:transparent; padding:6px 18px; font:inherit; font-size:13px; cursor:pointer; color:#3a5228; transition:background .12s; }
+.dd-pill:last-child { border-right:none; }
+.dd-pill:hover:not(.active) { background:#e4ecd9; }
+.dd-pill.active { background:#5B7744; color:#fff; font-weight:700; box-shadow:inset 0 -3px 0 rgba(0,0,0,0.18); }
 
 /* ── DD v2 additions: case bridges + inert markers ───────────────── */
 .dd-bridges { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
@@ -5198,3 +5202,17 @@ h2 .info-tip-body {
 
 /* ── DD caveat banner (e.g. DCF indicative warning) ──────────────── */
 .dd-caveat { font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-left:3px solid #d97706; border-radius:6px; padding:8px 12px; margin:0 0 10px; line-height:1.5; }
+
+/* ── DD header polish: report search + TRL note on its own line ──── */
+.dd-report-search { min-width:150px; }
+.dd-global-row #dd-trl-note { flex-basis:100%; margin-top:2px; }
+
+/* ── DD pre-selection empty state ────────────────────────────────── */
+.dd-empty { padding:36px 16px; display:flex; justify-content:center; }
+.dd-empty-card { max-width:560px; text-align:center; background:#fff; border:1px solid #e6e9e0; border-radius:12px; padding:32px 28px; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+.dd-empty-mark { width:44px; height:44px; margin:0 auto 14px; border-radius:10px; background:#5B7744; color:#fff; font-weight:700; font-size:15px; letter-spacing:.05em; display:flex; align-items:center; justify-content:center; }
+.dd-empty-title { font-size:18px; font-weight:600; color:#1f2937; margin-bottom:8px; }
+.dd-empty-desc { font-size:13px; color:#6B7280; line-height:1.6; margin:0 auto 18px; max-width:460px; }
+.dd-empty-steps { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+.dd-empty-steps span { font-size:12px; color:#3a5228; background:#f0f4ec; border:1px solid #d8e0cd; border-radius:999px; padding:5px 12px; }
+.dd-empty-steps b { display:inline-block; margin-right:5px; color:#5B7744; }
