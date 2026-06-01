@@ -377,21 +377,24 @@ def generate_deal_report(
         founder_revenue_projections_m=_sim_founder_rev_m,
         round_size_m=round_size_m,
     )
-    # Standalone new-check sim — always run. Feeds check-size optimization,
-    # follow-on sizing, portfolio impact, sensitivity, and the committed-deal
-    # MOIC distribution (the fund deploys only the NEW check now).
-    sim_standalone = run_simulation(**_sim_kwargs)
+    # PRIMARY sim = the CURRENT-ROUND new check (standalone). This is the
+    # headline and the return distribution — the forward, decision-relevant
+    # view of the capital being deployed now. It also feeds check-size
+    # optimization, follow-on sizing, portfolio impact, sensitivity, and the
+    # committed-deal MOIC distribution. Same for first checks (unchanged).
+    sim = run_simulation(**_sim_kwargs)
+    sim_standalone = sim  # alias — sizing/portfolio/etc. reference this name
 
-    # Headline sim. For a blended follow-on it models VoLo's total position;
-    # for a first check it IS the standalone sim (same object, no extra compute).
+    # For a blended follow-on, also run the TOTAL-POSITION sim (combined stake,
+    # total capital deployed) — surfaced only as a SECONDARY context card, not
+    # the headline, since it includes markup already accrued on the priors.
+    blended_sim = None
     if _is_followon_blended:
-        sim = run_simulation(
+        blended_sim = run_simulation(
             **_sim_kwargs,
             entry_ownership_override=_combined_ownership,
             invested_capital_m=_total_invested_m,
         )
-    else:
-        sim = sim_standalone
 
     # ── Section 2: Carbon assessment ──────────────────────────────────────────
     # Use simulation survival_rate as the carbon risk multiplier so it matches
@@ -593,27 +596,29 @@ def generate_deal_report(
         "p_gt_3x": sim.get("probability", {}).get("gt_3x"),
         "expected_irr": sim.get("expected_irr"),
         "survival_rate": survival,
-        # For a blended follow-on these reflect VoLo's TOTAL position (return on
-        # all capital deployed, including markup already accrued on the priors).
-        "basis": "total_position" if _is_followon_blended else "single_check",
+        # The headline is always the NEW check evaluated standalone (the forward
+        # decision). "current_round" flags a follow-on so the UI can also show
+        # the secondary total-position card; "single_check" is a first check.
+        "basis": "current_round" if _is_followon_blended else "single_check",
+        "new_check_m": check_size_millions,
+        "new_check_ownership_pct": round(entry_ownership * 100, 2),
     }
 
-    # Current-round forecast — the NEW check evaluated standalone from this
-    # round's valuation (the forward, decision-relevant economics). For a first
-    # check this equals the headline; we only attach it for blended follow-ons
-    # so the report can show both "current round" and "total position" returns.
-    if _is_followon_blended:
-        report["current_round_forecast"] = {
-            "expected_moic": sim_standalone.get("moic_unconditional", {}).get("expected"),
-            "p_gt_3x": sim_standalone.get("probability", {}).get("gt_3x"),
-            "expected_irr": sim_standalone.get("expected_irr"),
-            "survival_rate": sim_standalone.get("summary", {}).get("survival_rate"),
-            "moic_conditional_mean": sim_standalone.get("moic_conditional", {}).get("mean"),
-            "new_check_m": check_size_millions,
-            "new_check_ownership_pct": round(entry_ownership * 100, 2),
+    # Total-position forecast — VoLo's return on ALL capital deployed (prior +
+    # new) at the combined stake. Shown as a SECONDARY context card only: it
+    # includes markup already accrued on the priors, so it is NOT the new
+    # check's prospective return. None for first checks.
+    if _is_followon_blended and blended_sim is not None:
+        report["total_position_forecast"] = {
+            "expected_moic": blended_sim.get("moic_unconditional", {}).get("expected"),
+            "p_gt_3x": blended_sim.get("probability", {}).get("gt_3x"),
+            "expected_irr": blended_sim.get("expected_irr"),
+            "survival_rate": blended_sim.get("summary", {}).get("survival_rate"),
+            "combined_ownership_pct": round(_combined_ownership * 100, 2),
+            "total_invested_m": round(_total_invested_m, 2),
         }
     else:
-        report["current_round_forecast"] = None
+        report["total_position_forecast"] = None
 
     _trl_mods = get_trl_modifiers(trl)
 

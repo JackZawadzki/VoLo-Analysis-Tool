@@ -3520,38 +3520,37 @@ function wizRenderReport(r) {
         <div class="rpt-followon-banner" style="margin-top:12px;padding:10px 14px;background:#f0f4ec;border:1px solid #5B7744;border-radius:6px;font-size:0.9rem;line-height:1.55;">
             <strong>Follow-on investment${ov.follow_on_number ? ` — ${['','1st','2nd','3rd'][ov.follow_on_number] || ov.follow_on_number+'th'} follow-on` : ''}</strong>${ov.follow_on_is_pro_rata ? ' &middot; pro-rata' : ''}.
             VoLo has already deployed <strong>$${fmt(ov.total_prior_exposure_m,2)}M</strong> across ${ov.prior_investments.length} prior round${ov.prior_investments.length>1?'s':''}; combined stake is <strong>${fmt(ov.combined_entry_ownership_pct,1)}%</strong> on <strong>$${fmt(ov.total_invested_millions,2)}M</strong> total deployed.
-            The headline metrics below (MOIC, IRR, Entry Ownership) reflect VoLo's <em>total position</em>; the incremental new-check sizing is under <em>Check Size Optimization &rarr; Follow-on Sizing</em>.
+            The headline shows <em>both</em> return views below — <strong>This Check</strong> (the new capital, the decision) and <strong>Total Position</strong> (all capital deployed). New-check sizing detail is under <em>Check Size Optimization &rarr; Follow-on Sizing</em>.
         </div>` : ''}
         ${trace('Deal terms derivation', `
             <p>Post-Money = Pre-Money + Round Size = $${fmt(ov.pre_money_millions,1)}M + $${fmt(ov.round_size_millions,1)}M = <strong>$${fmt(ov.post_money_millions,1)}M</strong></p>
             ${ov.is_blended_followon ? `
-            <p>New-check ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.new_check_ownership_pct,1)}%</strong></p>
-            <p><strong>Entry Ownership = ${fmt(ov.entry_ownership_pct,1)}%</strong> — VoLo's combined diluted stake (prior rounds carried through this round + this check). All headline returns are computed on this stake and total capital deployed (<strong>$${fmt(ov.total_invested_millions,1)}M</strong>), not the new check alone.</p>
+            <p>This check's ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.new_check_ownership_pct,1)}%</strong></p>
+            <p><strong>Entry Ownership = ${fmt(ov.entry_ownership_pct,1)}%</strong> — VoLo's combined diluted stake (prior rounds carried through this round + this check). The <em>This Check</em> headline returns are computed on the new check alone; the <em>Total Position</em> returns are on all $${fmt(ov.total_invested_millions,1)}M deployed at this combined stake (and include markup already accrued on the priors).</p>
             ` : `
             <p>Entry Ownership = Check / Post-Money = $${fmt(ov.check_size_millions,1)}M / $${fmt(ov.post_money_millions,1)}M = <strong>${fmt(ov.entry_ownership_pct,1)}%</strong></p>
             `}
             <p>Exit multiples: ${fmt(ov.exit_multiple_range?.[0],1)}x - ${fmt(ov.exit_multiple_range?.[1],1)}x EV/EBITDA. ${ov.comps_derived_multiples ? 'Damodaran/NYU comps, 20% acquisition haircut.' : 'User-specified.'}</p>
         `)}
-        ${ov.is_blended_followon ? `<p style="font-size:0.82rem;color:var(--text-secondary);margin:4px 0 6px;line-height:1.5;">These headline metrics are VoLo's <strong>total position</strong> — return on all capital deployed (prior rounds + this check), which includes markup already accrued on the priors. The new check's standalone forecast is shown below.</p>` : ''}
+        ${ov.is_blended_followon ? `<p style="font-size:0.82rem;color:var(--text-secondary);margin:6px 0 8px;line-height:1.5;">Two return views — <strong>This Check</strong> (return on the new capital, the decision) and <strong>Total Position</strong> (return on all capital deployed, which includes markup already accrued on the priors).</p>
+        <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--accent,#5B7744);margin:0 0 5px;">This Check &mdash; new $${fmt(ov.check_size_millions,1)}M at ${fmt(ov.new_check_ownership_pct,1)}%</div>` : ''}
         <div class="rpt-hero-row">
-            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(hero.expected_moic)}x</div><div class="rpt-hero-label">Expected MOIC${ov.is_blended_followon ? ' (total position)' : ''} ${infoTip('expected_moic')}</div></div>
+            <div class="rpt-hero-card accent"><div class="rpt-hero-num">${fmt(hero.expected_moic)}x</div><div class="rpt-hero-label">Expected MOIC ${infoTip('expected_moic')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.p_gt_3x)}</div><div class="rpt-hero-label">P(>3x) ${infoTip('p_gt_3x')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.expected_irr)}</div><div class="rpt-hero-label">Expected IRR ${infoTip('expected_irr')}</div></div>
             <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(hero.survival_rate)}</div><div class="rpt-hero-label">Survival Rate ${infoTip('survival_rate')}</div></div>
         </div>
-        ${(ov.is_blended_followon && r.current_round_forecast) ? `
-        <div style="margin-top:10px;padding:10px 14px;background:#fafaf7;border:1px solid var(--border);border-radius:6px;">
-            <div style="font-size:0.8rem;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Current-Round Forecast — new check only ($${fmt(r.current_round_forecast.new_check_m,1)}M at ${fmt(r.current_round_forecast.new_check_ownership_pct,2)}%, from this round's valuation)</div>
-            <div class="rpt-hero-row" style="margin:0;">
-                <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(r.current_round_forecast.expected_moic)}x</div><div class="rpt-hero-label">E[MOIC] (new check)</div></div>
-                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.p_gt_3x)}</div><div class="rpt-hero-label">P(>3x)</div></div>
-                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.expected_irr)}</div><div class="rpt-hero-label">E[IRR]</div></div>
-                <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.current_round_forecast.survival_rate)}</div><div class="rpt-hero-label">Survival</div></div>
-            </div>
-            <p style="font-size:0.75rem;color:var(--text-tertiary);margin:8px 0 0;line-height:1.5;">The forward, decision-relevant return on the new capital. The total-position figures above include gains already accrued on the priors, so they overstate the new check's prospective return.</p>
-        </div>` : ''}
+        ${(ov.is_blended_followon && r.total_position_forecast) ? `
+        <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary);margin:16px 0 5px;">Total Position &mdash; all capital deployed ($${fmt(r.total_position_forecast.total_invested_m,2)}M at ${fmt(r.total_position_forecast.combined_ownership_pct,1)}% combined)</div>
+        <div class="rpt-hero-row">
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${fmt(r.total_position_forecast.expected_moic)}x</div><div class="rpt-hero-label">Blended MOIC ${infoTip('expected_moic')}</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.total_position_forecast.p_gt_3x)}</div><div class="rpt-hero-label">P(>3x)</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.total_position_forecast.expected_irr)}</div><div class="rpt-hero-label">Blended IRR</div></div>
+            <div class="rpt-hero-card"><div class="rpt-hero-num">${pctFmt(r.total_position_forecast.survival_rate)}</div><div class="rpt-hero-label">Survival Rate</div></div>
+        </div>
+        <p style="font-size:0.74rem;color:var(--text-tertiary);margin:7px 0 0;line-height:1.45;">Total Position includes gains already accrued on the priors, so it overstates the new check's prospective return &mdash; use <em>This Check</em> for the follow-on decision.</p>` : ''}
         ${trace('Hero metrics methodology', `
-            <p><strong>E[MOIC]</strong> = unconditional mean over ${(sim.n_simulations||5000).toLocaleString()} paths (~${pctFmt(prob.total_loss)} total-loss). ${ov.is_blended_followon ? `Computed on VoLo's <strong>total position</strong>: $${fmt(ov.total_invested_millions,1)}M deployed at ${fmt(ov.entry_ownership_pct,1)}% combined ownership (prior rounds + this check).` : `Fund-returner = ~${fmt((ov.check_size_millions > 0 ? ((ov.fund_size_m || 100) / ov.check_size_millions) : 33), 0)}x ($${fmt(ov.check_size_millions,1)}M into $${fmt(ov.fund_size_m || 100, 0)}M fund).`}</p>
+            <p><strong>E[MOIC]</strong> = unconditional mean over ${(sim.n_simulations||5000).toLocaleString()} paths (~${pctFmt(prob.total_loss)} total-loss). ${ov.is_blended_followon ? `<strong>This Check</strong> is the new check ($${fmt(ov.check_size_millions,1)}M at ${fmt(ov.new_check_ownership_pct,1)}%) evaluated standalone — the forward, decision-relevant return. <strong>Total Position</strong> is the return on all $${fmt(ov.total_invested_millions,1)}M deployed at ${fmt(ov.entry_ownership_pct,1)}% combined ownership, and includes markup already accrued on the priors.` : `Fund-returner = ~${fmt((ov.check_size_millions > 0 ? ((ov.fund_size_m || 100) / ov.check_size_millions) : 33), 0)}x ($${fmt(ov.check_size_millions,1)}M into $${fmt(ov.fund_size_m || 100, 0)}M fund).`}</p>
             <p><strong>P(>3x)</strong> = fraction of paths with MOIC >= 3.0.</p>
             <p><strong>E[IRR]</strong> = cashflow-based dollar-weighted IRR. Aggregates all ${(sim.n_simulations||5000).toLocaleString()} simulated paths into a single cashflow vector (invest at t=0, receive proceeds at each exit year) and solves for the discount rate where NPV = 0 (Newton's method). This weights outcomes by actual dollars returned rather than averaging per-path IRRs.</p>
             <p><strong>Survival Rate</strong> = P(MOIC > 0). Driven by TRL-adjusted stage graduation rates from dilution model.</p>
@@ -4041,7 +4040,7 @@ function wizRenderReport(r) {
             <p><strong>Layer 2 — Revenue</strong>: ${revSource === 'founder_anchored' ? 'Founder projections (from Excel extraction) as base. Market-driven scaling factor = each path\'s adoption / median adoption at reference year. TRL-calibrated execution noise (lognormal, sigma varies by TRL). Beyond founder window: extrapolate at S-curve growth rates.' : 'Annual market additions x penetration share (uniform ' + fmt((ov.penetration_share||[])[0]||0.01,3) + ' to ' + fmt((ov.penetration_share||[])[1]||0.05,3) + '), cumulated. TRL ' + ov.trl + ' lag = ' + (trlImp.revenue_lag_years||'?') + ' years.'}</p>
             <p><strong>Layer 3 — Dilution</strong>: Stage-by-stage from ${ov.entry_stage}. At each stage, three outcomes: graduate (raise next round), mid-stage exit (acquisition/IPO), or failure. Round sizes and post-money from Carta lognormal fits (sector: ${ov.sector_profile}). TRL modifiers: ${fmt(trlImp.survival_penalty,0)}% survival penalty, ${fmt(trlImp.capital_intensity_mult,2)}x capital intensity, ${fmt(trlImp.extra_bridge_prob,0)}% bridge prob.</p>
             <p><strong>Layer 4 — Exit valuation</strong>: EV = EBITDA x exit_multiple x final_ownership. EBITDA = revenue x margin (margin ramps ${((sim.ebitda_margin?.margin_start || 0)*100).toFixed(0)}% → ${((sim.ebitda_margin?.margin_end || 0.25)*100).toFixed(0)}% over ${sim.ebitda_margin?.ramp_years || 6} years for TRL ${ov.trl}). Revenue basis: max(trailing_rev, projected_rev_${fwdLook}yr x ${(fwdConf*100).toFixed(0)}%). EV/EBITDA multiples: ${fmt(trlImp.effective_multiple_range?.[0],1)}x - ${fmt(trlImp.effective_multiple_range?.[1],1)}x (TRL-adjusted). Stage exits valued from Carta post-money x acq_multiple, capped at forward-looking EV. Partials and late exits use EBITDA ceiling.</p>
-            <p><strong>Layer 5 — Returns</strong>: MOIC = gross_proceeds / ${ov.is_blended_followon ? 'total capital deployed (prior rounds + new check)' : 'check'}. Total losses → MOIC 0.</p>
+            <p><strong>Layer 5 — Returns</strong>: MOIC = gross_proceeds / check${ov.is_blended_followon ? ' (this distribution is the <em>This Check</em> view; the <em>Total Position</em> headline divides proceeds by all capital deployed at the combined stake)' : ''}. Total losses → MOIC 0.</p>
             <p><strong>Determinism</strong>: Seed ${audit.random_seed || 'auto'} — deterministic and reproducible.</p>
         `)}
     </div>`;
