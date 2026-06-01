@@ -11581,6 +11581,8 @@ switchTab = function(tab) {
 const _dd = {
     reportId: null,
     reportData: null,
+    overview: null,
+    seed: null,           // report-derived Cons/Base/Best presets (revenue + exit multiple)
     deal: { check_size_m: 2.0, pre_money_m: 15.0, round_size_m: null, exit_year: null },
     result: null,
     charts: {},
@@ -11726,7 +11728,7 @@ function ddReportChanged() {
     const sel = document.getElementById('dd-report-select');
     const id = sel ? parseInt(sel.value, 10) : NaN;
     if (!id) {
-        _dd.reportId = null; _dd.reportData = null;
+        _dd.reportId = null; _dd.reportData = null; _dd.seed = null;
         document.getElementById('dd-workspace').style.display = 'none';
         document.getElementById('dd-empty').style.display = '';
         _ddSetButtons(false);
@@ -11747,8 +11749,10 @@ function ddReportChanged() {
                 round_size_m: inp.round_size_m || ov.round_size_m || null,
                 exit_year: null,
             };
+            _dd.seed = _ddDeriveSeed();          // revenue + exit multiple from the report
             _ddRenderDealStrip();
-            ddBuildTable();
+            ddBuildTable(_dd.seed.preset);       // per-field: underived fields fall back to presets
+            _ddRenderSeedNote();
             // Seed the TRL selector (and POS/launch defaults) from the report's TRL.
             const trl = ov.trl || inp.trl;
             const trlSel = document.getElementById('dd-trl');
@@ -11786,9 +11790,91 @@ function _ddRenderDealStrip() {
         ${d.round_size_m ? `<span class="dd-deal-chip">Round: $${_ddFmt(d.round_size_m)}M</span>` : ''}`;
 }
 
+// ── Seed Conservative/Base/Best from the loaded deal report ───────
+// Revenue (Year-1 $M + implied CAGR) comes from financial_model; exit multiple from the
+// comps range. Per-field: any field we can't derive is omitted so ddBuildTable falls back
+// to that field's generic DD_FIELDS preset. Revenue is stored as RAW USD (the app divides
+// by 1e6; the financial_model `units` label is unreliable), so /1e6 → $M.
+function _ddDeriveSeed() {
+    const out = { preset: {}, current: {}, revenueSeeded: false, multipleSeeded: false, company: 'this report' };
+    const rep = (_dd.reportData && _dd.reportData.report) || {};
+    const ov = _dd.overview || {};
+    const inp = (_dd.reportData && _dd.reportData.inputs) || {};
+    out.company = (_dd.reportData && _dd.reportData.company_name) || ov.company_name || 'this report';
+    const r2 = v => Math.round(v * 100) / 100;
+
+    // Revenue: first positive projected year ($M) + geometric CAGR across positive years.
+    const fm = rep.financial_model || {};
+    if (fm.has_data) {
+        const revMap = (fm.financials || {}).revenue || {};
+        const years = (fm.fiscal_years || [])
+            .map(y => parseInt(y, 10)).filter(y => !isNaN(y)).sort((a, b) => a - b);
+        const pts = [];
+        for (const y of years) {
+            let v = revMap[String(y)]; if (v == null) v = revMap[y];
+            if (v && typeof v === 'object') v = v.value;     // defensive {value:..}
+            v = parseFloat(v);
+            if (!isNaN(v) && v > 0) pts.push({ y, m: v / 1e6 });   // RAW USD → $M
+        }
+        const y1 = pts.length ? pts[0].m : null;
+        if (y1 != null && isFinite(y1) && y1 > 0 && y1 < 1e5) {   // sanity ceiling guards mis-scaled data
+            out.preset.revenue_y1_m = [r2(y1 * 0.7), r2(y1), r2(y1 * 1.3)];   // ×0.7 / base / ×1.3
+            out.current.revenue_y1_m = r2(y1);
+            out.revenueSeeded = true;
+            if (pts.length >= 2) {
+                const a = pts[0], b = pts[pts.length - 1], span = b.y - a.y;
+                if (span > 0 && a.m > 0) {
+                    const cagr = Math.round((Math.pow(b.m / a.m, 1 / span) - 1) * 100);
+                    if (isFinite(cagr)) {
+                        // ±30, Conservative floored at 10% but never above Base (keeps Cons ≤ Base ≤ Best
+                        // even when the founder's implied growth is very low).
+                        const cagrLo = Math.min(cagr, Math.max(10, cagr - 30));
+                        out.preset.revenue_cagr_pct = [cagrLo, cagr, cagr + 30];
+                        out.current.revenue_cagr_pct = cagr;
+                    }
+                }
+            }
+        }
+    }
+
+    // Exit multiple: Conservative/Best = comps range ends, Base = midpoint.
+    const rng = ov.exit_multiple_range || inp.exit_multiple_range;
+    if (Array.isArray(rng) && rng.length === 2 && isFinite(rng[0]) && isFinite(rng[1])
+            && Math.min(rng[0], rng[1]) > 0) {   // a non-positive multiple is nonsensical → fall back to preset
+        const lo = Math.min(rng[0], rng[1]), hi = Math.max(rng[0], rng[1]);
+        out.preset.exit_multiple = [r2(lo), r2((lo + hi) / 2), r2(hi)];
+        out.current.exit_multiple = r2((lo + hi) / 2);
+        out.multipleSeeded = true;
+    }
+    return out;
+}
+
+// Tell the analyst exactly what was seeded vs. left at generic defaults.
+function _ddRenderSeedNote() {
+    const el = document.getElementById('dd-seed-note');
+    if (!el) return;
+    const s = _dd.seed || {};
+    const withGrowth = s.current && s.current.revenue_cagr_pct != null ? ' &amp; growth rate' : '';
+    let msg;
+    if (s.revenueSeeded && s.multipleSeeded) {
+        msg = `<strong>Seeded from ${s.company}:</strong> Year-1 revenue${withGrowth} from the founder's financial model, and exit multiple from the comps range. Conservative &amp; Best are bands around these — edit any cell.`;
+    } else if (s.multipleSeeded) {
+        msg = `<strong>Seeded from ${s.company}:</strong> exit multiple from the comps range. No founder revenue in this report, so revenue uses generic defaults.`;
+    } else if (s.revenueSeeded) {
+        msg = `<strong>Seeded from ${s.company}:</strong> Year-1 revenue${withGrowth} from the founder's financial model.`;
+    } else {
+        msg = `No founder financials in this report — using generic stage defaults below.`;
+    }
+    el.innerHTML = msg;
+    el.style.display = '';
+}
+
 // ── Build the core assumption table ───────────────────────────────
 function _ddCurrentValue(key) {
-    // "Current" reference value pulled from the deal report where one exists.
+    // "Current" reference value: report-derived seed where we have one, else pulled
+    // straight from the deal report's overview/inputs.
+    const seed = _dd.seed || {};
+    if (seed.current && seed.current[key] != null) return seed.current[key];
     const inp = (_dd.reportData && _dd.reportData.inputs) || {};
     const ov = _dd.overview || {};
     if (key === 'exit_multiple') {
@@ -11845,7 +11931,7 @@ function ddToggleNA(key) {
     if (row) row.classList.toggle('dd-row-na', on);
 }
 
-function ddResetDefaults() { ddBuildTable(); document.getElementById('dd-outputs').style.display = 'none'; }
+function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; }
 
 function _ddOnEdit() { /* live-edit hook (kept light; results refresh on Run) */ }
 
