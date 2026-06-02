@@ -1032,6 +1032,78 @@ def _financing_summary_block(ov: dict) -> str:
     return "\n".join(lines)
 
 
+def _return_profile_block(report: dict) -> str:
+    """Deterministic 'This Check vs Total Position' return summary, mirroring the
+    deal report's dual-view header. Built from hero_metrics + total_position_forecast
+    so it can't drift. THIS CHECK (return on the new capital) is the decision and the
+    focus; TOTAL POSITION is the blended return on prior + new and is flagged as
+    context only — it bakes in markup already accrued on the prior investment, so it
+    is NOT the new check's prospective return. Keeps the prior investment visible
+    without re-confusing it with the current decision. Scales match the report UI:
+    MOIC = raw multiple; IRR / P(>3x) / survival = fractions (×100); ownership %s
+    are already percent-valued."""
+    if not report:
+        return ""
+    ov   = report.get("deal_overview", {}) or {}
+    hero = report.get("hero_metrics", {}) or {}
+    tpf  = report.get("total_position_forecast") or {}
+    if not hero:
+        return ""
+
+    def _x(v):   # MOIC multiple
+        return f"{v:.2f}x" if isinstance(v, (int, float)) else "N/A"
+
+    def _p(v):   # fraction -> percent (IRR, P(>3x), survival)
+        return f"{v * 100:.1f}%" if isinstance(v, (int, float)) else "N/A"
+
+    def _pp(v):  # already a percent number (ownership)
+        return f"{v:.1f}%" if isinstance(v, (int, float)) else "N/A"
+
+    def _m(v, d=1):
+        return f"${v:.{d}f}M" if isinstance(v, (int, float)) else "N/A"
+
+    is_fo = bool(tpf) and (
+        ov.get("investment_type") == "followon"
+        or ov.get("is_blended_followon")
+        or hero.get("basis") == "current_round"
+    )
+    check_m = ov.get("check_size_millions", hero.get("new_check_m"))
+    own_new = ov.get("new_check_ownership_pct", hero.get("new_check_ownership_pct"))
+
+    def _returns_table(src):
+        return [
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Expected MOIC | {_x(src.get('expected_moic'))} |",
+            f"| Expected IRR | {_p(src.get('expected_irr'))} |",
+            f"| P(>3x) | {_p(src.get('p_gt_3x'))} |",
+            f"| Survival rate | {_p(src.get('survival_rate'))} |",
+            "",
+        ]
+
+    lines = ["### Return Profile", ""]
+    if is_fo:
+        lines += [f"**This Check — the investment decision** (return on the new {_m(check_m)} at {_pp(own_new)})", ""]
+        lines += _returns_table(hero)
+        lines += ["*The forward, decision-relevant return on the new capital deployed in this round.*", ""]
+        lines += [
+            f"**Total Position — all VoLo capital deployed** "
+            f"(prior + new: {_m(tpf.get('total_invested_m'), 2)} at {_pp(tpf.get('combined_ownership_pct'))} combined)",
+            "",
+        ]
+        lines += _returns_table(tpf)
+        lines += [
+            "*Context only — Total Position includes markup already accrued on VoLo's prior investment, "
+            "so it OVERSTATES the new check's prospective return. Use This Check for the follow-on decision; "
+            "Total Position shows how this check sits within VoLo's existing position.*",
+            "",
+        ]
+    else:
+        lines += [f"**Return on this investment** ({_m(check_m)} at {_pp(own_new)})", ""]
+        lines += _returns_table(hero)
+    return "\n".join(lines)
+
+
 def _extract_context_section(context: str, heading_prefix: str) -> str:
     """Return the block of a report-context string whose heading line starts with
     `heading_prefix` (e.g. '## THIS ROUND'), up to the next '## ' heading.
@@ -1580,6 +1652,12 @@ MEMO_SECTIONS = [
             "acknowledge VoLo is an existing investor and explain how this round builds on the prior "
             "position (combined ownership, total invested); never conflate a prior round's valuation "
             "with the current round's terms.\n\n"
+            "RETURN PROFILE: A deterministic 'Return Profile' block (This Check vs Total Position) is "
+            "also injected — do not restate its numbers. Analyse the investment primarily through THIS "
+            "CHECK, the return on the new capital being deployed (the actual decision). Treat TOTAL "
+            "POSITION as context only: it is the blended return on prior + new capital and includes "
+            "markup already accrued on the prior investment, so it overstates the new check's "
+            "prospective return. Always keep the two distinct.\n\n"
             "DEAL STRUCTURE: Overview of the round and VoLo's role. Include total raise. "
             "Describe VoLo Earth value-add and additionality. List committed syndicate members.\n\n"
             "CAPITAL POSITION: Total raised to date, current cash in bank, current burn rate, "
@@ -2697,17 +2775,24 @@ def _build_memo_payload(
         raise RuntimeError(detail)
     section_texts, total_tokens_in, total_tokens_out, pass_log = pipeline_result
 
-    # Prepend a deterministic, clearly-separated financing summary (prior vs
-    # current round) to the Financing Overview section. Built straight from the
-    # report's deal_overview so the round numbers are guaranteed correct — an
-    # explicit separation on top of the financing detail woven through the memo.
+    # Prepend two deterministic, clearly-separated blocks to the Financing
+    # Overview section, built straight from the report so the numbers can't
+    # drift: (1) Financing Summary — prior financing vs the current round
+    # (terms); (2) Return Profile — This Check (the decision) vs Total Position
+    # (blended prior + new, flagged as context only). These are explicit
+    # separations on top of the financing detail woven through the memo.
     try:
         _fin_key = "financing_overview"
         if _fin_key in section_texts and _fin_key not in (req.locked_sections or {}):
             _rp = json.loads(report_data_json) if isinstance(report_data_json, str) else (report_data_json or {})
-            _fin_block = _financing_summary_block((_rp or {}).get("deal_overview", {}))
-            if _fin_block:
-                section_texts[_fin_key] = _fin_block + "\n" + (section_texts.get(_fin_key) or "")
+            _rp = _rp or {}
+            _blocks = [
+                _financing_summary_block(_rp.get("deal_overview", {})),
+                _return_profile_block(_rp),
+            ]
+            _prefix = "\n".join(b for b in _blocks if b)
+            if _prefix:
+                section_texts[_fin_key] = _prefix + "\n" + (section_texts.get(_fin_key) or "")
     except Exception:
         pass
 
