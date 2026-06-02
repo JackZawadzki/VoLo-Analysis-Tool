@@ -3653,13 +3653,13 @@ function wizRenderReport(r) {
         const portfolioLabel = nCommitted > 0
             ? `Running Fund (${nCommitted} committed deal${nCommitted > 1 ? 's' : ''} + ${20 - nCommitted} simulated)`
             : 'Simulated Portfolio';
-        // Carta VC fund Net TVPI benchmark at maturity (terminal age ~10) — mirror of
-        // configs/carta_benchmarks.json. Static reference data so the top-decile overlay
-        // renders on ANY saved report (old or new); the fund's own P90 is calibrated to it.
-        const CARTA_TVPI_MATURE = { p50: 1.65, p75: 2.20, p90: 4.00 };
+        // Carta top-decile (P90) benchmark for a mature fund — mirror of
+        // configs/carta_benchmarks.json. Static reference so the caption renders on ANY
+        // saved report; the fund's own P90 (shown as its own row of boxes) is the compare.
+        const CARTA_P90 = 4.00;
         const _fundP90 = (pImpact.tvpi_new_p90 != null) ? pImpact.tvpi_new_p90 : null;
-        const _topDecileRead = (_fundP90 != null)
-            ? `This fund's top-decile (P90) path of <strong>${fmt(_fundP90)}x</strong> ${_fundP90 >= CARTA_TVPI_MATURE.p90 * 0.98 ? 'is at or above' : 'compares to'} the Carta top decile (~${fmt(CARTA_TVPI_MATURE.p90)}x). The headline <strong>${fmt(pImpact.tvpi_new_mean)}x</strong> is the <em>mean (expected)</em> outcome — it sits below the top decile by design.`
+        const _cartaCaption = (_fundP90 != null)
+            ? `Top decile (P90) <strong>${fmt(_fundP90)}x</strong> ${_fundP90 >= CARTA_P90 * 0.98 ? 'is at or above' : 'is below'} the Carta top-decile benchmark (~${fmt(CARTA_P90)}x). The Base Fund / With Deal figures are the <em>mean (expected)</em> case, which sits below the top decile by design.`
             : '';
         html += `<div class="rpt-section">${secNum()}
             <h3 class="rpt-section-title">${portfolioLabel} Impact ${infoTip('portfolio_impact')}</h3>
@@ -3672,6 +3672,7 @@ function wizRenderReport(r) {
                 <p><strong>Deal parameters</strong>: cap_multiple = ${fmt(moicC.mean,1)}x (conditional mean), success_prob = ${pctFmt(sim.survival_rate)}, exit_year = triangular(${ov.exit_year_range?.[0] || 5}, ${ov.exit_year_range?.[1] || 10}), check = $${fmt(ov.check_size_millions, 1)}M.</p>
                 ${nCommitted > 0 ? '<p><strong>Note</strong>: Committed deals use their full MOIC distribution from the original Monte Carlo simulation for realistic variance.</p>' : '<p><strong>Limitation</strong>: Simulated portfolio, not actual holdings. No cross-asset correlation.</p>'}
             `)}
+            <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Expected (mean)</div>
             <div class="rpt-impact-grid">
                 <div class="rpt-impact-card">
                     <div class="rpt-impact-val">${fmt(pImpact.tvpi_base_mean)}x</div>
@@ -3689,6 +3690,25 @@ function wizRenderReport(r) {
                     <div class="rpt-impact-lbl">TVPI Delta ${infoTip('tvpi_delta')}</div>
                 </div>
             </div>
+            ${pImpact.tvpi_new_p90 != null ? `
+            <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--accent,#5B7744);margin:16px 0 6px;">Top decile (P90)</div>
+            <div class="rpt-impact-grid">
+                <div class="rpt-impact-card">
+                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_base_p90)}x</div>
+                    <div class="rpt-impact-sub">Base Fund ${infoTip('base_fund')}</div>
+                    <div class="rpt-impact-lbl">TVPI (P90 — top decile)</div>
+                </div>
+                <div class="rpt-impact-card">
+                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_new_p90)}x</div>
+                    <div class="rpt-impact-sub">With This Deal ${infoTip('with_deal')}</div>
+                    <div class="rpt-impact-lbl">TVPI (P90)</div>
+                </div>
+                <div class="rpt-impact-card lift">
+                    <div class="rpt-impact-val ${liftCls(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}">${signFmt(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}x</div>
+                    <div class="rpt-impact-sub">Marginal Lift ${infoTip('marginal_lift')}</div>
+                    <div class="rpt-impact-lbl">TVPI Delta</div>
+                </div>
+            </div>` : ''}
             <table class="rpt-table">
                 <thead><tr><th>Metric</th><th>Base Portfolio</th><th>With Deal</th><th>Delta</th></tr></thead>
                 <tbody>
@@ -3700,20 +3720,7 @@ function wizRenderReport(r) {
                     <tr><td>IRR (P50)</td><td class="rpt-num">${pctFmt(pImpact.irr_base_p50)}</td><td class="rpt-num">${pctFmt(pImpact.irr_new_p50)}</td><td class="rpt-num ${liftCls(pImpact.irr_new_p50 - pImpact.irr_base_p50)}">${((pImpact.irr_new_p50 - pImpact.irr_base_p50)*100).toFixed(1)}pp</td></tr>
                 </tbody>
             </table>
-            ${_fundP90 != null ? `
-            <div style="background:#f7f9f4;border:1px solid #d8e0cc;border-radius:8px;padding:12px 14px;margin-top:12px;">
-                <div style="font-weight:700;font-size:13px;color:#3a5228;margin-bottom:6px;">Top decile vs. Carta benchmark</div>
-                <p style="font-size:12.5px;line-height:1.5;margin:0 0 8px;">${_topDecileRead}</p>
-                <table class="rpt-table" style="margin:0;">
-                    <thead><tr><th>TVPI percentile</th><th class="rpt-num">This fund (with deal)</th><th class="rpt-num">Carta (mature fund)</th></tr></thead>
-                    <tbody>
-                        <tr><td>Median (P50)</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p50)}x</td><td class="rpt-num">${fmt(CARTA_TVPI_MATURE.p50)}x</td></tr>
-                        <tr><td>Upper quartile (P75)</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p75)}x</td><td class="rpt-num">${fmt(CARTA_TVPI_MATURE.p75)}x</td></tr>
-                        <tr><td>Top decile (P90)</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p90)}x</td><td class="rpt-num">${fmt(CARTA_TVPI_MATURE.p90)}x</td></tr>
-                    </tbody>
-                </table>
-                <p style="font-size:11px;color:#6b7280;margin:8px 0 0;line-height:1.45;">Carta = VC fund Net TVPI percentiles at maturity (configs/carta_benchmarks.json). Carta reports percentiles, not a mean — the fund's <em>mean</em> TVPI compares to Carta's median–P75 band, while its <em>P90</em> path is the like-for-like top-decile comparison.</p>
-            </div>` : ''}
+            ${_cartaCaption ? `<p class="rpt-narrative" style="font-size:12px;color:#6b7280;margin-top:10px;">${_cartaCaption}</p>` : ''}
         </div>`;
     }
 
