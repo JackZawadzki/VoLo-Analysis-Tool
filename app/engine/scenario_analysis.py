@@ -274,6 +274,16 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
         sm_end = _num(assumptions, "opex_sm_end_pct_rev", 12.0) / 100.0
         ga_end = _num(assumptions, "opex_ga_end_pct_rev", 7.0) / 100.0
 
+    # Absolute operating-spend plan ($M/yr), independent of realized revenue. When
+    # opex_commercial_m is provided, OpEx follows this plan (a modest year-over-year
+    # ramp) instead of "% of revenue" — so a low-revenue case keeps its committed spend
+    # rather than auto-shrinking, which is what made cash-to-breakeven behave backwards
+    # (a weaker case looked CHEAPER). Falls back to the %-of-revenue path when absent.
+    use_abs_opex = not _is_na(assumptions.get("opex_commercial_m"))
+    opex_commercial_m = _num(assumptions, "opex_commercial_m", 0.0)
+    opex_prelaunch_m = _num(assumptions, "opex_prelaunch_m", 0.0)
+    opex_ramp = _num(assumptions, "opex_ramp_pct", 15.0) / 100.0   # modest annual growth
+
     da_pct = _num(assumptions, "da_pct_rev", 3.0) / 100.0
     capex_pct = _num(assumptions, "capex_pct_rev", 5.0) / 100.0
     nwc_pct = _num(assumptions, "nwc_pct_rev", 10.0) / 100.0
@@ -306,11 +316,15 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
     revenue = [0.0] * pre_launch + commercial_revenue
 
     # ── Pre-launch burn rate (absolute $M/yr for R&D + G&A) ───────
-    # During pre-launch, the company has no revenue but still spends on
-    # R&D and G&A. We estimate burn from the Year 1 commercial revenue
-    # as a reference point (what the team is spending to get to launch).
-    prelaunch_rd_burn = rev_y1 * rd_start if rev_y1 > 0 else 0.5
-    prelaunch_ga_burn = rev_y1 * ga_start * 0.5 if rev_y1 > 0 else 0.15
+    # During pre-launch, the company has no revenue but still spends on R&D + G&A.
+    # With an absolute plan, use it directly (revenue-independent). Otherwise fall back
+    # to the legacy heuristic that references Year-1 commercial revenue.
+    if use_abs_opex:
+        prelaunch_rd_burn = opex_prelaunch_m
+        prelaunch_ga_burn = 0.0
+    else:
+        prelaunch_rd_burn = rev_y1 * rd_start if rev_y1 > 0 else 0.5
+        prelaunch_ga_burn = rev_y1 * ga_start * 0.5 if rev_y1 > 0 else 0.15
     prelaunch_capex_burn = rev_y1 * capex_pct if rev_y1 > 0 else 0.1
 
     # Build P&L arrays
@@ -353,9 +367,16 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
             cogs_val = rev * (1.0 - gm)
             gp = rev * gm
 
-            rd = rev * _lerp(rd_start, rd_end, t)
-            sm = rev * _lerp(sm_start, sm_end, t)
-            ga = rev * _lerp(ga_start, ga_end, t)
+            if use_abs_opex:
+                # Absolute plan: commercial-year-1 spend, ramping modestly each year,
+                # independent of revenue. Booked as R&D so total_opex stays correct.
+                rd = opex_commercial_m * ((1.0 + opex_ramp) ** commercial_idx)
+                sm = 0.0
+                ga = 0.0
+            else:
+                rd = rev * _lerp(rd_start, rd_end, t)
+                sm = rev * _lerp(sm_start, sm_end, t)
+                ga = rev * _lerp(ga_start, ga_end, t)
             tot_opex = rd + sm + ga
 
             ebitda_val = gp - tot_opex
@@ -403,7 +424,9 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
         spread = max(wacc - terminal_g, 0.02)
         terminal_value = max(fcf[-1], 0.0) * (1.0 + terminal_g) / spread
     elif exit_type == "ev_ebitda":
-        terminal_value = terminal_ebitda * exit_mult
+        # Floor at 0 so an absolute opex plan can't drive a negative exit valuation
+        # for a very-low-revenue case (fixed spend > gross profit at exit).
+        terminal_value = max(terminal_ebitda, 0.0) * exit_mult
     else:
         terminal_value = terminal_rev * exit_mult
 
