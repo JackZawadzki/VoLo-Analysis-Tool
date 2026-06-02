@@ -896,6 +896,98 @@ class MemoGenerateRequest(BaseModel):
     engine_version: str = "v1"
 
 
+def _format_round_terms(ov: dict) -> list:
+    """Render the CURRENT round's authoritative deal terms from deal_overview.
+
+    deal_overview is the single source of truth for round structure (current
+    pre/post-money, this round's check + ownership, and a SEPARATE prior_investments
+    list). Surfacing it explicitly — and labeling priors as sunk context — keeps the
+    memo (especially the Pass-3 synthesis sections) anchored on the round the memo is
+    FOR, instead of inferring valuation from the raw input dump which, for a follow-on,
+    foregrounds the prior round and yields the wrong post-money.
+    """
+    if not ov:
+        return []
+    is_fo = ov.get("investment_type") == "followon" or ov.get("is_blended_followon")
+    out = ["\n## THIS ROUND — DEAL TERMS (current round; authoritative)"]
+    out.append(f"- Investment type: {'Follow-on' if is_fo else 'First check'}")
+    out.append(f"- Stage: {ov.get('entry_stage', 'N/A')}")
+    out.append(f"- Pre-money: ${ov.get('pre_money_millions', 'N/A')}M")
+    out.append(f"- Round size: ${ov.get('round_size_millions', 'N/A')}M")
+    out.append(f"- Post-money: ${ov.get('post_money_millions', 'N/A')}M")
+    out.append(f"- VoLo new check (this round): ${ov.get('check_size_millions', 'N/A')}M")
+    out.append(f"- Ownership from this check: {ov.get('new_check_ownership_pct', 'N/A')}%")
+    if ov.get("entry_year"):
+        out.append(f"- Investment (entry) year: {ov.get('entry_year')}")
+    if is_fo:
+        out.append(
+            f"- Combined VoLo ownership after this round (priors + new): "
+            f"{ov.get('combined_entry_ownership_pct', ov.get('entry_ownership_pct', 'N/A'))}%"
+        )
+        out.append(
+            f"- Total VoLo invested across all rounds (prior + new): "
+            f"${ov.get('total_invested_millions', ov.get('total_exposure_m', 'N/A'))}M"
+        )
+        priors = ov.get("prior_investments", []) or []
+        if priors:
+            out.append(
+                "- PRIOR rounds (sunk context only — NOT this memo's round; never use "
+                "these as the headline deal terms):"
+            )
+            for p in priors:
+                _t = p.get("type", "priced")
+                if _t in ("convertible", "safe") or p.get("cap_m"):
+                    terms = f"cap ${p.get('cap_m', 'N/A')}M, discount {p.get('discount_pct', 'N/A')}%"
+                else:
+                    terms = f"pre-money ${p.get('effective_pre_m', 'N/A')}M"
+                out.append(
+                    f"    Round {p.get('round_num', '?')} "
+                    f"({p.get('stage', '?')}, yr {p.get('year', '?')}, {_t}): "
+                    f"VoLo ${p.get('check_m', 'N/A')}M @ {terms}, "
+                    f"ownership {p.get('ownership_pct', 'N/A')}%"
+                )
+    out.append(
+        "- NOTE: This IC memo is for the CURRENT round above — use its pre-/post-money, "
+        "check size, and ownership as the headline deal terms."
+    )
+    if is_fo:
+        out.append(
+            "- FOLLOW-ON — ADDRESS BOTH: VoLo is already an investor here. The memo must cover BOTH "
+            "the current round (the decision at hand) AND explicitly recognize and address VoLo's "
+            "prior investment shown above — that VoLo previously invested, the combined ownership and "
+            "total invested across all rounds, and how this new check builds on that existing position. "
+            "Do NOT present a prior round's valuation as the current headline terms, and do NOT omit the "
+            "prior investment from the memo."
+        )
+    return out
+
+
+def _extract_context_section(context: str, heading_prefix: str) -> str:
+    """Return the block of a report-context string whose heading line starts with
+    `heading_prefix` (e.g. '## THIS ROUND'), up to the next '## ' heading.
+
+    Used to lift a specific labeled block (like the current-round deal terms) out
+    of the full report context so it can be injected where the full context is not
+    passed through verbatim (e.g. the Pass-3 synthesis writer's quant filter).
+    """
+    if not context or not heading_prefix:
+        return ""
+    lines = context.split("\n")
+    start = None
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith(heading_prefix):
+            start = i
+            break
+    if start is None:
+        return ""
+    out = [lines[start]]
+    for ln in lines[start + 1:]:
+        if ln.strip().startswith("## "):
+            break
+        out.append(ln)
+    return "\n".join(out).strip()
+
+
 def _build_report_context(report_row) -> str:
     """Build a structured context string from a deal report."""
     if not report_row:
@@ -909,11 +1001,28 @@ def _build_report_context(report_row) -> str:
     parts.append(f"Archetype: {report_row['archetype']}")
     parts.append(f"Entry Stage: {report_row['entry_stage']}")
 
-    # Input parameters
+    # THIS ROUND — authoritative current-round deal terms from deal_overview,
+    # placed high so the memo (esp. synthesis sections) anchors on the current
+    # round rather than inferring valuation from the raw input dump below (which
+    # for a follow-on foregrounds the prior round → wrong post-money).
+    parts.extend(_format_round_terms(report.get("deal_overview", {})))
+
+    # Input parameters. Skip the structured carbon/volume blobs AND the round
+    # structure fields — the latter are stated authoritatively under THIS ROUND
+    # above; re-dumping raw pre_money/check/prior_* here invites the synthesis
+    # writer to conflate a prior round with the current one.
+    _ctx_skip_input_keys = {
+        'volume', 'op_carbon', 'emb_carbon', 'portfolio',
+        'pre_money_millions', 'check_size_millions', 'round_size_m', 'post_money_millions',
+        'investment_type', 'prior_investments',
+        'prior_first_pre_money_m', 'prior_first_check_m', 'prior_first_round_size_m',
+        'prior_first_entry_year', 'prior_first_entry_stage', 'prior_first_moic_distribution',
+        'follow_on_is_pro_rata', 'follow_on_target_ownership_pct',
+    }
     if inputs:
         parts.append("\n## INPUT PARAMETERS")
         for k, v in inputs.items():
-            if v and k not in ('volume', 'op_carbon', 'emb_carbon', 'portfolio'):
+            if v and k not in _ctx_skip_input_keys:
                 parts.append(f"- {k}: {v}")
 
     # Simulation results — hero_metrics live at top level, probability inside simulation
@@ -1216,6 +1325,9 @@ MEMO_SECTIONS = [
             "Investment Stage & Vehicle, Key Terms, Capital Amount, Expected VEV Equity, Board Participation. "
             "Follow with 'Portfolio Themes' — a short bulleted list of why this fits VoLo's thesis "
             "(e.g. low cost next-gen energy storage, rapidly scalable, system-level enabling tech). "
+            "For a follow-on, the Key Terms / Capital Amount / Expected VEV Equity must reflect the "
+            "CURRENT round, and the overview must also state that VoLo is an existing investor — prior "
+            "capital invested and combined ownership across rounds. "
             "This section is written LAST after all other sections are complete."
         ),
     },
@@ -1815,7 +1927,7 @@ def _get_report_fields_for_section(report_context: str, section: dict) -> str:
 
     # The report context has ## headers like "## SIMULATION RESULTS", "## CARBON IMPACT", etc.
     field_mapping = {
-        "inputs": ["INPUT PARAMETERS", "DEAL REPORT:"],
+        "inputs": ["INPUT PARAMETERS", "DEAL REPORT:", "THIS ROUND"],
         "simulation": ["SIMULATION RESULTS"],
         "adoption": ["MARKET ADOPTION"],
         "carbon": ["CARBON IMPACT"],
@@ -1927,13 +2039,14 @@ CRITICAL — FACTUAL ACCURACY:
 
 Rules:
 1. Synthesize across all sections — do not just summarize one part
-2. For the Investment Overview: write a compelling one-liner, populate the deal terms table, and list portfolio themes as concise bullets
+2. For the Investment Overview: write a compelling one-liner, populate the deal terms table using the CURRENT round's terms (pre-/post-money, check size, ownership) from the "Deal Terms — CURRENT ROUND" block, and list portfolio themes as concise bullets
 3. For High Level Opportunities / Risks: write 3-6 specific, evidence-backed bullet points — each should be punchy and data-driven, drawn from the section texts
 4. For the Investment Recommendation: give a clear verdict (Invest / Pass / Conditional) with the bull and bear case
 5. Include the most important quantitative highlights: MOIC, IRR, P(>3x), carbon t/$, portfolio impact — ONLY if present in the provided data
 6. Do NOT include the section title as a header — it will be added automatically
 7. Write with conviction and intellectual authority — this should read like a narrative that commands attention
 8. Frame this as a generational opportunity or a thoughtful pass — avoid lukewarm language
+9. FOLLOW-ON deals (when the Deal Terms block says "Follow-on"): VoLo is ALREADY an investor. Every relevant section must address BOTH the new round — the decision at hand, using the current round's terms — AND VoLo's prior investment (combined ownership, total invested across rounds, and how this check builds on the existing position). Keep the two distinct; never use a prior round's valuation as the current headline terms, and never omit the prior investment from the memo.
 
 {_STYLE_GUIDE}"""
 
@@ -1966,8 +2079,19 @@ def _pass3_synthesize(client, model: str, section: dict, all_section_texts: dict
                                         'Optimal Check', 'Fund P50 Impact']):
                 quant_summary += line + '\n'
 
+    # The quant filter above keeps only metric lines, so the current round's deal
+    # terms would otherwise never reach the synthesis writer — which is how the
+    # Investment Overview / Recommendation ended up citing a prior (follow-on) round.
+    # Lift the authoritative block out of report_context and pass it through verbatim.
+    deal_terms_block = _extract_context_section(report_context, "## THIS ROUND")
+
     user_parts = [f"# SYNTHESIS SECTION: {section['title']}"]
     user_parts.append(f"## Purpose\n{section['guidance']}")
+
+    if deal_terms_block:
+        user_parts.append(
+            f"## Deal Terms — CURRENT ROUND (authoritative; use these for the deal terms table)\n{deal_terms_block}"
+        )
 
     if quant_summary:
         user_parts.append(f"## Key Quantitative Highlights\n{quant_summary}")
@@ -3011,7 +3135,8 @@ async def get_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
 async def delete_memo(memo_id: int, user: CurrentUser = Depends(get_current_user)):
     conn = get_db()
     try:
-        conn.execute("DELETE FROM generated_memos WHERE id=? AND owner_id=?", (memo_id, user.id))
+        # Shared team library: any member may delete (per team decision).
+        conn.execute("DELETE FROM generated_memos WHERE id=?", (memo_id,))
         conn.commit()
         return {"ok": True}
     finally:
@@ -3060,9 +3185,10 @@ async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
     user = CurrentUser(uid=int(payload["sub"]), username=payload["user"], role=payload["role"])
     conn = get_db()
     try:
+        # Shared team library: any signed-in member can export a teammate's memo.
         row = conn.execute(
-            "SELECT company_name, memo_markdown, report_id, memo_session_id FROM generated_memos WHERE id=? AND owner_id=?",
-            (memo_id, user.id),
+            "SELECT company_name, memo_markdown, report_id, memo_session_id FROM generated_memos WHERE id=?",
+            (memo_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Memo not found")
@@ -3071,12 +3197,14 @@ async def export_memo_docx(memo_id: int, token: Optional[str] = Query(None)):
         image_docs = []
         memo_session_id = row["memo_session_id"] or ""
         if memo_session_id:
+            # Images belong to the memo's own session — scope by session, not the
+            # exporter, so a teammate's docx export still embeds the right images.
             session_rows = conn.execute(
                 """SELECT id, file_name, file_path, file_type, doc_category
                    FROM memo_documents
-                   WHERE memo_session_id=? AND owner_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')
+                   WHERE memo_session_id=? AND file_type IN ('.png','.jpg','.jpeg','.gif','.webp')
                    ORDER BY uploaded_at""",
-                (memo_session_id, user.id),
+                (memo_session_id,),
             ).fetchall()
         else:
             # Fallback for older memos without a session_id: use most recent images for this user
@@ -3267,9 +3395,13 @@ async def revise_section(
     """
     conn = get_db()
     try:
+        # Memos are a shared team library: any signed-in VoLo member can edit a
+        # teammate's memo (matches the firm-wide GET). Attribution is preserved
+        # via memo_revisions.revised_by. (Owner-scoping here caused a spurious
+        # "Memo not found" when a non-owner tried to save edits.)
         row = conn.execute(
-            "SELECT * FROM generated_memos WHERE id=? AND owner_id=?",
-            (req.memo_id, user.id),
+            "SELECT * FROM generated_memos WHERE id=?",
+            (req.memo_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "Memo not found")
@@ -3367,8 +3499,8 @@ Do NOT include the section title as a header — it will be added automatically.
         conn.execute(
             """UPDATE generated_memos
                SET sections_json=?, memo_markdown=?, memo_html=?
-               WHERE id=? AND owner_id=?""",
-            (sections_json_str, memo_md, memo_html, req.memo_id, user.id),
+               WHERE id=?""",
+            (sections_json_str, memo_md, memo_html, req.memo_id),
         )
 
         # Record revision
@@ -3409,9 +3541,13 @@ async def edit_section_direct(
     """
     conn = get_db()
     try:
+        # Memos are a shared team library: any signed-in VoLo member can edit a
+        # teammate's memo (matches the firm-wide GET). Attribution is preserved
+        # via memo_revisions.revised_by. (Owner-scoping here caused a spurious
+        # "Memo not found" when a non-owner tried to save edits.)
         row = conn.execute(
-            "SELECT * FROM generated_memos WHERE id=? AND owner_id=?",
-            (req.memo_id, user.id),
+            "SELECT * FROM generated_memos WHERE id=?",
+            (req.memo_id,),
         ).fetchone()
         if not row:
             raise HTTPException(404, "Memo not found")
@@ -3433,8 +3569,8 @@ async def edit_section_direct(
         conn.execute(
             """UPDATE generated_memos
                SET sections_json=?, memo_markdown=?, memo_html=?
-               WHERE id=? AND owner_id=?""",
-            (sections_json_str, memo_md, memo_html, req.memo_id, user.id),
+               WHERE id=?""",
+            (sections_json_str, memo_md, memo_html, req.memo_id),
         )
 
         conn.execute(
@@ -3467,10 +3603,9 @@ async def get_revisions(memo_id: int, user: CurrentUser = Depends(get_current_us
     try:
         rows = conn.execute(
             """SELECT r.* FROM memo_revisions r
-               JOIN generated_memos m ON r.memo_id = m.id
-               WHERE r.memo_id=? AND m.owner_id=?
+               WHERE r.memo_id=?
                ORDER BY r.created_at DESC""",
-            (memo_id, user.id),
+            (memo_id,),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -3487,10 +3622,9 @@ async def get_section_revisions(
     try:
         rows = conn.execute(
             """SELECT r.* FROM memo_revisions r
-               JOIN generated_memos m ON r.memo_id = m.id
-               WHERE r.memo_id=? AND r.section_key=? AND m.owner_id=?
+               WHERE r.memo_id=? AND r.section_key=?
                ORDER BY r.created_at DESC""",
-            (memo_id, section_key, user.id),
+            (memo_id, section_key),
         ).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -3534,6 +3668,11 @@ def _build_report_context_from_parsed(rpt: dict, section_def: dict) -> str:
     """Build report context string from parsed report JSON for a specific section."""
     parts = []
     report_fields = section_def.get("report_fields", [])
+
+    # Always surface the current round's deal terms first so any section being
+    # revised — especially the synthesis sections (Investment Overview,
+    # Recommendation) — anchors on the CURRENT round, not a prior one.
+    parts.extend(_format_round_terms(rpt.get("deal_overview", {})))
 
     if "simulation" in report_fields or "inputs" in report_fields:
         sim = rpt.get("simulation", {})
