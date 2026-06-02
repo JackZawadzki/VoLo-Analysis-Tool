@@ -3656,7 +3656,7 @@ function wizRenderReport(r) {
         // Carta VC fund Net TVPI benchmark at maturity (terminal age ~10) — mirror of
         // configs/carta_benchmarks.json. Static reference data so the top-decile overlay
         // renders on ANY saved report (old or new); the fund's own P90 is calibrated to it.
-        const CARTA_TVPI_MATURE = { p50: 1.65, p75: 2.20, p90: 3.90 };
+        const CARTA_TVPI_MATURE = { p50: 1.65, p75: 2.20, p90: 4.00 };
         const _fundP90 = (pImpact.tvpi_new_p90 != null) ? pImpact.tvpi_new_p90 : null;
         const _topDecileRead = (_fundP90 != null)
             ? `This fund's top-decile (P90) path of <strong>${fmt(_fundP90)}x</strong> ${_fundP90 >= CARTA_TVPI_MATURE.p90 * 0.98 ? 'is at or above' : 'compares to'} the Carta top decile (~${fmt(CARTA_TVPI_MATURE.p90)}x). The headline <strong>${fmt(pImpact.tvpi_new_mean)}x</strong> is the <em>mean (expected)</em> outcome — it sits below the top decile by design.`
@@ -10505,10 +10505,12 @@ function _memoInjectCharts(container, report) {
                         <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_mean)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_mean)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_mean_lift)}">${signFmt2(pImpact2.tvpi_mean_lift)}x</td></tr>
                         <tr><td>TVPI (P50)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p50)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p50)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}">${signFmt2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}x</td></tr>
                         <tr><td>TVPI (P75)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p75)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p75)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_p75_lift)}">${signFmt2(pImpact2.tvpi_p75_lift)}x</td></tr>
+                        ${pImpact2.tvpi_new_p90 != null ? `<tr><td>TVPI (P90 — top decile)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p90)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p90)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_new_p90 - pImpact2.tvpi_base_p90)}">${signFmt2(pImpact2.tvpi_new_p90 - pImpact2.tvpi_base_p90)}x</td></tr>` : ''}
                         <tr><td>IRR (Mean)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_mean)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_mean)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_mean_lift)}">${pImpact2.irr_mean_lift != null ? ((pImpact2.irr_mean_lift*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
                         <tr><td>IRR (P50)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_p50)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_p50)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_new_p50 - pImpact2.irr_base_p50)}">${pImpact2.irr_new_p50 != null ? (((pImpact2.irr_new_p50 - pImpact2.irr_base_p50)*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
                     </tbody>
                 </table>
+                ${pImpact2.tvpi_new_p90 != null ? `<p class="memo-chart-note">Top decile vs. Carta: this fund's P90 ${fmt(pImpact2.tvpi_new_p90)}x ${pImpact2.tvpi_new_p90 >= 4.0 * 0.98 ? 'is at or above' : 'compares to'} the Carta top decile (~4.0x). The TVPI Mean ${fmt(pImpact2.tvpi_new_mean)}x is the expected case and sits below the top decile by design; the P90 is the like-for-like top-decile comparison.</p>` : ''}
                 <p class="memo-chart-note">Deal parameters used in simulation: Conditional MOIC=${fmt(r.simulation?.moic_conditional?.mean)}x, Survival=${pctFmt(r.simulation?.survival_rate)}, Exit ${ov.exit_year_range?.[0] || 5}–${ov.exit_year_range?.[1] || 10} years, Check=$${fmt(ov.check_size_millions,1)}M.</p>
             </div>`, ['portfolio', 'fund', 'tvpi', 'irr', 'impact', 'return', 'base', 'marginal']);
         }

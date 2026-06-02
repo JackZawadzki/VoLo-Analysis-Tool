@@ -1268,6 +1268,18 @@ def _build_report_context(report_row) -> str:
         parts.append(f"- TVPI Lift: {pi.get('tvpi_mean_lift', 'N/A')}x")
         parts.append(f"- IRR Base Mean: {pi.get('irr_base_mean', 'N/A')}")
         parts.append(f"- IRR New Mean: {pi.get('irr_new_mean', 'N/A')}")
+        # Percentile context + Carta anchor so the memo never conflates the MEAN with the top decile.
+        parts.append(
+            f"- TVPI With Deal by percentile: median (P50) {pi.get('tvpi_new_p50', 'N/A')}x, "
+            f"upper-quartile (P75) {pi.get('tvpi_new_p75', 'N/A')}x, "
+            f"TOP DECILE (P90) {pi.get('tvpi_new_p90', 'N/A')}x"
+        )
+        parts.append("- Carta VC fund TVPI benchmark (mature fund): median ~1.65x, P75 ~2.2x, TOP DECILE (P90) ~4.0x")
+        parts.append(
+            "- READ CAREFULLY: 'TVPI Mean' above is the EXPECTED (average) fund outcome and sits BELOW the "
+            "top decile by design. The like-for-like comparison to Carta's ~4x top decile is the fund's P90 — "
+            "NOT the mean. Never describe the fund as below benchmark by comparing its mean to Carta's top decile."
+        )
 
     # Sensitivity
     sens = report.get("sensitivity", {})
@@ -1730,7 +1742,11 @@ MEMO_SECTIONS = [
             "Present the simulation methodology: the VCSimulator runs 2,000 portfolio paths, "
             "comparing the base portfolio (with or without committed deals) against a portfolio "
             "that includes this deal. Report the delta in TVPI Mean, TVPI P50, TVPI P75, and IRR "
-            "at mean and P50. Interpret what the lift means in practical terms — does this deal "
+            "at mean and P50. ALSO report the TOP DECILE (P90) fund TVPI and benchmark it against the "
+            "Carta top decile (~4x): the fund's P90 is the like-for-like top-decile comparison, while the "
+            "TVPI Mean is the EXPECTED case and sits below the top decile by design — never describe the "
+            "fund as below benchmark by comparing its mean to Carta's top decile. "
+            "Interpret what the lift means in practical terms — does this deal "
             "diversify the portfolio, add return potential, or both? Discuss the deal parameters "
             "used in the simulation: conditional MOIC, survival probability, exit year range. "
             "Flag if the baseline is a running portfolio (with committed deals) vs. a simulated "
@@ -3941,7 +3957,8 @@ def _build_report_context_from_parsed(rpt: dict, section_def: dict) -> str:
         if pi.get("has_data"):
             parts.append(f"Portfolio impact (Section 3):")
             parts.append(f"  TVPI base={pi.get('tvpi_base_mean', 'N/A')}x -> with deal={pi.get('tvpi_new_mean', 'N/A')}x (lift={pi.get('tvpi_mean_lift', 'N/A')}x)")
-            parts.append(f"  TVPI P50 base={pi.get('tvpi_base_p50', 'N/A')}x -> with deal={pi.get('tvpi_new_p50', 'N/A')}x")
+            parts.append(f"  TVPI With Deal by percentile: P50 {pi.get('tvpi_new_p50', 'N/A')}x, P75 {pi.get('tvpi_new_p75', 'N/A')}x, TOP DECILE P90 {pi.get('tvpi_new_p90', 'N/A')}x")
+            parts.append("  Carta benchmark (mature): P50 ~1.65x, P75 ~2.2x, TOP DECILE P90 ~4.0x. The TVPI Mean is the expected case (below the top decile); the fund's P90 is the like-for-like top-decile comparison — never compare the mean to Carta's top decile.")
             parts.append(f"  IRR base={pi.get('irr_base_mean', 'N/A')} -> with deal={pi.get('irr_new_mean', 'N/A')} (lift={pi.get('irr_mean_lift', 'N/A')})")
             parts.append(f"  N committed deals: {pi.get('n_committed_deals', 0)}, narrative: {pi.get('narrative', '')}")
 
