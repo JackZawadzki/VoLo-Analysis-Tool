@@ -11989,7 +11989,6 @@ function _ddRenderAll() {
     _ddRenderHero();
     _ddRenderComparison();
     _ddRenderSensitivity();
-    _ddRenderBridges();
     _ddRenderTwoWay();
     _ddRenderDetailPills();
     _ddRenderDetail(_dd.detailScenario);
@@ -12004,9 +12003,9 @@ function _ddRenderHero() {
         <div class="dd-hero-card dd-hero-highlight">
             <div class="dd-hero-label">Expected MOIC <span class="dd-hero-tag">Base · risk-adjusted</span></div>
             <div class="dd-hero-value">${_ddFmt(b.expected_moic)}x</div>
-            <div class="dd-hero-sub">${_ddFmt(b.moic)}x if successful · ${_ddFmt(b.prob_success_pct, 0)}% POS</div>
+            <div class="dd-hero-sub">${_ddFmt(b.moic)}x if it reaches exit · ${_ddFmt(b.prob_success_pct, 0)}% chance of exit</div>
         </div>
-        <div class="dd-hero-card"><div class="dd-hero-label">Expected IRR</div><div class="dd-hero-value">${_ddFmt(b.expected_irr_pct, 1)}%</div><div class="dd-hero-sub">${_ddFmt(b.irr_pct, 1)}% if successful</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Expected IRR</div><div class="dd-hero-value">${_ddFmt(b.expected_irr_pct, 1)}%</div><div class="dd-hero-sub">${_ddFmt(b.irr_pct, 1)}% if it reaches exit</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(b.exit_ev_m)}M</div><div class="dd-hero-sub">${b.exit_multiple_na ? 'DCF-implied (no multiple)' : 'EV × exit multiple'}</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">Cash to Breakeven</div><div class="dd-hero-value">$${_ddFmt(b.peak_cumulative_burn_m)}M</div><div class="dd-hero-sub">${b.fcf_breakeven_year ? 'FCF+ in Yr ' + b.fcf_breakeven_year : 'no FCF breakeven in horizon'}</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">Entry → Exit Ownership</div><div class="dd-hero-value">${_ddFmt(b.entry_ownership_pct, 1)}%</div><div class="dd-hero-sub">→ ${_ddFmt(b.exit_ownership_pct, 1)}% at exit</div></div>`;
@@ -12016,10 +12015,10 @@ function _ddRenderHero() {
 function _ddRenderComparison() {
     const c = _dd.result.comparison;
     const rows = [
-        { label: 'Expected MOIC', f: 'expected_moic', suf: 'x', hi: true },
-        { label: 'MOIC (if successful)', f: 'moic', suf: 'x' },
+        { label: 'Expected MOIC <span class="dd-help" title="Probability-weighted, risk-adjusted: (chance of reaching exit × the exit return) + (chance of failure × recovery). This is the headline number.">ⓘ</span>', f: 'expected_moic', suf: 'x', hi: true },
+        { label: 'MOIC if it reaches exit <span class="dd-help" title="Return IF the company survives to a liquidity event (sale / IPO) instead of failing. NOT a win guarantee — a small or down exit can still be below 1.0x (you lose money). The Expected rows weight this by the probability of reaching exit.">ⓘ</span>', f: 'moic', suf: 'x' },
         { label: 'Expected IRR', f: 'expected_irr_pct', suf: '%', dp: 1 },
-        { label: 'IRR (if successful)', f: 'irr_pct', suf: '%', dp: 1 },
+        { label: 'IRR if it reaches exit', f: 'irr_pct', suf: '%', dp: 1 },
         { label: 'Probability of Success', f: 'prob_success_pct', suf: '%', dp: 0 },
         { label: 'Exit Enterprise Value', f: 'exit_ev_m', pre: '$', suf: 'M' },
         { label: 'DCF Value (PV) <span class="dd-help" title="Indicative only. A DCF built on coarse early-stage cash-flow assumptions is dominated by the terminal value — which here is just the exit-multiple bet, discounted. Use as a cross-check, not a primary valuation; most meaningful for later-stage, cash-generating companies.">ⓘ indicative</span>', f: 'dcf_ev_m', pre: '$', suf: 'M' },
@@ -12099,58 +12098,6 @@ function _ddRenderSensitivity() {
         html += `<p class="dd-field-hint" style="margin-top:8px;">Levers marked <em>no effect</em> don't enter ${mName} on this basis — e.g. margins &amp; opex only matter under EV/EBITDA; discount rate, terminal growth, capex and time-to-launch drive DCF Value / IRR / cash, not a multiple-based MOIC. Switch the basis or primary metric to test them.</p>`;
     }
     host.innerHTML = html;
-}
-
-// ── Case bridges: Base → Conservative (downside) and Base → Best (upside) ──
-// Each lever's marginal contribution to the case outcome; contributions + the
-// interaction residual sum exactly to (case outcome − base outcome).
-function _ddRenderBridges() {
-    const s = _dd.result.sensitivity;
-    const metric = _dd.result.primary_metric;
-    const fmt = (v, signed) => _ddMetricFmt(v, metric, signed);
-    const down = document.getElementById('dd-bridge-down');
-    const up = document.getElementById('dd-bridge-up');
-    if (!down || !up) return;
-    if (!s || !s.available) {
-        down.innerHTML = '<p class="dd-field-hint">Vary assumptions between cases and run to see how each case is built.</p>';
-        up.innerHTML = '';
-        return;
-    }
-    // Prefer the Shapley attribution (bars sum to the case outcome, no big residual);
-    // fall back to first-order contributions if Shapley wasn't computed.
-    const useShap = !!s.shapley_available;
-    const kUp = useShap ? 'shapley_up' : 'contrib_up';
-    const kDown = useShap ? 'shapley_down' : 'contrib_down';
-    const rUp = useShap ? s.shapley_resid_up : s.interaction_up;
-    const rDown = useShap ? s.shapley_resid_down : s.interaction_down;
-    const residLabel = useShap ? 'Unattributed (rounding)' : 'Interactions';
-    const mName = _ddMetricName(metric);
-    const render = (host, title, endLabel, startV, endV, contribKey, interaction) => {
-        const steps = s.drivers
-            .map(d => ({ label: d.label, c: d[contribKey] }))
-            .filter(x => x.c != null && Math.abs(x.c) > 0.005)
-            .sort((a, b) => Math.abs(b.c) - Math.abs(a.c));
-        let running = startV, rows = '';
-        const stepRow = (label, c, cls) => {
-            const dir = c >= 0 ? 'pos' : 'neg';
-            running += c;
-            return `<div class="dd-wf-row${cls || ''}">
-                <div class="dd-wf-label">${label}</div>
-                <div class="dd-wf-delta dd-wf-${dir}">${fmt(c, true)}</div>
-                <div class="dd-wf-run">${fmt(running)}</div>
-            </div>`;
-        };
-        for (const st of steps) rows += stepRow(st.label, st.c);
-        if (Math.abs(interaction) > 0.005) rows += stepRow(residLabel, interaction, ' dd-wf-resid');
-        host.innerHTML = `
-            <div class="dd-wf-head">${title}</div>
-            <div class="dd-wf-row dd-wf-colhead"><div class="dd-wf-label">Assumption</div><div class="dd-wf-delta">Contribution</div><div class="dd-wf-run">Running ${mName}</div></div>
-            <div class="dd-wf-anchor"><span>Base</span><span>${fmt(startV)}</span></div>
-            ${rows}
-            <div class="dd-wf-anchor dd-wf-end"><span>${endLabel}</span><span>${fmt(endV)}</span></div>`;
-    };
-    render(down, 'Downside · Base → Conservative', 'Conservative', s.metric_base, s.metric_conservative, kDown, rDown);
-    render(up, 'Upside · Base → Best', 'Best', s.metric_base, s.metric_best, kUp, rUp);
 }
 
 // ── Two-way grid ──────────────────────────────────────────────────

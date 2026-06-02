@@ -890,27 +890,6 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         d["impact_pct"] = round(100.0 * d["abs_swing"] / denom, 1) if denom > 1e-9 else 0.0
     drivers.sort(key=lambda d: d["abs_swing"], reverse=True)
 
-    # ── Shapley attribution for the bridges ───────────────────────────────────
-    # The first-order bars leave the lever-compounding in a big "interactions"
-    # residual. Shapley splits that compounding fairly across the levers so the bars
-    # sum to the case outcome. Levers with ≈0 standalone swing are treated as null
-    # players (φ≈0) and skipped, keeping the 2^n coalition sweep small/fast.
-    SHAP_CAP = 12
-    active = [d for d in drivers if d["abs_swing"] >= 0.005]
-    shapley_available = 0 < len(active) <= SHAP_CAP
-    shapley_resid_up = shapley_resid_down = 0.0
-    if shapley_available:
-        akeys = [d["key"] for d in active]
-        phi_up = _dd_shapley(akeys, base, {k: best.get(k) for k in akeys},
-                             deal_params, recovery_moic, metric)
-        phi_down = _dd_shapley(akeys, base, {k: cons.get(k) for k in akeys},
-                               deal_params, recovery_moic, metric)
-        for d in drivers:
-            d["shapley_up"] = round(phi_up.get(d["key"], 0.0), 3)
-            d["shapley_down"] = round(phi_down.get(d["key"], 0.0), 3)
-        shapley_resid_up = (metric_best - metric_base) - sum(phi_up.values())
-        shapley_resid_down = (metric_cons - metric_base) - sum(phi_down.values())
-
     return {
         "available": len(drivers) > 0,
         "metric": metric,
@@ -925,9 +904,6 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         # Bridge residuals: contributions + residual = (case outcome − base outcome)
         "interaction_down": round((metric_cons - metric_base) - sum_down, 3),
         "interaction_up": round((metric_best - metric_base) - sum_up, 3),
-        "shapley_available": shapley_available,
-        "shapley_resid_up": round(shapley_resid_up, 3),
-        "shapley_resid_down": round(shapley_resid_down, 3),
     }
 
 
