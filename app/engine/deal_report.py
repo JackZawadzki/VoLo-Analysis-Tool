@@ -525,6 +525,7 @@ def generate_deal_report(
         check_size_millions=check_size_millions,
         survival_rate=sim_standalone.get("summary", {}).get("survival_rate", 0.3),
         moic_conditional_mean=sim_standalone.get("moic_conditional", {}).get("mean", 3.0),
+        moic_distribution=sim_standalone.get("_raw_moic", []),
         exit_year_range=exit_year_range,
         committed_deals=committed_deals,
         deal_commitment_type=deal_commitment_type,
@@ -1517,6 +1518,7 @@ def _run_portfolio_impact(
     check_size_millions: float,
     survival_rate: float,
     moic_conditional_mean: float,
+    moic_distribution: list = None,
     exit_year_range: Tuple[int, int] = (5, 10),
     committed_deals: list = None,
     deal_commitment_type: str = "first_check",
@@ -1562,6 +1564,12 @@ def _run_portfolio_impact(
             check_size=check_size_millions * 1_000_000,
             follow_on_allowed=True,
             metric=cfg.mode,
+            # Use the new check's FULL MOIC distribution (5,000-path) so the deal's
+            # fund contribution uses the same outcome model as its standalone return
+            # (and as committed deals). Falls back to the conditional-mean/survival
+            # 2-point model only if the distribution is unavailable. Reconciles the
+            # prior fidelity gap; mean lift ~unchanged, P75/P90 (top-decile) accurate.
+            moic_distribution=(moic_distribution if (moic_distribution and len(moic_distribution) > 100) else None),
         )
 
         sim = VCSimulator(cfg, bench)
