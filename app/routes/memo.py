@@ -962,6 +962,76 @@ def _format_round_terms(ov: dict) -> list:
     return out
 
 
+def _financing_summary_block(ov: dict) -> str:
+    """Deterministic, clearly-separated financing summary built straight from the
+    report's deal_overview, so the round numbers can never drift from the model.
+    Prepended to the Financing Overview section to give an explicit prior-vs-
+    current separation, on top of the financing detail woven through the memo."""
+    if not ov:
+        return ""
+
+    def _m(v):
+        return f"${v:,.1f}M" if isinstance(v, (int, float)) else "N/A"
+
+    def _pct(v):
+        return f"{v:.1f}%" if isinstance(v, (int, float)) else "N/A"
+
+    def _cell(v):
+        # Markdown pipe-table cells split naively on '|'; neutralise any '|' or
+        # newline in free-text values (e.g. a stage label) so the table can't break.
+        return str(v).replace("|", "/").replace("\n", " ").replace("\r", " ").strip()
+
+    is_fo = ov.get("investment_type") == "followon" or ov.get("is_blended_followon")
+    priors = ov.get("prior_investments", []) or []
+
+    lines = ["### Financing Summary", ""]
+
+    # ── Current round ──────────────────────────────────────────────────────
+    lines += [
+        "**Current Round — this investment**", "",
+        "| Term | Value |",
+        "| --- | --- |",
+        f"| Stage | {_cell(ov.get('entry_stage', 'N/A'))} |",
+        f"| Pre-money | {_m(ov.get('pre_money_millions'))} |",
+        f"| Round size | {_m(ov.get('round_size_millions'))} |",
+        f"| Post-money | {_m(ov.get('post_money_millions'))} |",
+        f"| VoLo check (this round) | {_m(ov.get('check_size_millions'))} |",
+        f"| Ownership from this check | {_pct(ov.get('new_check_ownership_pct'))} |",
+    ]
+    if ov.get("entry_year"):
+        lines.append(f"| Investment year | {ov.get('entry_year')} |")
+    lines.append("")
+
+    # ── Prior financing ────────────────────────────────────────────────────
+    lines += ["**Prior Financing — VoLo's existing position**", ""]
+    if is_fo and priors:
+        lines += [
+            "| Round | Stage | Year | VoLo check | Round terms | VoLo ownership |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for p in priors:
+            _t = (p.get("type") or "priced").lower()
+            if _t in ("convertible", "safe") or p.get("cap_m"):
+                terms = f"cap {_m(p.get('cap_m'))}, disc {_pct(p.get('discount_pct'))}"
+            else:
+                terms = f"pre-money {_m(p.get('effective_pre_m'))}"
+            lines.append(
+                f"| {_cell(p.get('round_num', '?'))} | {_cell(p.get('stage', '?'))} | {_cell(p.get('year', '?'))} | "
+                f"{_m(p.get('check_m'))} | {terms} | {_pct(p.get('ownership_pct'))} |"
+            )
+        lines += [
+            "",
+            "*Combined VoLo ownership after this round:* "
+            f"**{_pct(ov.get('combined_entry_ownership_pct') or ov.get('entry_ownership_pct'))}**  ·  "
+            "*Total VoLo invested across all rounds (prior + new):* "
+            f"**{_m(ov.get('total_invested_millions') or ov.get('total_exposure_m'))}**",
+        ]
+    else:
+        lines.append("*None — this is VoLo's first check into the company.*")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _extract_context_section(context: str, heading_prefix: str) -> str:
     """Return the block of a report-context string whose heading line starts with
     `heading_prefix` (e.g. '## THIS ROUND'), up to the next '## ' heading.
@@ -1503,6 +1573,13 @@ MEMO_SECTIONS = [
         "title": "Financing Overview: Round and Exit Planning",
         "is_synthesis": False,
         "guidance": (
+            "PRIOR FINANCING vs CURRENT ROUND: A deterministic 'Financing Summary' with separate "
+            "Current Round and Prior Financing tables is injected at the top of this section — do "
+            "not restate those raw numbers. In the narrative, clearly DISTINGUISH (a) the CURRENT "
+            "round being decided here from (b) VoLo's PRIOR financing. For a follow-on, explicitly "
+            "acknowledge VoLo is an existing investor and explain how this round builds on the prior "
+            "position (combined ownership, total invested); never conflate a prior round's valuation "
+            "with the current round's terms.\n\n"
             "DEAL STRUCTURE: Overview of the round and VoLo's role. Include total raise. "
             "Describe VoLo Earth value-add and additionality. List committed syndicate members.\n\n"
             "CAPITAL POSITION: Total raised to date, current cash in bank, current burn rate, "
@@ -2619,6 +2696,21 @@ def _build_memo_payload(
             detail = f"Memo generation failed: {err_str[:300]}"
         raise RuntimeError(detail)
     section_texts, total_tokens_in, total_tokens_out, pass_log = pipeline_result
+
+    # Prepend a deterministic, clearly-separated financing summary (prior vs
+    # current round) to the Financing Overview section. Built straight from the
+    # report's deal_overview so the round numbers are guaranteed correct — an
+    # explicit separation on top of the financing detail woven through the memo.
+    try:
+        _fin_key = "financing_overview"
+        if _fin_key in section_texts and _fin_key not in (req.locked_sections or {}):
+            _rp = json.loads(report_data_json) if isinstance(report_data_json, str) else (report_data_json or {})
+            _fin_block = _financing_summary_block((_rp or {}).get("deal_overview", {}))
+            if _fin_block:
+                section_texts[_fin_key] = _fin_block + "\n" + (section_texts.get(_fin_key) or "")
+    except Exception:
+        pass
+
     _progress(95, "Assembling memo and saving to database...")
 
     # ═════════════════════════════════════════════════════════════════════════
