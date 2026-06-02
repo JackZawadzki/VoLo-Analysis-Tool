@@ -12116,31 +12116,41 @@ function _ddRenderBridges() {
         up.innerHTML = '';
         return;
     }
+    // Prefer the Shapley attribution (bars sum to the case outcome, no big residual);
+    // fall back to first-order contributions if Shapley wasn't computed.
+    const useShap = !!s.shapley_available;
+    const kUp = useShap ? 'shapley_up' : 'contrib_up';
+    const kDown = useShap ? 'shapley_down' : 'contrib_down';
+    const rUp = useShap ? s.shapley_resid_up : s.interaction_up;
+    const rDown = useShap ? s.shapley_resid_down : s.interaction_down;
+    const residLabel = useShap ? 'Unattributed (rounding)' : 'Interactions';
+    const mName = _ddMetricName(metric);
     const render = (host, title, endLabel, startV, endV, contribKey, interaction) => {
         const steps = s.drivers
             .map(d => ({ label: d.label, c: d[contribKey] }))
-            .filter(x => Math.abs(x.c) > 0.005)
+            .filter(x => x.c != null && Math.abs(x.c) > 0.005)
             .sort((a, b) => Math.abs(b.c) - Math.abs(a.c));
         let running = startV, rows = '';
-        const stepRow = (label, c) => {
+        const stepRow = (label, c, cls) => {
             const dir = c >= 0 ? 'pos' : 'neg';
             running += c;
-            return `<div class="dd-wf-row">
+            return `<div class="dd-wf-row${cls || ''}">
                 <div class="dd-wf-label">${label}</div>
                 <div class="dd-wf-delta dd-wf-${dir}">${fmt(c, true)}</div>
                 <div class="dd-wf-run">${fmt(running)}</div>
             </div>`;
         };
         for (const st of steps) rows += stepRow(st.label, st.c);
-        if (Math.abs(interaction) > 0.005) rows += stepRow('Interactions', interaction);
+        if (Math.abs(interaction) > 0.005) rows += stepRow(residLabel, interaction, ' dd-wf-resid');
         host.innerHTML = `
             <div class="dd-wf-head">${title}</div>
+            <div class="dd-wf-row dd-wf-colhead"><div class="dd-wf-label">Assumption</div><div class="dd-wf-delta">Contribution</div><div class="dd-wf-run">Running ${mName}</div></div>
             <div class="dd-wf-anchor"><span>Base</span><span>${fmt(startV)}</span></div>
             ${rows}
             <div class="dd-wf-anchor dd-wf-end"><span>${endLabel}</span><span>${fmt(endV)}</span></div>`;
     };
-    render(down, 'Downside · Base → Conservative', 'Conservative', s.metric_base, s.metric_conservative, 'contrib_down', s.interaction_down);
-    render(up, 'Upside · Base → Best', 'Best', s.metric_base, s.metric_best, 'contrib_up', s.interaction_up);
+    render(down, 'Downside · Base → Conservative', 'Conservative', s.metric_base, s.metric_conservative, kDown, rDown);
+    render(up, 'Upside · Base → Best', 'Best', s.metric_base, s.metric_best, kUp, rUp);
 }
 
 // ── Two-way grid ──────────────────────────────────────────────────

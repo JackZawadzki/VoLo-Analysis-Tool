@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=202">
+    <link rel="stylesheet" href="/static/styles.css?v=206">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
     <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
@@ -1408,6 +1408,10 @@
 
         <div class="dd-pnl-container">
             <h3 class="dd-section-title">Core Assumptions</h3>
+            <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                <p><strong>Theory.</strong> Underwriting under deep uncertainty: three explicit cases (Conservative / Base / Best) bound the range instead of pretending to a single point estimate. The Base case is seeded from the deal report where available (founder revenue, comps exit multiple); Conservative &amp; Best are bands around it. Any input can be marked <strong>N/A</strong> and is then dropped from the math entirely — never assumed.</p>
+                <p><strong>Math.</strong> Revenue starts at Year-1 and grows at the CAGR, tapering toward terminal growth. Operating spend is an absolute $/yr plan (ramping ~15%/yr), independent of revenue. Exit EV = exit-revenue × multiple (EV/Revenue basis) or exit-EBITDA × multiple (EV/EBITDA basis). Ownership = entry × (1 − dilution)^rounds. MOIC = EV × ownership ÷ check. Expected MOIC = POS × MOIC + (1 − POS) × recovery.</p>
+            </div></details>
             <p id="dd-seed-note" class="dd-field-hint" style="display:none;"></p>
             <p class="dd-field-hint">Set each case. Tick <strong>N/A</strong> for any metric that's unknown or you don't want to model — it's dropped from the run and the sensitivity decomposition. <strong>Sensitivity</strong> and <strong>Impact</strong> populate after you run.</p>
             <div class="dd-table-scroll">
@@ -1420,22 +1424,38 @@
 
             <div class="dd-pnl-container">
                 <h3 class="dd-section-title">Scenario Comparison</h3>
+                <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                    <p><strong>Theory.</strong> The same deterministic model run under each case, side by side — the core decision view. Every column is internally consistent because all metrics come from one run of that case's assumptions.</p>
+                    <p><strong>Math.</strong> IRR = MOIC^(1/hold) − 1. DCF Value = Σ PV(FCF) + PV(terminal), discounted at the WACC. Cash to Breakeven = the deepest cumulative-FCF trough — the peak capital consumed before free cash flow turns positive (higher = worse).</p>
+                </div></details>
                 <table id="dd-comp-table" class="dd-pnl-table"></table>
             </div>
 
             <div class="dd-two-col-output">
                 <div class="dd-pnl-container">
                     <h3 class="dd-section-title">What Moves the Outcome</h3>
+                    <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                        <p><strong>Theory.</strong> A sensitivity probe: which single assumption, flexed alone across its Conservative→Best range (all others held at Base), moves the outcome most. Answers "where to focus diligence." Levers that don't enter the chosen metric are shown as "no effect."</p>
+                        <p><strong>Math.</strong> Bar = metric(lever at Best) − metric(lever at Conservative), others at Base. Impact % = |bar| ÷ Σ|bars|. Because returns are multiplicative, the single-lever bars don't add up to the total move; the remainder is shown explicitly as "Interactions."</p>
+                    </div></details>
                     <div id="dd-tornado"></div>
                 </div>
                 <div class="dd-pnl-container">
                     <h3 class="dd-section-title">Sensitivity Grid</h3>
+                    <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                        <p><strong>Theory.</strong> A two-dimensional response surface across the two assumptions a multiple-based return depends on most — Exit Multiple and Revenue CAGR — so you can read whole combinations at a glance instead of one lever at a time.</p>
+                        <p><strong>Math.</strong> The model is re-run at every (Exit Multiple, Revenue CAGR) cell with all other assumptions held at Base; each cell shows the resulting metric. Discount rate is deliberately not an axis — it doesn't affect a multiple-based MOIC (only the DCF).</p>
+                    </div></details>
                     <div id="dd-twoway"></div>
                 </div>
             </div>
 
             <div class="dd-pnl-container">
                 <h3 class="dd-section-title">How Each Case Is Built <span class="dd-help">— each lever's contribution as the outcome moves from Base to that case</span></h3>
+                <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                    <p><strong>Theory.</strong> Attributes the full Base→case move fairly across the assumptions — including the part that comes from levers reinforcing each other (compounding). Unlike the one-at-a-time tornado, these bars sum to the case outcome with no leftover bucket.</p>
+                    <p><strong>Math.</strong> Each lever's share is its <em>Shapley value</em>: φᵢ = Σ over subsets S of [ |S|!·(n−|S|−1)! ÷ n! ] · ( f(S∪{i}) − f(S) ) — its average marginal contribution across all orderings of stacking the levers. (Shapley value, cooperative game theory; the unique attribution where the parts sum to the whole — the same math as SHAP in machine learning.)</p>
+                </div></details>
                 <div class="dd-bridges">
                     <div id="dd-bridge-down" class="dd-bridge"></div>
                     <div id="dd-bridge-up" class="dd-bridge"></div>
@@ -1450,6 +1470,10 @@
                         <div class="dd-scenario-pills" id="dd-detail-pills"></div>
                     </div>
                 </div>
+                <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+                    <p><strong>Theory.</strong> The year-by-year projection underlying every metric for the selected case — revenue ramp, margins, the operating-spend plan, cash flow and the funding gap.</p>
+                    <p><strong>Math.</strong> Revenue → COGS = revenue × (1 − gross margin) → Gross Profit − Operating Plan = EBITDA; FCF = Net Income + D&amp;A − Capex − ΔNWC. Cumulative FCF gives the burn and the breakeven year; the DCF discounts FCF plus the terminal value at the WACC.</p>
+                </div></details>
                 <div id="dd-detail-hero" class="dd-hero"></div>
                 <div class="dd-table-scroll">
                     <table id="dd-pnl-table" class="dd-pnl-table"></table>
@@ -2298,7 +2322,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=205"></script>
+    <script src="/static/app.js?v=206"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
     <script>

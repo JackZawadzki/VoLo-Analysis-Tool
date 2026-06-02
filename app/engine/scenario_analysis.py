@@ -750,8 +750,8 @@ _DD_DRIVERS = [
     ("revenue_cagr_pct", "Revenue CAGR"),
     ("time_to_launch_years", "Time to Launch"),
     ("gross_margin_end_pct", "Gross Margin"),
-    ("opex_pct_rev", "Operating Expense"),
-    ("opex_end_pct_rev", "Operating Expense (mature)"),
+    ("opex_commercial_m", "Operating Spend (commercial)"),
+    ("opex_prelaunch_m", "Operating Spend (pre-launch)"),
     ("capex_pct_rev", "Capex Intensity"),
     ("exit_multiple", "Exit Multiple"),
     ("discount_rate_pct", "Discount Rate"),
@@ -789,6 +789,46 @@ def _dd_run_one(assumptions: dict, deal_params: dict, recovery_moic: float) -> d
         prob_success=(None if _is_na(ps) else _num(assumptions, "prob_success_pct", 100.0) / 100.0),
         recovery_moic=_num(assumptions, "recovery_moic", recovery_moic),
     ), pnl
+
+
+def _dd_shapley(active_keys: list, base: dict, target: dict, deal_params: dict,
+                recovery_moic: float, metric: str) -> dict:
+    """
+    Shapley-value attribution of the Base→target move across `active_keys`.
+
+    Coalition value f(S) = the metric when the levers in S are set to their `target`
+    value and the rest stay at Base. Each lever's Shapley value is its marginal
+    contribution f(S∪{i}) − f(S) averaged over every ordering of the levers — the
+    unique attribution where Σ φ = f(all) − f(none) (efficiency), so the bars
+    reconcile to the move with no leftover "interactions" bucket.
+    """
+    from math import factorial
+    from itertools import combinations
+    n = len(active_keys)
+    if n == 0:
+        return {}
+    cache = {}
+
+    def f(S):
+        fs = frozenset(S)
+        if fs in cache:
+            return cache[fs]
+        a = dict(base)
+        for k in fs:
+            a[k] = target[k]
+        ret, _ = _dd_run_one(a, deal_params, recovery_moic)
+        val = _dd_metric_value(ret, metric)
+        cache[fs] = val
+        return val
+
+    phi = {k: 0.0 for k in active_keys}
+    for k in active_keys:
+        rest = [x for x in active_keys if x != k]
+        for r in range(len(rest) + 1):
+            w = factorial(r) * factorial(n - r - 1) / factorial(n)
+            for S in combinations(rest, r):
+                phi[k] += w * (f(frozenset(S) | {k}) - f(frozenset(S)))
+    return phi
 
 
 def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
@@ -850,6 +890,27 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         d["impact_pct"] = round(100.0 * d["abs_swing"] / denom, 1) if denom > 1e-9 else 0.0
     drivers.sort(key=lambda d: d["abs_swing"], reverse=True)
 
+    # ── Shapley attribution for the bridges ───────────────────────────────────
+    # The first-order bars leave the lever-compounding in a big "interactions"
+    # residual. Shapley splits that compounding fairly across the levers so the bars
+    # sum to the case outcome. Levers with ≈0 standalone swing are treated as null
+    # players (φ≈0) and skipped, keeping the 2^n coalition sweep small/fast.
+    SHAP_CAP = 12
+    active = [d for d in drivers if d["abs_swing"] >= 0.005]
+    shapley_available = 0 < len(active) <= SHAP_CAP
+    shapley_resid_up = shapley_resid_down = 0.0
+    if shapley_available:
+        akeys = [d["key"] for d in active]
+        phi_up = _dd_shapley(akeys, base, {k: best.get(k) for k in akeys},
+                             deal_params, recovery_moic, metric)
+        phi_down = _dd_shapley(akeys, base, {k: cons.get(k) for k in akeys},
+                               deal_params, recovery_moic, metric)
+        for d in drivers:
+            d["shapley_up"] = round(phi_up.get(d["key"], 0.0), 3)
+            d["shapley_down"] = round(phi_down.get(d["key"], 0.0), 3)
+        shapley_resid_up = (metric_best - metric_base) - sum(phi_up.values())
+        shapley_resid_down = (metric_cons - metric_base) - sum(phi_down.values())
+
     return {
         "available": len(drivers) > 0,
         "metric": metric,
@@ -864,6 +925,9 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         # Bridge residuals: contributions + residual = (case outcome − base outcome)
         "interaction_down": round((metric_cons - metric_base) - sum_down, 3),
         "interaction_up": round((metric_best - metric_base) - sum_up, 3),
+        "shapley_available": shapley_available,
+        "shapley_resid_up": round(shapley_resid_up, 3),
+        "shapley_resid_down": round(shapley_resid_down, 3),
     }
 
 
