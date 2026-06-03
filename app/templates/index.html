@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=220">
+    <link rel="stylesheet" href="/static/styles.css?v=221">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -764,6 +764,63 @@
             <div id="ddr-history" style="margin-top:2rem;">
                 <h3>Saved Reports <span style="font-size:0.75rem;color:#666;font-weight:normal;">(shared across team)</span></h3>
                 <div id="ddr-history-list" class="ddr-history-list"><p class="text-muted">No saved reports yet.</p></div>
+            </div>
+
+            <!-- ═══════════ TECHNICAL / DEEP-TECH DDR ═══════════ -->
+            <div id="tech-ddr-section" class="tech-ddr-section">
+                <div class="tech-ddr-divider"></div>
+                <div class="page-header" style="margin-top:1.5rem;">
+                    <h2>Technical DDR <span class="tech-ddr-badge">for research papers &amp; unfamiliar science</span></h2>
+                    <p class="section-subtitle">Deep-tech diligence for deals outside our domain. Drop research papers (and an optional deck), tell it what you think the innovation is, and it reads each paper <strong>in full</strong>, grounds novelty in the published literature, and explains the tech for a non-specialist — plus commercial &amp; manufacturing-scale risk and a curated Related Research reading list.</p>
+                </div>
+
+                <div id="tddr-run-section" class="ddr-run-section">
+                    <div class="memo-upload-dropzone" id="tddr-dropzone">
+                        <div class="memo-upload-icon">&#128218;</div>
+                        <div class="memo-upload-text">
+                            Drop research papers &amp; decks here or <label for="tddr-file-input" class="memo-upload-link">browse</label>
+                        </div>
+                        <div class="memo-upload-hint">PDF only — up to 8 files (papers + optional pitch deck)</div>
+                        <div id="tddr-selected-files" class="ddr-selected-file" style="display:none;"></div>
+                        <input type="file" id="tddr-file-input" accept=".pdf" multiple style="display:none">
+                    </div>
+
+                    <label for="tddr-hint" class="tddr-hint-label">Commercial frame of reference <span style="font-weight:normal;color:#888;">— what this technology applies to. This is the lens for the whole report; the papers are just the raw science.</span></label>
+                    <textarea id="tddr-hint" class="tddr-hint-input" rows="3" placeholder="The papers are the raw science; THIS is the commercial lens. Tell the model what the discovery applies to and how to frame its value — e.g. 'Frame this phonon-suppression result as a thermal-barrier coating for gas-turbine blades; the commercial angle is longer blade life and higher efficiency in power generation.' The model anchors the whole report (innovation framing, applications, commercial implications) on this."></textarea>
+
+                    <button id="tddr-run-btn" class="btn btn-primary" onclick="tddrRun()" style="margin-top:12px;" disabled>Generate Technical DDR</button>
+                </div>
+
+                <!-- Progress card -->
+                <div id="tddr-progress-card" class="ddr-progress-card" style="display:none">
+                    <h3 id="tddr-progress-title">Generating Technical DDR...</h3>
+                    <div class="ddr-file-info">
+                        <code id="tddr-file-name"></code>
+                        <span id="tddr-company-badge" class="ddr-company-badge" style="display:none"></span>
+                    </div>
+                    <div class="ddr-progress-bar-track">
+                        <div id="tddr-progress-bar" class="ddr-progress-bar-fill" style="width:0%"></div>
+                    </div>
+                    <div class="ddr-progress-meta">
+                        <span id="tddr-progress-msg">Initializing...</span>
+                        <span id="tddr-progress-pct">0%</span>
+                    </div>
+                </div>
+
+                <!-- Download button area -->
+                <div id="tddr-download-area" style="display:none; margin:1.5rem 0; align-items:center; gap:1rem;">
+                    <button id="tddr-download-btn" class="btn btn-primary" onclick="tddrDownload()">📄 Download Technical DDR</button>
+                    <span id="tddr-download-meta" class="text-muted"></span>
+                </div>
+
+                <!-- Active jobs -->
+                <div id="tddr-active-jobs" style="margin-top:1rem;"></div>
+
+                <!-- Saved technical reports -->
+                <div id="tddr-history" style="margin-top:2rem;">
+                    <h3>Saved Technical DDRs <span style="font-size:0.75rem;color:#666;font-weight:normal;">(shared across team)</span></h3>
+                    <div id="tddr-history-list" class="ddr-history-list"><p class="text-muted">No saved technical reports yet.</p></div>
+                </div>
             </div>
         </div>
 
@@ -2325,7 +2382,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=220"></script>
+    <script src="/static/app.js?v=221"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=5"></script>

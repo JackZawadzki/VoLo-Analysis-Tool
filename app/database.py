@@ -263,6 +263,24 @@ CREATE TABLE IF NOT EXISTS ddr_reports (
     file_size_bytes INTEGER NOT NULL DEFAULT 0
 );
 
+-- Technical / Deep-Tech DDR reports (parallel to ddr_reports). Separate
+-- table so the science-heavy track is fully isolated from the standard DDR.
+-- innovation_hint = the analyst's free-text hypothesis; source_docs = the
+-- uploaded paper/deck filenames used to build the report.
+CREATE TABLE IF NOT EXISTS tech_ddr_reports (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_name    TEXT    NOT NULL,
+    filename        TEXT    NOT NULL,
+    pdf_data        BLOB    NOT NULL,
+    analysis_json   TEXT    NOT NULL DEFAULT '{}',
+    innovation_hint TEXT    NOT NULL DEFAULT '',
+    source_docs     TEXT    NOT NULL DEFAULT '',
+    generated_by    TEXT    NOT NULL,
+    generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+    file_size_bytes INTEGER NOT NULL DEFAULT 0,
+    custom_title    TEXT    NOT NULL DEFAULT ''
+);
+
 -- Per-user Google Drive OAuth credentials. The refresh_token is encrypted at
 -- rest with a Fernet key from GOOGLE_TOKEN_ENCRYPTION_KEY (env). Each user
 -- connects their own Drive account; the app reads files using their tokens
@@ -766,6 +784,20 @@ def migrate_db():
         generated_by    TEXT    NOT NULL,
         generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
         file_size_bytes INTEGER NOT NULL DEFAULT 0
+    )""")
+    # Shared Technical / Deep-Tech DDR report storage (parallel to ddr_reports)
+    migrations.append("""CREATE TABLE IF NOT EXISTS tech_ddr_reports (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_name    TEXT    NOT NULL,
+        filename        TEXT    NOT NULL,
+        pdf_data        BLOB    NOT NULL,
+        analysis_json   TEXT    NOT NULL DEFAULT '{}',
+        innovation_hint TEXT    NOT NULL DEFAULT '',
+        source_docs     TEXT    NOT NULL DEFAULT '',
+        generated_by    TEXT    NOT NULL,
+        generated_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+        file_size_bytes INTEGER NOT NULL DEFAULT 0,
+        custom_title    TEXT    NOT NULL DEFAULT ''
     )""")
     # dd_scenarios table
     migrations.append("""CREATE TABLE IF NOT EXISTS dd_scenarios (

@@ -5478,3 +5478,27 @@ h2 .info-tip-body {
 .dd-torn-mode { display:flex; align-items:center; gap:10px; margin:0 0 12px; flex-wrap:wrap; }
 .dd-torn-mode-lbl { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#5b6b47; }
 .dd-chart-mode { display:flex; align-items:center; gap:10px; margin:8px 0 14px; flex-wrap:wrap; }
+
+/* ── Technical / Deep-Tech DDR (second card under the standard DDR) ── */
+.tech-ddr-divider { border-top: 2px dashed #cfe0d5; margin: 2.5rem 0 0; }
+.tech-ddr-badge {
+    display: inline-block; font-size: 0.7rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.04em; color: #2d5f3f;
+    background: #eef7f1; border: 1px solid #cfe6d8; border-radius: 999px;
+    padding: 2px 10px; margin-left: 8px; vertical-align: middle;
+}
+.tddr-hint-label {
+    display: block; margin-top: 14px; margin-bottom: 6px;
+    font-size: 0.9rem; font-weight: 600; color: #2d3b33;
+}
+.tddr-hint-input {
+    width: 100%; box-sizing: border-box; border: 1px solid #cfe0d5;
+    border-radius: 8px; padding: 10px 12px; font-size: 0.9rem;
+    font-family: inherit; resize: vertical; background: #fbfdfc;
+}
+.tddr-hint-input:focus {
+    outline: none; border-color: #3a7d52;
+    box-shadow: 0 0 0 3px rgba(58,125,82,0.12);
+}
+.tddr-file-row { font-size: 0.85rem; margin: 2px 0; }
+.tddr-clear-link { font-size: 0.78rem; color: #b3402f; display: inline-block; margin-top: 4px; }

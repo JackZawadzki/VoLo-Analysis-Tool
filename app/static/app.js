@@ -12792,7 +12792,7 @@ switchTab = function(tab) {
     if (tab === 'funddeployment') {
         setTimeout(() => fdInit(), 50);
     }
-    if (tab === 'ddr') { ddrInitDropzone(); ddrLoadHistory(); }
+    if (tab === 'ddr') { ddrInitDropzone(); ddrLoadHistory(); tddrInitDropzone(); tddrLoadHistory(); }
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -13091,4 +13091,303 @@ function ddrResumeJob(jobId) {
     _ddrCurrentJobId = jobId;
     ddrShowActive('');
     ddrStartPolling(jobId);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TECHNICAL / DEEP-TECH DDR — multi-paper upload, Opus multi-pass, with polling
+// ══════════════════════════════════════════════════════════════════════════════
+
+let _tddrCurrentJobId = null;
+let _tddrPollTimer = null;
+let _tddrPdfFilename = null;
+let _tddrSelectedFiles = [];
+let _tddrStartMs = 0, _tddrTargetPct = 0, _tddrDispPct = 0, _tddrSmoothTimer = null;
+
+function _tddrFmtElapsed() {
+    if (!_tddrStartMs) return '0:00';
+    const s = Math.floor((Date.now() - _tddrStartMs) / 1000);
+    return Math.floor(s / 60) + ':' + (s % 60).toString().padStart(2, '0');
+}
+// Ease the bar toward the server-reported target, and gently creep while
+// waiting on a long Opus call so it never looks frozen (capped just below the
+// next milestone, never hits 100 until the job actually completes).
+function _tddrTick() {
+    const ceil = Math.min(_tddrTargetPct + 6, 96);
+    if (_tddrDispPct < _tddrTargetPct) {
+        _tddrDispPct += Math.max(0.5, (_tddrTargetPct - _tddrDispPct) * 0.28);
+    } else if (_tddrDispPct < ceil) {
+        _tddrDispPct += 0.12;
+    }
+    if (_tddrDispPct > ceil) _tddrDispPct = ceil;
+    if (_tddrDispPct > 99) _tddrDispPct = 99;
+    const bar = document.getElementById('tddr-progress-bar');
+    if (bar) bar.style.width = _tddrDispPct.toFixed(1) + '%';
+    const pct = document.getElementById('tddr-progress-pct');
+    if (pct) pct.textContent = Math.round(_tddrDispPct) + '%  ·  ' + _tddrFmtElapsed();
+}
+function _tddrStartSmooth() {
+    _tddrStartMs = Date.now(); _tddrTargetPct = 0; _tddrDispPct = 0;
+    if (_tddrSmoothTimer) clearInterval(_tddrSmoothTimer);
+    _tddrSmoothTimer = setInterval(_tddrTick, 350);
+    _tddrTick();
+}
+function _tddrStopSmooth(finalPct) {
+    if (_tddrSmoothTimer) { clearInterval(_tddrSmoothTimer); _tddrSmoothTimer = null; }
+    if (typeof finalPct === 'number') {
+        _tddrDispPct = finalPct;
+        const bar = document.getElementById('tddr-progress-bar');
+        if (bar) bar.style.width = finalPct + '%';
+        const pct = document.getElementById('tddr-progress-pct');
+        if (pct) pct.textContent = finalPct + '%  ·  ' + _tddrFmtElapsed();
+    }
+}
+
+function tddrInitDropzone() {
+    const dropzone = document.getElementById('tddr-dropzone');
+    const fileInput = document.getElementById('tddr-file-input');
+    if (!dropzone || !fileInput) return;
+    if (dropzone._initDone) { tddrSyncFiles(); return; }
+    dropzone._initDone = true;
+
+    const handleFiles = (fileList) => {
+        for (const f of fileList) {
+            const ext = (f.name.split('.').pop() || '').toLowerCase();
+            if (ext !== 'pdf') { showToast(`${f.name}: PDF only`); continue; }
+            if (!_tddrSelectedFiles.some(x => x.name === f.name && x.size === f.size)) {
+                _tddrSelectedFiles.push(f);
+            }
+        }
+        if (_tddrSelectedFiles.length > 8) {
+            showToast('Max 8 files — keeping the first 8.');
+            _tddrSelectedFiles = _tddrSelectedFiles.slice(0, 8);
+        }
+        tddrSyncFiles();
+    };
+
+    dropzone.addEventListener('click', (e) => {
+        if (e.target.tagName !== 'LABEL' && e.target.tagName !== 'INPUT') fileInput.click();
+    });
+    dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+    dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) handleFiles(fileInput.files);
+        fileInput.value = '';
+    });
+    tddrSyncFiles();
+}
+
+function tddrSyncFiles() {
+    const el = document.getElementById('tddr-selected-files');
+    const btn = document.getElementById('tddr-run-btn');
+    if (el) {
+        if (_tddrSelectedFiles.length) {
+            el.innerHTML = _tddrSelectedFiles.map(f =>
+                `<div class="tddr-file-row">&#128196; ${f.name} <span style="color:#888;">(${(f.size / 1048576).toFixed(1)} MB)</span></div>`
+            ).join('') +
+            `<a href="#" onclick="tddrClearFiles(event)" class="tddr-clear-link">clear all</a>`;
+            el.style.display = 'block';
+        } else {
+            el.style.display = 'none';
+            el.innerHTML = '';
+        }
+    }
+    if (btn) btn.disabled = _tddrSelectedFiles.length === 0;
+}
+
+function tddrClearFiles(e) {
+    if (e) e.preventDefault();
+    _tddrSelectedFiles = [];
+    tddrSyncFiles();
+}
+
+function tddrRun() {
+    if (!_tddrSelectedFiles.length) { showToast('Add at least one PDF (a paper or deck).'); return; }
+    const fd = new FormData();
+    _tddrSelectedFiles.forEach(f => fd.append('files', f));
+    const hint = (document.getElementById('tddr-hint')?.value || '').trim();
+    fd.append('innovation_hint', hint);
+
+    const headers = {};
+    if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
+
+    const btn = document.getElementById('tddr-run-btn');
+    const reset = () => { if (btn) { btn.disabled = false; btn.textContent = 'Generate Technical DDR'; } };
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+
+    fetch('/api/tech-ddr/start', { method: 'POST', headers, body: fd })
+        .then(async r => {
+            const d = await r.json();
+            if (r.status === 429) { showToast(d.detail || 'Please wait before another run.'); reset(); return; }
+            if (d.job_id) {
+                _tddrCurrentJobId = d.job_id;
+                tddrShowActive(_tddrSelectedFiles.map(f => f.name).join(', '));
+                tddrStartPolling(d.job_id);
+                showToast('Technical DDR started');
+                reset();
+            } else {
+                showToast(d.detail || 'Tech DDR start failed');
+                reset();
+            }
+        })
+        .catch(err => { showToast('Tech DDR error: ' + err.message); reset(); });
+}
+
+function tddrShowActive(filename) {
+    const progressCard = document.getElementById('tddr-progress-card');
+    const downloadArea = document.getElementById('tddr-download-area');
+    if (progressCard) { progressCard.style.display = 'block'; progressCard.className = 'ddr-progress-card'; }
+    if (downloadArea) downloadArea.style.display = 'none';
+    const nameEl = document.getElementById('tddr-file-name');
+    if (nameEl) nameEl.textContent = filename || '';
+    const titleEl = document.getElementById('tddr-progress-title');
+    if (titleEl) titleEl.textContent = 'Generating Technical DDR...';
+    const msg = document.getElementById('tddr-progress-msg');
+    if (msg) { msg.textContent = 'Queued...'; msg.style.color = ''; }
+    _tddrStartSmooth();
+    const badge = document.getElementById('tddr-company-badge');
+    if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
+}
+
+function tddrStartPolling(jobId) {
+    if (_tddrPollTimer) clearInterval(_tddrPollTimer);
+    _tddrPollTimer = setInterval(() => tddrPollStatus(jobId), 3000);
+    tddrPollStatus(jobId);
+}
+
+async function tddrPollStatus(jobId) {
+    try {
+        const r = await fetch(`/api/tech-ddr/status/${jobId}`, { headers: _rvmHeaders() });
+        if (!r.ok) return;
+        const d = await r.json();
+        const msg = document.getElementById('tddr-progress-msg');
+        _tddrTargetPct = d.progress_pct || 0;   // the smoother eases the bar toward this
+        if (msg) msg.textContent = d.progress_msg || '';
+        if (d.company_name) {
+            const badge = document.getElementById('tddr-company-badge');
+            if (badge) { badge.textContent = d.company_name; badge.style.display = 'inline-block'; }
+        }
+        if (d.status === 'complete') {
+            clearInterval(_tddrPollTimer); _tddrPollTimer = null;
+            tddrShowComplete(d);
+        } else if (d.status === 'error') {
+            clearInterval(_tddrPollTimer); _tddrPollTimer = null;
+            tddrShowError(d.error);
+        }
+    } catch (err) { console.warn('[TechDDR] Poll error:', err); }
+}
+
+function tddrShowComplete(data) {
+    _tddrStopSmooth(100);
+    const titleEl = document.getElementById('tddr-progress-title');
+    if (titleEl) titleEl.textContent = data.partial ? 'Technical DDR — Partial Report' : 'Technical DDR Complete';
+    const progressCard = document.getElementById('tddr-progress-card');
+    if (progressCard) progressCard.classList.add(data.partial ? 'ddr-error' : 'ddr-complete');
+    const msg = document.getElementById('tddr-progress-msg');
+    if (msg) {
+        if (data.partial) {
+            msg.textContent = 'Partial report saved — synthesis did not finish' +
+                (data.partial_reason ? ` (${data.partial_reason})` : '') +
+                '. The work gathered so far is in the PDF.';
+            msg.style.color = '#c8721f';
+        } else {
+            msg.textContent = 'Done.';
+            msg.style.color = '';
+        }
+    }
+    const downloadArea = document.getElementById('tddr-download-area');
+    if (downloadArea) downloadArea.style.display = 'flex';
+    const meta = document.getElementById('tddr-download-meta');
+    if (meta) meta.textContent = `${data.company_name || 'Unknown'} — Generated ${new Date(data.finished_at).toLocaleString()}`;
+    _tddrPdfFilename = data.pdf_filename || null;
+    tddrLoadHistory();
+}
+
+function tddrShowError(errorMsg) {
+    _tddrStopSmooth();
+    const titleEl = document.getElementById('tddr-progress-title');
+    if (titleEl) titleEl.textContent = 'Technical DDR Failed';
+    const msg = document.getElementById('tddr-progress-msg');
+    if (msg) { msg.textContent = errorMsg || 'Unknown error — please try again.'; msg.style.color = '#dc3545'; }
+    const progressCard = document.getElementById('tddr-progress-card');
+    if (progressCard) progressCard.classList.add('ddr-error');
+}
+
+async function tddrDownload() {
+    if (!_tddrCurrentJobId) return;
+    try {
+        const r = await fetch(`/api/tech-ddr/download/${_tddrCurrentJobId}`, { headers: _rvmHeaders() });
+        if (!r.ok) { showToast('Download failed'); return; }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = _tddrPdfFilename || `TechDDR_${_tddrCurrentJobId}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) { showToast('Download failed: ' + e.message); }
+}
+
+async function tddrLoadHistory() {
+    try {
+        const r = await fetch('/api/tech-ddr/jobs', { headers: _rvmHeaders() });
+        if (r.ok) {
+            const d = await r.json();
+            const jobs = (d.jobs || []).filter(j => j.status !== 'complete');
+            const activeEl = document.getElementById('tddr-active-jobs');
+            if (activeEl) {
+                activeEl.innerHTML = jobs.length ? '<h4 style="margin:0 0 6px 0;font-size:0.85rem;color:#2d5f3f;">In Progress</h4>' +
+                    jobs.map(j => {
+                        const sc = j.status === 'error' ? 'ddr-job-error' : 'ddr-job-running';
+                        const sl = j.status === 'error' ? 'Failed' : `${j.progress_pct}%`;
+                        return `<div class="ddr-history-item ${sc}" onclick="tddrResumeJob('${j.job_id}')"><span class="ddr-hist-name">${j.company_name || j.filename || 'Processing...'}</span><span class="ddr-hist-status">${sl}</span></div>`;
+                    }).join('') : '';
+            }
+        }
+    } catch (err) { console.warn('[TechDDR] Jobs error:', err); }
+
+    try {
+        const r = await fetch('/api/tech-ddr/reports', { headers: _rvmHeaders() });
+        if (!r.ok) return;
+        const d = await r.json();
+        const reports = d.reports || [];
+        const listEl = document.getElementById('tddr-history-list');
+        if (!listEl) return;
+        if (!reports.length) { listEl.innerHTML = '<p class="text-muted">No saved technical reports yet.</p>'; return; }
+        listEl.innerHTML = reports.map(rpt => {
+            const sizeMB = (rpt.file_size_bytes / 1048576).toFixed(1);
+            const date = rpt.generated_at ? new Date(rpt.generated_at).toLocaleDateString() : '';
+            const title = (rpt.custom_title && rpt.custom_title.trim()) ? rpt.custom_title : rpt.company_name;
+            const fn = (rpt.filename || 'TechDDR_Report.pdf').replace(/'/g, "\\'");
+            return `<div class="ddr-history-item ddr-job-complete" style="cursor:pointer;" onclick="tddrDownloadReport(${rpt.id}, '${fn}')">
+                <span class="ddr-hist-name">${title}</span>
+                <span class="ddr-hist-status" style="font-size:0.75rem;color:#666;">${rpt.generated_by} · ${sizeMB}MB</span>
+                <span class="ddr-hist-date">${date}</span>
+            </div>`;
+        }).join('');
+    } catch (err) { console.warn('[TechDDR] Reports error:', err); }
+}
+
+async function tddrDownloadReport(reportId, filename) {
+    try {
+        const r = await fetch(`/api/tech-ddr/reports/${reportId}/download`, { headers: _rvmHeaders() });
+        if (!r.ok) { showToast('Download failed'); return; }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'TechDDR_Report.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (e) { showToast('Download failed: ' + e.message); }
+}
+
+function tddrResumeJob(jobId) {
+    _tddrCurrentJobId = jobId;
+    tddrShowActive('');
+    tddrStartPolling(jobId);
 }
