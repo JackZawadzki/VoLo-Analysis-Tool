@@ -1,29 +1,35 @@
 """
 tech_ddr_report.py
 ==================
-PDF generation for the **Technical / Deep-Tech Due Diligence Report**.
+PDF generation for the **Technical Due Diligence Report** (deep-tech track).
 
-Self-contained (does not import from ddr_report.py) so the standard DDR PDF
-path is left completely untouched. Sections:
+Self-contained (does not import from ddr_report.py). A repeatable, investor-facing
+venture-diligence brief structured as:
 
-  - Title + Innovation Summary (with an honest hypothesis assessment)
-  - Technology Explainer (plain-language + technical depth)
-  - How It Works
-  - Novelty vs. Prior Work
-  - Evidence & Data Sources
-  - Commercial Implications
-  - Manufacturing Scale-Up & Commercialization Risk
-  - Claims Assessment (retained IC rigor)
-  - Competitive Landscape (retained IC rigor)
-  - Related Research / Further Reading (curated reading list — DISTINCT from Citations)
-  - Conclusion
-  - Citations (provenance of everything the analysis used)
+  1. Executive Summary
+  2. Technology Explanation
+  3. Claimed Product / Use Case
+  4. Theory-to-Product Bridge
+  5. Prior Work & Literature Map  (+ Further Reading)
+  6. Benchmarking Framework
+  7. Commercial Implications
+  8. Manufacturing Scale-Up & Commercialization Risk
+  9. Key Diligence Questions / Data Requests
+     + Citations
 
-Plus fillable team-commentary fields throughout.
+It is informational only — it frames the technology and the diligence questions
+and contains NO investment recommendation. The free-text input is treated as the
+FOUNDER's claim (the researcher who brought the paper + a product idea).
+
+Glyph handling: a bundled DejaVuSans family (app/engine/fonts) is registered so
+Greek letters, math operators and super/subscripts render natively; anything the
+font cannot draw is transliterated/stripped so the PDF never shows tofu boxes.
 """
 
 import io
+import os
 import re
+import unicodedata
 from datetime import datetime
 
 from reportlab.lib.pagesizes import letter
@@ -34,6 +40,9 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Flowable,
 )
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 
@@ -45,7 +54,91 @@ BAD_RED = "#b3402f"
 MUTED = "#666666"
 
 
-# ── Escaping (mirrors ddr_report's literal markup handling) ──────────────────
+# ── Fonts (bundled Unicode TTF so math/Greek render; no tofu) ────────────────
+
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+FONT = "Helvetica"
+FONT_B = "Helvetica-Bold"
+FONT_I = "Helvetica-Oblique"
+FONT_BI = "Helvetica-BoldOblique"
+_SUPPORTED = None  # set of codepoints the active font can render (None = Helvetica)
+
+
+def _register_fonts():
+    global FONT, FONT_B, FONT_I, FONT_BI, _SUPPORTED
+    try:
+        faces = [
+            ("DejaVuSans", "DejaVuSans.ttf"),
+            ("DejaVuSans-Bold", "DejaVuSans-Bold.ttf"),
+            ("DejaVuSans-Oblique", "DejaVuSans-Oblique.ttf"),
+            ("DejaVuSans-BoldOblique", "DejaVuSans-BoldOblique.ttf"),
+        ]
+        for name, fn in faces:
+            pdfmetrics.registerFont(TTFont(name, os.path.join(_FONT_DIR, fn)))
+        registerFontFamily(
+            "DejaVuSans", normal="DejaVuSans", bold="DejaVuSans-Bold",
+            italic="DejaVuSans-Oblique", boldItalic="DejaVuSans-BoldOblique",
+        )
+        FONT, FONT_B = "DejaVuSans", "DejaVuSans-Bold"
+        FONT_I, FONT_BI = "DejaVuSans-Oblique", "DejaVuSans-BoldOblique"
+        face = pdfmetrics.getFont("DejaVuSans").face
+        cmap = getattr(face, "charToGlyph", None)
+        if cmap:
+            _SUPPORTED = set(cmap.keys())
+    except Exception as ex:  # pragma: no cover - fall back to built-in Helvetica
+        print(f"[TechDDR] DejaVu font registration failed, using Helvetica: {ex}", flush=True)
+        _SUPPORTED = None
+
+
+_register_fonts()
+
+# Transliterations used ONLY when the active font lacks the glyph (so DejaVu still
+# renders Greek/operators natively when present).
+_TRANSLIT = {
+    "■": "", "□": "", "▪": "", "◼": "", "●": "-", "•": "-", "▸": "-", "‣": "-",
+    "→": "->", "⇒": "=>", "←": "<-", "↔": "<->", "↦": "->",
+    "≈": "~", "≅": "~", "≃": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+    "∝": "proportional to", "∞": "infinity", "≪": "<<", "≫": ">>",
+    "×": "x", "÷": "/", "−": "-", "–": "-", "—": "-", "‐": "-", "⁻": "-",
+    "’": "'", "‘": "'", "“": '"', "”": '"', "…": "...", "′": "'", "″": '"',
+    "√": "sqrt", "∑": "sum", "∏": "prod", "∫": "integral", "∮": "integral",
+    "∇": "grad", "∂": "d", "∆": "Delta", "Δ": "Delta", "∈": "in", "∉": "not in",
+    "≡": "=", "≜": "=", "⊗": "(x)", "⊕": "(+)", "·": "*", "∙": "*",
+}
+
+
+# Always removed even if the font CAN draw them — these are tofu/box/replacement
+# glyphs or stray decorative squares that should never appear in prose.
+_FORCE_STRIP = {"�", "■", "□", "▪", "▫", "◼", "◻", "◾", "◽", "■", "□"}
+
+
+def _font_safe(s: str) -> str:
+    """Replace any character the active font cannot render with a transliteration
+    or NFKD-ASCII fallback, so the PDF never shows a tofu box. A small set of
+    box/replacement glyphs is dropped unconditionally."""
+    if not s:
+        return s
+    out = []
+    for ch in s:
+        if ch in _FORCE_STRIP:
+            continue
+        o = ord(ch)
+        ok = (o in _SUPPORTED) if _SUPPORTED is not None else (o < 0x100)
+        if ok or ch in "\n\r\t":
+            out.append(ch)
+            continue
+        rep = _TRANSLIT.get(ch)
+        if rep is None:
+            dec = unicodedata.normalize("NFKD", ch)
+            if _SUPPORTED is not None:
+                rep = "".join(c for c in dec if ord(c) in _SUPPORTED)
+            else:
+                rep = "".join(c for c in dec if ord(c) < 0x100)
+        out.append(rep or "")
+    return "".join(out)
+
+
+# ── Escaping (literal markup handling; keeps a safe subset of tags) ──────────
 
 def _esc(text) -> str:
     if not isinstance(text, str):
@@ -74,10 +167,9 @@ def _esc_preserving_entities(text: str) -> str:
 
 
 def _p(text, style) -> Paragraph:
-    """Paragraph that escapes free text but preserves a safe subset of tags
-    (so <b>, <i>, <a href>, <br/> etc. render)."""
     if not isinstance(text, str):
         text = str(text)
+    text = _font_safe(text)  # strip/transliterate unrenderable glyphs first
     parts = _SAFE_TAG_RE.split(text)
     tags = _SAFE_TAG_RE.findall(text)
     escaped_parts = [_esc_preserving_entities(p) for p in parts]
@@ -90,38 +182,38 @@ def _p(text, style) -> Paragraph:
 
 
 def _safe_href(url: str) -> str:
-    """Normalize a URL/DOI into a safe href, or '' if it isn't linkable."""
     u = (url or "").strip()
     if not u:
         return ""
     if u.lower().startswith("doi:"):
         u = u[4:].strip()
-    if u.startswith("10.") and "/" in u:  # bare DOI
+    if u.startswith("10.") and "/" in u:
         u = "https://doi.org/" + u
     if not (u.startswith("http://") or u.startswith("https://")):
         return ""
-    # The href lives inside the <a ...> tag which _p keeps verbatim, so escape
-    # ampersands here and drop characters that would break the tag.
     return u.replace("&", "&amp;").replace('"', "%22").replace("<", "").replace(">", "")
 
 
 def _link(text: str, url: str) -> str:
-    """Return an <a> link if the URL is valid, otherwise the bare text."""
     href = _safe_href(url)
     if href:
         return f'<a href="{href}" color="{ACCENT_BLUE}"><u>{text}</u></a>'
     return text
 
 
-def _sev_color(level: str) -> str:
-    lv = (level or "").upper()
-    if lv in ("HIGH", "WEAK", "DIFFERS", "CRITICAL"):
-        return BAD_RED
-    if lv in ("MEDIUM", "MODERATE", "PARTIALLY SUPPORTED", "PARTIALLY VERIFIED", "UNVERIFIABLE"):
-        return WARN_ORANGE
-    if lv in ("LOW", "STRONG", "MATCHES", "EXCEEDS", "VERIFIED"):
-        return GOOD_GREEN
-    return MUTED
+def _risk_color(sev: str) -> str:
+    s = (sev or "").upper()
+    return {"HIGH": BAD_RED, "MEDIUM": WARN_ORANGE, "LOW": GOOD_GREEN}.get(s, MUTED)
+
+
+def _conf_color(level: str) -> str:
+    s = (level or "").upper()
+    return {"HIGH": GOOD_GREEN, "MEDIUM": ACCENT_BLUE, "LOW": WARN_ORANGE}.get(s, MUTED)
+
+
+def _clarity_color(c: str) -> str:
+    s = (c or "").upper()
+    return {"CLEAR": GOOD_GREEN, "PARTIALLY CLEAR": WARN_ORANGE, "UNCLEAR": BAD_RED}.get(s, MUTED)
 
 
 # ── Styles ───────────────────────────────────────────────────────────────────
@@ -129,36 +221,32 @@ def _sev_color(level: str) -> str:
 def _styles():
     base = getSampleStyleSheet()
     return {
-        "title": ParagraphStyle('TTitle', parent=base['Heading1'], fontSize=23,
+        "title": ParagraphStyle('TTitle', parent=base['Heading1'], fontSize=22,
                                 textColor=colors.HexColor(VOLO_GREEN), spaceAfter=14,
-                                alignment=TA_CENTER, fontName='Helvetica-Bold'),
+                                alignment=TA_CENTER, fontName=FONT_B),
         "heading": ParagraphStyle('THeading', parent=base['Heading2'], fontSize=15,
                                   textColor=colors.HexColor(VOLO_GREEN), spaceAfter=9,
-                                  spaceBefore=15, fontName='Helvetica-Bold'),
-        "sub": ParagraphStyle('TSub', parent=base['Heading3'], fontSize=12,
+                                  spaceBefore=15, fontName=FONT_B),
+        "sub": ParagraphStyle('TSub', parent=base['Heading3'], fontSize=11.5,
                               textColor=colors.HexColor('#1a472a'), spaceAfter=5,
-                              spaceBefore=9, fontName='Helvetica-Bold'),
+                              spaceBefore=9, fontName=FONT_B),
         "body": ParagraphStyle('TBody', parent=base['BodyText'], fontSize=10,
-                               leading=14, spaceAfter=8, alignment=TA_JUSTIFY),
+                               leading=14, spaceAfter=8, alignment=TA_JUSTIFY, fontName=FONT),
         "small": ParagraphStyle('TSmall', parent=base['BodyText'], fontSize=9,
-                                leading=12, spaceAfter=6, alignment=TA_JUSTIFY),
+                                leading=12, spaceAfter=6, alignment=TA_JUSTIFY, fontName=FONT),
     }
 
 
-# ── PDF build ────────────────────────────────────────────────────────────────
-
 _TOC_ORDER = [
-    ("summary", "Innovation Summary"),
-    ("explainer", "Technology Explainer"),
-    ("howitworks", "How It Works"),
-    ("novelty", "Novelty vs. Prior Work"),
-    ("evidence", "Evidence & Data Sources"),
+    ("exec", "Executive Summary"),
+    ("tech", "Technology Explanation"),
+    ("product", "Claimed Product / Use Case"),
+    ("bridge", "Theory-to-Product Bridge"),
+    ("prior", "Prior Work & Literature Map"),
+    ("bench", "Benchmarking Framework"),
     ("commercial", "Commercial Implications"),
     ("manufacturing", "Manufacturing Scale-Up & Risk"),
-    ("claims", "Claims Assessment"),
-    ("competitive", "Competitive Landscape"),
-    ("related", "Related Research / Further Reading"),
-    ("conclusion", "Conclusion"),
+    ("diligence", "Key Diligence Questions"),
     ("citations", "Citations"),
 ]
 
@@ -179,7 +267,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
             toc_tracker[self.key] = self.canv.getPageNumber()
 
     class _Commentary(Flowable):
-        def __init__(self, name, label, h=1.3 * inch):
+        def __init__(self, name, label, h=1.2 * inch):
             Flowable.__init__(self)
             self.name = name
             self.label = label
@@ -193,11 +281,11 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
             c.setStrokeColor(colors.HexColor('#d4e6da'))
             c.setLineWidth(0.5)
             c.line(0, self.height, self.fw, self.height)
-            c.setFont('Helvetica-Bold', 8)
+            c.setFont(FONT_B, 8)
             c.setFillColor(colors.HexColor(VOLO_GREEN))
-            c.drawString(2, self.fh + 3, self.label)
+            c.drawString(2, self.fh + 3, _font_safe(self.label))
             c.acroForm.textfield(
-                name=self.name, tooltip=self.label, x=0, y=0,
+                name=self.name, tooltip=_font_safe(self.label), x=0, y=0,
                 width=self.fw, height=self.fh, borderStyle='inset',
                 borderColor=colors.HexColor('#c8dcc8'),
                 fillColor=colors.HexColor('#f8fbf9'), textColor=colors.black,
@@ -205,20 +293,27 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
                 maxlen=100000, fontSize=9,
             )
 
+    def _bullets(items, style):
+        out = []
+        for it in (items or []):
+            if isinstance(it, str) and it.strip():
+                out.append(_p(f"- {it}", style))
+        return out
+
     def _toc(entries=None):
         items = [_p("TABLE OF CONTENTS",
-                    ParagraphStyle('TTOC', parent=S['title'], fontSize=20)),
-                 Spacer(1, 0.15 * inch),
+                    ParagraphStyle('TTOC', parent=S['title'], fontSize=18)),
+                 Spacer(1, 0.12 * inch),
                  Table([['']], colWidths=[6.5 * inch],
                        style=TableStyle([('LINEBELOW', (0, 0), (-1, -1), 1.5,
                                           colors.HexColor(VOLO_GREEN))])),
-                 Spacer(1, 0.25 * inch)]
+                 Spacer(1, 0.22 * inch)]
         if entries:
             name_st = ParagraphStyle('TN', parent=S['body'], fontSize=11, leading=18)
             pg_st = ParagraphStyle('TP', parent=S['body'], fontSize=11, leading=18,
-                                   alignment=TA_CENTER, fontName='Helvetica-Bold',
+                                   alignment=TA_CENTER, fontName=FONT_B,
                                    textColor=colors.HexColor(VOLO_GREEN))
-            rows = [[Paragraph(label, name_st), Paragraph(str(entries[key]), pg_st)]
+            rows = [[Paragraph(_font_safe(label), name_st), Paragraph(str(entries[key]), pg_st)]
                     for key, label in _TOC_ORDER if key in entries]
             if rows:
                 t = Table(rows, colWidths=[5.8 * inch, 0.7 * inch])
@@ -235,8 +330,8 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         return items
 
     def _section_sources(obj, acc):
-        """Recursively collect source/sources/link strings (for Citations).
-        Related Research is handled separately and must NOT be passed here."""
+        """Collect source/sources/link strings for the Citations page. Skips the
+        related_research reading list (kept separate)."""
         if isinstance(obj, dict):
             for k in ('sources', 'source', 'link'):
                 v = obj.get(k)
@@ -247,7 +342,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
                 elif isinstance(v, str) and v.strip():
                     acc.append(v.strip())
             for vk, vv in obj.items():
-                if vk in ('related_research',):
+                if vk == 'related_research':
                     continue
                 if isinstance(vv, (dict, list)):
                     _section_sources(vv, acc)
@@ -260,319 +355,267 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         name = analysis.get('company_name', 'Unknown Subject')
         field = analysis.get('field', '')
 
-        # ── Title + Innovation Summary
+        # ── Title
         story.append(_p("TECHNICAL DUE DILIGENCE REPORT", S["title"]))
         story.append(_p(f"<b>{name}</b>", S["heading"]))
         meta = f"Report Date: {datetime.now().strftime('%B %d, %Y')}"
         if field:
             meta = f"Field: {field} &nbsp;|&nbsp; " + meta
         story.append(_p(meta, S["body"]))
-        story.append(Spacer(1, 0.12 * inch))
+        story.append(_p(
+            "<i>Informational brief to acquaint the reader with the technology and "
+            "frame diligence. It contains no investment recommendation.</i>", S["small"]))
+        story.append(Spacer(1, 0.1 * inch))
 
         if analysis.get('partial'):
             story.append(_p(
-                f"<b><font color='{WARN_ORANGE}'>&#9888; PARTIAL REPORT</font></b> &mdash; the final "
-                f"synthesis did not complete ({analysis.get('partial_reason', 'unknown reason')}). "
-                f"The sections below were assembled from the document reads and research gathered "
-                f"before the run ended; re-run to produce the fully synthesized report.",
-                S["small"]))
-            story.append(Spacer(1, 0.1 * inch))
+                f"<b><font color='{WARN_ORANGE}'>&#9888; PARTIAL REPORT</font></b> &mdash; the run "
+                f"did not fully complete ({analysis.get('partial_reason', 'unknown reason')}). "
+                f"Sections below were assembled from the document reads and research gathered "
+                f"before it ended; re-run for the full brief.", S["small"]))
+            story.append(Spacer(1, 0.08 * inch))
 
-        summ = analysis.get('innovation_summary', {}) or {}
-        story.append(_Anchor("summary"))
-        story.append(_p("INNOVATION SUMMARY", S["heading"]))
-        if summ.get('one_liner'):
-            story.append(_p(f"<b>{summ['one_liner']}</b>", S["body"]))
-        if summ.get('inferred_innovation'):
-            story.append(_p(summ['inferred_innovation'], S["body"]))
-
-        hyp = (summ.get('analyst_hypothesis') or '').strip()
-        if hyp and hyp.lower() not in ('none', 'none provided', '(none provided)'):
-            story.append(Spacer(1, 0.06 * inch))
-            story.append(_p("Analyst's Hypothesis (tested against the evidence):", S["sub"]))
-            story.append(_p(f"<i>{hyp}</i>", S["small"]))
-            assess = summ.get('hypothesis_assessment', 'UNVERIFIABLE')
-            story.append(_p(
-                f"<b>Assessment: <font color='{_sev_color(assess)}'>{assess}</font></b> — "
-                f"{summ.get('hypothesis_explanation', '')}",
-                S["small"],
-            ))
-        story.append(Spacer(1, 0.12 * inch))
-        story.append(_Commentary("c_summary", "Team Commentary — Innovation Summary:"))
+        # ── 1. Executive Summary
+        ex = analysis.get('executive_summary', {}) or {}
+        story.append(_Anchor("exec"))
+        story.append(_p("1. EXECUTIVE SUMMARY", S["heading"]))
+        conf = (analysis.get('confidence_level') or 'N/A').upper()
+        story.append(_p(
+            f"<b>Confidence in the technical claim: "
+            f"<font color='{_conf_color(conf)}'>{conf}</font></b> "
+            f"<i>(an assessment of the claim/evidence — not an investment view)</i>",
+            S["small"]))
+        if ex.get('technology'):
+            story.append(_p(f"<b>Technology:</b> {ex['technology']}", S["body"]))
+        if ex.get('commercial_claim'):
+            story.append(_p(f"<b>Commercial claim (per founder):</b> {ex['commercial_claim']}", S["body"]))
+        if ex.get('main_diligence_concern'):
+            story.append(_p(f"<b>Main diligence concern:</b> {ex['main_diligence_concern']}", S["body"]))
+        if ex.get('confidence_note'):
+            story.append(_p(f"<b>Why this confidence level:</b> {ex['confidence_note']}", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_exec", "Team Commentary — Executive Summary:"))
         story.append(PageBreak())
 
         # ── TOC
         story.extend(_toc(toc_entries))
 
-        # ── Technology Explainer
-        tech = analysis.get('technology_explainer', {}) or {}
-        story.append(_Anchor("explainer"))
-        story.append(_p("TECHNOLOGY EXPLAINER", S["heading"]))
-        story.append(_p("<i>Written for an engineer or scientist who is not a specialist in this domain.</i>", S["small"]))
-        if tech.get('plain_language'):
-            story.append(_p("In Plain Language", S["sub"]))
-            story.append(_p(tech['plain_language'], S["body"]))
-        if tech.get('technical_depth'):
-            story.append(_p("Technical Depth", S["sub"]))
-            story.append(_p(tech['technical_depth'], S["body"]))
-        terms = tech.get('key_terms', []) or []
+        # ── 2. Technology Explanation
+        te = analysis.get('technology_explanation', {}) or {}
+        story.append(_Anchor("tech"))
+        story.append(_p("2. TECHNOLOGY EXPLANATION", S["heading"]))
+        story.append(_p("<i>For a technically literate reader who is not a specialist in this domain.</i>", S["small"]))
+        if te.get('summary'):
+            story.append(_p(te['summary'], S["body"]))
+        terms = te.get('key_terms', []) or []
         if terms:
             story.append(_p("Key Terms", S["sub"]))
             for t in terms:
                 story.append(_p(f"<b>{t.get('term', '')}</b> — {t.get('definition', '')}", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_explainer", "Team Commentary — Technology Explainer:"))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_tech", "Team Commentary — Technology Explanation:"))
         story.append(PageBreak())
 
-        # ── How It Works
-        how = analysis.get('how_it_works', {}) or {}
-        if how.get('summary') or how.get('steps'):
-            story.append(_Anchor("howitworks"))
-            story.append(_p("HOW IT WORKS", S["heading"]))
-            if how.get('summary'):
-                story.append(_p(how['summary'], S["body"]))
-            for i, step in enumerate(how.get('steps', []) or [], 1):
-                story.append(_p(f"<b>{i}.</b> {step}", S["small"]))
-            story.append(Spacer(1, 0.1 * inch))
-
-        # ── Novelty vs Prior Work
-        nov = analysis.get('novelty_vs_prior_work', {}) or {}
-        story.append(_Anchor("novelty"))
-        story.append(_p("NOVELTY VS. PRIOR WORK", S["heading"]))
-        if nov.get('summary'):
-            story.append(_p(nov['summary'], S["body"]))
-        new = nov.get('whats_genuinely_new', []) or []
-        if new:
-            story.append(_p("What Appears Genuinely New", S["sub"]))
-            for x in new:
-                story.append(_p(f"- {x}", S["small"]))
-        comps = nov.get('comparisons', []) or []
-        if comps:
-            story.append(_p("Compared to Prior Approaches", S["sub"]))
-            for c in comps:
-                src = c.get('source', '')
-                src_txt = f" <i>[{_link(src, src)}]</i>" if src else ""
-                adv = f" <b>Edge:</b> {c['advantage']}" if c.get('advantage') else ""
-                story.append(_p(
-                    f"<b>{c.get('prior_approach', 'Prior approach')}:</b> "
-                    f"{c.get('how_this_differs', '')}.{adv}{src_txt}", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_novelty", "Team Commentary — Novelty:"))
+        # ── 3. Claimed Product / Use Case
+        cp = analysis.get('claimed_product', {}) or {}
+        story.append(_Anchor("product"))
+        story.append(_p("3. CLAIMED PRODUCT / USE CASE", S["heading"]))
+        clar = (cp.get('clarity') or '').upper()
+        if clar:
+            story.append(_p(f"<b>Product clarity: <font color='{_clarity_color(clar)}'>{clar}</font></b>", S["small"]))
+        if cp.get('what_they_are_building'):
+            story.append(_p(cp['what_they_are_building'], S["body"]))
+        if cp.get('notes'):
+            story.append(_p(f"<i>{cp['notes']}</i>", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_product", "Team Commentary — Claimed Product:"))
         story.append(PageBreak())
 
-        # ── Evidence & Data
-        ev = analysis.get('evidence_and_data', {}) or {}
-        story.append(_Anchor("evidence"))
-        story.append(_p("EVIDENCE & DATA SOURCES", S["heading"]))
-        for r in ev.get('key_results', []) or []:
-            strength = r.get('strength', '')
-            badge = (f" <font color='{_sev_color(strength)}'>[{strength}]</font>"
-                     if strength else "")
-            src = r.get('source', '')
-            src_txt = f" <i>[{_link(src, src)}]</i>" if src else ""
+        # ── 4. Theory-to-Product Bridge
+        br = analysis.get('theory_to_product_bridge', {}) or {}
+        story.append(_Anchor("bridge"))
+        story.append(_p("4. THEORY-TO-PRODUCT BRIDGE", S["heading"]))
+        story.append(_p("<i>How the science is meant to become a product — and where the gaps are.</i>", S["small"]))
+        for key, label, color in (
+            ("proven", "Proven (established by the science)", GOOD_GREEN),
+            ("asserted", "Asserted (claimed but not yet shown)", WARN_ORANGE),
+            ("missing", "Missing (absent but required for a product)", BAD_RED),
+            ("must_be_demonstrated", "Must be demonstrated experimentally", ACCENT_BLUE),
+        ):
+            vals = br.get(key, []) or []
+            if vals:
+                story.append(_p(f"<font color='{color}'><b>{label}</b></font>", S["sub"]))
+                story.extend(_bullets(vals, S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_bridge", "Team Commentary — Theory-to-Product Bridge:"))
+        story.append(PageBreak())
+
+        # ── 5. Prior Work & Literature Map (+ Further Reading)
+        story.append(_Anchor("prior"))
+        story.append(_p("5. PRIOR WORK & LITERATURE MAP", S["heading"]))
+        for pw in (analysis.get('prior_work_literature_map', []) or []):
+            srcs = [s for s in (pw.get('sources') or []) if s]
+            src_txt = f" <i>[{', '.join(_link(s, s) for s in srcs[:2])}]</i>" if srcs else ""
+            mat = f" <font color='{MUTED}'>({pw['maturity']})</font>" if pw.get('maturity') else ""
+            bench = f"<br/><b>Benchmark it sets:</b> {pw['benchmark_it_sets']}" if pw.get('benchmark_it_sets') else ""
+            diff = f"<br/><b>Differentiation:</b> {pw['differentiation']}" if pw.get('differentiation') else ""
             story.append(_p(
-                f"<b>{r.get('claim', '')}</b>{badge}<br/>{r.get('evidence', '')}{src_txt}",
-                S["small"]))
+                f"<b>{pw.get('area', 'Area')}</b>{mat} — {pw.get('what_prior_work_does', '')}"
+                f"{bench}{diff}{src_txt}", S["small"]))
             story.append(Spacer(1, 0.03 * inch))
-        datasets = ev.get('datasets', []) or []
-        if datasets:
-            story.append(_p("Datasets & Benchmarks", S["sub"]))
-            for d in datasets:
-                link = d.get('link', '')
-                title = _link(d.get('name', 'Dataset'), link)
-                story.append(_p(f"<b>{title}</b> — {d.get('description', '')}", S["small"]))
-        oq = ev.get('open_questions', []) or []
-        if oq:
-            story.append(_p("Open Questions / Needs Verification", S["sub"]))
-            for q in oq:
-                story.append(_p(f"- {q}", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_evidence", "Team Commentary — Evidence:"))
-        story.append(PageBreak())
-
-        # ── Commercial Implications
-        com = analysis.get('commercial_implications', {}) or {}
-        story.append(_Anchor("commercial"))
-        story.append(_p("COMMERCIAL IMPLICATIONS", S["heading"]))
-        if com.get('summary'):
-            story.append(_p(com['summary'], S["body"]))
-        apps = com.get('applications', []) or []
-        if apps:
-            story.append(_p("Applications", S["sub"]))
-            for a in apps:
-                mkt = f" <i>({a['market']})</i>" if a.get('market') else ""
-                story.append(_p(f"<b>{a.get('application', '')}</b>{mkt} — {a.get('notes', '')}", S["small"]))
-        if com.get('market_context'):
-            story.append(_p("Market Context", S["sub"]))
-            story.append(_p(com['market_context'], S["small"]))
-        cc = com.get('comparable_companies', []) or []
-        if cc:
-            story.append(_p("Comparable Companies", S["sub"]))
-            for c in cc:
-                val = f" ({c['valuation_or_revenue']})" if c.get('valuation_or_revenue') else ""
-                story.append(_p(f"<b>{c.get('name', '')}</b>{val}: {c.get('context', '')}", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_commercial", "Team Commentary — Commercial:"))
-        story.append(PageBreak())
-
-        # ── Manufacturing Scale-Up & Risk
-        man = analysis.get('manufacturing_scaleup_risk', {}) or {}
-        story.append(_Anchor("manufacturing"))
-        story.append(_p("MANUFACTURING SCALE-UP & COMMERCIALIZATION RISK", S["heading"]))
-        if man.get('readiness'):
-            story.append(_p(f"<b>Readiness:</b> {man['readiness']}", S["small"]))
-        if man.get('scale_up_path'):
-            story.append(_p(man['scale_up_path'], S["body"]))
-        risks = man.get('key_risks', []) or []
-        if risks:
-            story.append(_p("Key Risks", S["sub"]))
-            for r in risks:
-                sev = r.get('severity', '')
-                badge = f"<font color='{_sev_color(sev)}'>[{sev}]</font> " if sev else ""
-                mit = f" <i>Mitigation:</i> {r['mitigation']}" if r.get('mitigation') else ""
-                story.append(_p(f"{badge}<b>{r.get('risk', '')}</b>.{mit}", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_manufacturing", "Team Commentary — Manufacturing & Risk:"))
-        story.append(PageBreak())
-
-        # ── Claims Assessment (retained rigor)
-        claims = analysis.get('claims', []) or []
-        if claims:
-            story.append(_Anchor("claims"))
-            story.append(_p("CLAIMS ASSESSMENT", S["heading"]))
-            for cl in claims:
-                vs = cl.get('verification_status', 'UNVERIFIED')
-                typ = (cl.get('type', 'OTHER') or 'OTHER')[:11].upper()
-                src = cl.get('sources', []) or []
-                src_txt = f" <i>[{', '.join(src[:2])}]</i>" if src else ""
-                inv = f"<br/><i>Investigate:</i> {cl['what_needs_investigation']}" if cl.get('what_needs_investigation') else ""
-                story.append(_p(
-                    f"<b>[{typ}] {cl.get('claim', '')}</b> "
-                    f"<font color='{_sev_color(vs)}'>({vs})</font>{inv}{src_txt}", S["small"]))
-                story.append(Spacer(1, 0.03 * inch))
-            story.append(Spacer(1, 0.08 * inch))
-            story.append(_Commentary("c_claims", "Team Commentary — Claims:"))
-            story.append(PageBreak())
-
-        # ── Competitive Landscape (retained rigor)
-        comp = analysis.get('competitive_landscape', {}) or {}
-        if comp:
-            story.append(_Anchor("competitive"))
-            story.append(_p("COMPETITIVE LANDSCAPE", S["heading"]))
-            if comp.get('positioning_summary'):
-                story.append(_p(comp['positioning_summary'], S["body"]))
-            peers = comp.get('peer_competitors', []) or []
-            if peers:
-                story.append(_p("Peer-Stage Competitors", S["sub"]))
-                for pr in peers:
-                    src = pr.get('sources', []) or []
-                    src_txt = f" <i>[{', '.join(src[:2])}]</i>" if src else ""
-                    story.append(_p(
-                        f"<b>{pr.get('name', '')}</b> ({pr.get('stage', '?')}): "
-                        f"{pr.get('description', '')}{src_txt}", S["small"]))
-            leaders = comp.get('market_leaders', []) or []
-            if leaders:
-                story.append(_p("Market Leaders & Incumbents", S["sub"]))
-                for ld in leaders:
-                    pos = f" — {ld['market_position']}" if ld.get('market_position') else ""
-                    story.append(_p(f"<b>{ld.get('name', '')}</b>{pos}: {ld.get('description', '')}", S["small"]))
-            if comp.get('competitive_risks'):
-                story.append(_p("<b>Competitive Risks:</b> " + " &middot; ".join(comp['competitive_risks']), S["small"]))
-            if comp.get('potential_acquirers'):
-                story.append(_p("<b>Potential Acquirers:</b> " + " &middot; ".join(comp['potential_acquirers']), S["small"]))
-            story.append(Spacer(1, 0.1 * inch))
-
-        # ── Related Research / Further Reading (DISTINCT from Citations)
         related = analysis.get('related_research', []) or []
-        story.append(_Anchor("related"))
-        story.append(_p("RELATED RESEARCH / FURTHER READING", S["heading"]))
-        story.append(_p(
-            "<i>A curated reading list of high-quality literature on the underlying "
-            "science, for diligencers who want to go deeper. This is separate from "
-            "the Citations used to build this report.</i>", S["small"]))
-        story.append(Spacer(1, 0.05 * inch))
+        story.append(_p("Further Reading", S["sub"]))
+        story.append(_p("<i>A curated reading list on the underlying science, separate from the Citations used here.</i>", S["small"]))
         if related:
             for i, paper in enumerate(related, 1):
-                title = paper.get('title', 'Untitled')
-                linked = _link(title, paper.get('link', ''))
-                authors = paper.get('authors', '')
-                venue = paper.get('venue_year', '')
-                meta_bits = " &middot; ".join([b for b in (authors, venue) if b])
+                linked = _link(paper.get('title', 'Untitled'), paper.get('link', ''))
+                meta_bits = " &middot; ".join([b for b in (paper.get('authors', ''), paper.get('venue_year', '')) if b])
                 meta_line = f"<br/><font color='{MUTED}'>{meta_bits}</font>" if meta_bits else ""
                 why = f"<br/><i>{paper['why_relevant']}</i>" if paper.get('why_relevant') else ""
                 story.append(_p(f"<b>{i}. {linked}</b>{meta_line}{why}", S["small"]))
-                story.append(Spacer(1, 0.04 * inch))
+                story.append(Spacer(1, 0.03 * inch))
         else:
-            story.append(_p("No related research was surfaced for this subject.", S["small"]))
-        story.append(Spacer(1, 0.1 * inch))
-        story.append(_Commentary("c_related", "Team Commentary — Further Reading Notes:"))
+            story.append(_p("No further reading was surfaced for this subject.", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_prior", "Team Commentary — Prior Work & Literature:"))
         story.append(PageBreak())
 
-        # ── Conclusion
-        concl = analysis.get('conclusion', {}) or {}
-        story.append(_Anchor("conclusion"))
-        story.append(_p("CONCLUSION", S["heading"]))
-        if concl.get('summary'):
-            story.append(_p(concl['summary'], S["body"]))
-        prove = concl.get('what_must_be_proven', []) or []
-        if prove:
-            story.append(_p("What Must Be Proven Next", S["sub"]))
-            for x in prove:
-                story.append(_p(f"- {x}", S["small"]))
+        # ── 6. Benchmarking Framework
+        story.append(_Anchor("bench"))
+        story.append(_p("6. BENCHMARKING FRAMEWORK", S["heading"]))
+        story.append(_p("<i>The metrics that matter in this domain and what 'good' looks like.</i>", S["small"]))
+        bench_rows = analysis.get('benchmarking_framework', []) or []
+        if bench_rows:
+            for b in bench_rows:
+                src = b.get('source', '')
+                src_txt = f" <i>[{_link(src, src)}]</i>" if src else ""
+                good = f"<br/><b>What good looks like:</b> {b['what_good_looks_like']}" if b.get('what_good_looks_like') else ""
+                story.append(_p(
+                    f"<b>{b.get('metric', 'Metric')}</b> — {b.get('why_it_matters', '')}{good}{src_txt}",
+                    S["small"]))
+                story.append(Spacer(1, 0.03 * inch))
+        else:
+            story.append(_p("No domain benchmarks were identified — request the relevant figures of merit from the company.", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_bench", "Team Commentary — Benchmarking:"))
+        story.append(PageBreak())
+
+        # ── 7. Commercial Implications
+        ci = analysis.get('commercial_implications', {}) or {}
+        story.append(_Anchor("commercial"))
+        story.append(_p("7. COMMERCIAL IMPLICATIONS", S["heading"]))
+        if ci.get('what_it_could_become'):
+            story.append(_p(ci['what_it_could_become'], S["body"]))
+        if ci.get('first_markets'):
+            story.append(_p("<b>Likely first markets:</b> " + "; ".join(ci['first_markets']), S["small"]))
+        if ci.get('customers'):
+            story.append(_p("<b>Likely customers:</b> " + "; ".join(ci['customers']), S["small"]))
+        if ci.get('adoption_drivers'):
+            story.append(_p("<b>Adoption drivers:</b> " + "; ".join(ci['adoption_drivers']), S["small"]))
+        if ci.get('why_it_matters_economically'):
+            story.append(_p(f"<b>Why it matters economically:</b> {ci['why_it_matters_economically']}", S["small"]))
+        cc = ci.get('comparable_companies', []) or []
+        if cc:
+            story.append(_p("Comparable Companies", S["sub"]))
+            for c in cc:
+                sc = f" ({c['scale_or_funding']})" if c.get('scale_or_funding') else ""
+                story.append(_p(f"<b>{c.get('name', '')}</b>{sc}: {c.get('context', '')}", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_commercial", "Team Commentary — Commercial Implications:"))
+        story.append(PageBreak())
+
+        # ── 8. Manufacturing Scale-Up & Commercialization Risk
+        mf = analysis.get('manufacturing_scaleup_risk', {}) or {}
+        story.append(_Anchor("manufacturing"))
+        story.append(_p("8. MANUFACTURING SCALE-UP & COMMERCIALIZATION RISK", S["heading"]))
+        if mf.get('summary'):
+            story.append(_p(mf['summary'], S["body"]))
+        risks = mf.get('risks', []) or []
+        if risks:
+            story.append(_p("Key Risks", S["sub"]))
+            for r in risks:
+                sev = (r.get('severity') or '').upper()
+                badge = f"<font color='{_risk_color(sev)}'>[{sev}]</font> " if sev else ""
+                area = f"<b>{r['area']}:</b> " if r.get('area') else ""
+                story.append(_p(f"{badge}{area}{r.get('risk', '')}", S["small"]))
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(_Commentary("c_manufacturing", "Team Commentary — Manufacturing & Risk:"))
+        story.append(PageBreak())
+
+        # ── 9. Key Diligence Questions / Data Requests
+        kq = analysis.get('key_diligence_questions', {}) or {}
+        story.append(_Anchor("diligence"))
+        story.append(_p("9. KEY DILIGENCE QUESTIONS / DATA REQUESTS", S["heading"]))
+        story.append(_p("<i>Practical, answerable requests to send the company next.</i>", S["small"]))
+        _DQ = [
+            ("prototype_data", "Prototype / measured data"),
+            ("simulations", "Simulations & models"),
+            ("benchmark_comparisons", "Benchmark comparisons"),
+            ("third_party_validation", "Third-party validation"),
+            ("patent_filings", "Patents / freedom-to-operate"),
+            ("manufacturing_process", "Manufacturing & process"),
+            ("customer_pilot_evidence", "Customer / pilot evidence"),
+            ("supplementary_datasets", "Supplementary datasets"),
+        ]
+        any_q = False
+        for key, label in _DQ:
+            vals = kq.get(key, []) or []
+            if vals:
+                any_q = True
+                story.append(_p(label, S["sub"]))
+                story.extend(_bullets(vals, S["small"]))
+        if not any_q:
+            story.append(_p("No specific data requests were generated.", S["small"]))
+        story.append(Spacer(1, 0.1 * inch))
+        story.append(_Commentary("c_diligence", "Team Commentary — Diligence Questions & Answers:", h=1.8 * inch))
+
+        # ── Methodology (neutral, no recommendation)
         story.append(Spacer(1, 0.12 * inch))
         story.append(_p(
             f"<i><b>Methodology:</b> Multi-pass technical analysis — full reads of the "
-            f"uploaded document(s), web research for novelty/datasets/market, and "
-            f"synthesis. {analysis.get('sources_consulted', '?')} external sources "
-            f"consulted. No investment recommendation is made.</i><br/>"
-            f"<b>Generated:</b> {datetime.now().strftime('%B %d, %Y at %H:%M:%S')}",
+            f"founder's document(s), web research for prior work / datasets / benchmarks / "
+            f"market, and synthesis. {analysis.get('sources_consulted', '?')} external sources "
+            f"consulted. This brief is informational and contains no investment recommendation.</i>"
+            f"<br/><b>Generated:</b> {datetime.now().strftime('%B %d, %Y at %H:%M:%S')}",
             S["small"]))
-        story.append(Spacer(1, 0.12 * inch))
-        story.append(_Commentary("c_conclusion", "Team Commentary — Final Notes & Next Steps:", h=1.8 * inch))
 
         # ── Citations
         story.append(PageBreak())
         story.append(_Anchor("citations"))
         story.append(_p("CITATIONS", S["heading"]))
-        story.append(_p("<i>Sources used to build this report (the Related Research list above is separate).</i>", S["small"]))
-
+        story.append(_p("<i>Sources used to build this brief (the Further Reading list above is separate).</i>", S["small"]))
         acc = []
-        for key in ('claims', 'novelty_vs_prior_work', 'evidence_and_data',
-                    'commercial_implications', 'manufacturing_scaleup_risk',
-                    'competitive_landscape'):
+        for key in ('prior_work_literature_map', 'benchmarking_framework',
+                    'theory_to_product_bridge', 'commercial_implications',
+                    'manufacturing_scaleup_risk', 'technology_explanation',
+                    'claimed_product', 'executive_summary'):
             _section_sources(analysis.get(key), acc)
         acc.extend(analysis.get('_research_sources', []) or [])
-
-        seen = set()
-        unique = []
+        seen, unique = set(), []
         for s in acc:
             k = s.lower()
             if k not in seen:
                 seen.add(k)
                 unique.append(s)
         src_st = ParagraphStyle('TSrc', parent=S['small'], fontSize=8, leading=11,
-                                spaceAfter=2, textColor=colors.HexColor('#333333'))
+                                spaceAfter=2, fontName=FONT, textColor=colors.HexColor('#333333'))
         if unique:
             for s in unique:
                 story.append(_p(f"- {_link(s, s)}", src_st))
         else:
             story.append(_p("No external citations were recorded.", src_st))
-
         docs = analysis.get('_doc_filenames', []) or []
         if docs:
-            story.append(Spacer(1, 0.08 * inch))
+            story.append(Spacer(1, 0.06 * inch))
             story.append(_p("<b>Documents analyzed:</b> " + ", ".join(docs), src_st))
-        story.append(Spacer(1, 0.06 * inch))
+        story.append(Spacer(1, 0.05 * inch))
         story.append(_p(f"<b>Total unique external sources:</b> {len(unique)}", src_st))
 
         return story
 
     _args = dict(pagesize=letter, topMargin=0.65 * inch, bottomMargin=0.65 * inch,
                  leftMargin=0.7 * inch, rightMargin=0.7 * inch)
-
-    # Pass 1: capture page numbers.
     SimpleDocTemplate(io.BytesIO(), **_args).build(_story())
     captured = dict(toc_tracker)
     toc_tracker.clear()
-    # Pass 2: real build with populated TOC.
     SimpleDocTemplate(output_path, **_args).build(_story(toc_entries=captured))

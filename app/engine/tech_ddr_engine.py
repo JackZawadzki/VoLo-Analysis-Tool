@@ -107,15 +107,26 @@ WEB_SEARCH_TOOL = {
 }
 
 _SYSTEM = (
-    "You are a senior technical due-diligence analyst at a deep-tech venture fund "
-    "(VoLo Earth Ventures). You assess frontier science and engineering startups in "
-    "domains the investment team does NOT specialize in — so your job is to explain "
-    "the science clearly, establish what is genuinely novel versus prior published "
-    "work, and surface the commercial and manufacturing realities. You are rigorous "
-    "and evidence-driven: you cite sources, quantify with units, and you never "
-    "flatter. You actively TEST claims — including the analyst's own hypothesis "
-    "about the innovation — against the evidence, and you say plainly when the "
-    "evidence is thin or the real contribution differs from what was expected."
+    "You are a technical due-diligence analyst at a venture fund (VoLo Earth "
+    "Ventures) preparing a REPEATABLE diligence brief on a deep-tech deal that is "
+    "often OUTSIDE the firm's core expertise. A FOUNDER has come to the firm with "
+    "(a) their own research paper(s) and (b) a claim about the product/company they "
+    "intend to build from that research. Your job is to get an investor quickly and "
+    "accurately ACQUAINTED with the technology and to frame the diligence — NOT to "
+    "perform academic peer review, and NEVER to make an investment recommendation. "
+    "You explain what it is, how it works (for a smart non-specialist), how it "
+    "compares to prior work, what literature / datasets / patents / benchmarks to "
+    "evaluate it against, what it could become commercially, the scale-up risks, "
+    "and exactly what evidence to request next.\n\n"
+    "Principles: prioritize practical venture diligence over academic critique; do "
+    "NOT be dismissive just because a theory is abstract or early; do NOT accept a "
+    "theory-to-product leap without evidence; always distinguish 'interesting "
+    "science' from 'commercially validated technology'; when the deal is outside "
+    "your expertise, FIRST identify the relevant published literature, datasets and "
+    "benchmarks, then reason. Be neutral, specific, and evidence-driven; cite "
+    "sources with units. NEVER give an investment recommendation or verdict (no "
+    "'pass / monitor / invest', no 'we should…', no buy/sell framing) — the brief "
+    "exists to inform and to frame the diligence, not to advise."
 )
 
 
@@ -432,40 +443,46 @@ def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget,
 
 # ── Pass 2: ground in the literature + market via web_search ─────────────────
 
-_RESEARCH_PROMPT = """You are grounding a technical due-diligence report in the external scientific literature and the market. Use web_search to find REAL, verifiable information — do up to {max_searches} targeted searches and cite what you find. Do not invent sources, numbers, or paper titles.
+_RESEARCH_PROMPT = """You are assembling the external evidence base for a venture diligence brief on a deep-tech deal that may be OUTSIDE the firm's expertise. Use web_search to find REAL, verifiable information — do up to {max_searches} targeted searches and cite what you find. Do not invent sources, numbers, paper titles, or patent numbers.
 
-THE ANALYST'S FRAME OF REFERENCE (the commercial/application lens — orient ALL of your research around it; the papers are the raw science, this frame is what the technology is being commercialized FOR):
+THE FOUNDER'S CLAIM (the person who did the research describes the product/company they want to build from it — this is what we are diligencing, NOT an internal analyst's idea):
 {innovation_hint}
 
-STRUCTURED NOTES from the uploaded document(s) (the raw science):
+STRUCTURED NOTES from the founder's uploaded document(s) (the underlying science):
 {doc_notes}
 
-Your research goals (focus the commercial, applications, and manufacturing research on the analyst's frame above, while grounding novelty in the science):
-1. NOVELTY — find prior published work and competing technical approaches so a novelty assessment can be made. Who else has worked on this? What are the established methods and their limits?
-2. DATA & BENCHMARKS — find public datasets, benchmarks, or standard figures of merit relevant to these claims.
-3. COMMERCIAL — find the commercial landscape: companies pursuing this (with stage/funding if available), end markets, and rough market sizing from reputable sources.
-4. MANUFACTURING — find what is known about manufacturing/scale-up for this class of technology (process maturity, cost drivers, supply chain, known bottlenecks).
-5. RELATED RESEARCH — curate 5-10 HIGH-QUALITY papers (peer-reviewed or reputable preprints) that a diligencer should read to understand this subject more deeply. Provide titles and links/DOIs where findable. These are a READING LIST, distinct from the sources you used.
+Because this deal may be outside our expertise, FIRST find the literature, datasets and benchmarks needed to evaluate the claim, then reason. Search goals:
+1. PRIOR WORK & LITERATURE — the most relevant published work and competing approaches; for each, what it does, how mature it is, and what benchmark it sets.
+2. PATENTS — relevant patents/filings in this space (numbers/assignees if findable).
+3. DATASETS & BENCHMARKS — public datasets, benchmarks, and the standard figures of merit used to evaluate this kind of technology, with the value that represents 'good' (lab record / commercial bar).
+4. COMMERCIAL — companies pursuing this (stage/funding if known), likely first markets/customers, adoption drivers, rough sizing from reputable sources.
+5. MANUFACTURING — what is known about scale-up for this class of technology (process maturity, cost drivers, yield, supply chain, certification, bottlenecks).
+6. RELATED RESEARCH — curate 5-10 high-quality papers a diligencer should read to go deeper (titles + links/DOIs). A READING LIST, distinct from the sources you cite.
 
 Return JSON only, no prose, no markdown fences:
 {{
-  "field_overview": "1-2 paragraphs orienting a non-expert in this scientific/engineering field",
-  "prior_approaches": [
-    {{"approach": "established/competing approach", "who": "groups/companies/authors", "limitation": "its key limitation", "source": "url or publication"}}
+  "field_overview": "1-2 paragraphs orienting a non-expert in this field",
+  "prior_work": [
+    {{"area": "sub-area / competing approach", "what_it_does": "...", "maturity": "lab / pilot / commercial / mature", "benchmark_it_sets": "metric + value it achieves", "source": "url"}}
   ],
-  "novelty_findings": "what the external literature suggests is genuinely new vs. already known about the subject — be specific and honest",
+  "patents": [
+    {{"ref": "patent no. / assignee / title", "relevance": "why it matters for FTO or differentiation", "source": "url"}}
+  ],
+  "benchmark_metrics": [
+    {{"metric": "figure of merit", "why_it_matters": "...", "good_value": "lab record / commercial bar with units", "source": "url"}}
+  ],
+  "datasets": [
+    {{"name": "dataset/benchmark", "description": "what it is", "link": "url"}}
+  ],
+  "commercial_context": "first markets, customers, adoption drivers, sizing — with sources",
+  "manufacturing_context": "scale-up maturity, cost/yield/supply-chain/certification risks — with sources",
   "competing_companies": [
     {{"name": "real company", "stage": "stage/funding if known", "what": "what they do", "source": "url"}}
   ],
-  "datasets_benchmarks": [
-    {{"name": "dataset/benchmark", "description": "what it is", "link": "url if available"}}
-  ],
-  "commercial_context": "markets, applications, and sizing with sources",
-  "manufacturing_context": "scale-up maturity, cost drivers, supply chain, bottlenecks with sources",
   "related_research": [
-    {{"title": "paper title", "authors": "authors", "venue_year": "venue + year", "link": "doi/url if findable", "why_relevant": "one line on why a diligencer should read it"}}
+    {{"title": "paper title", "authors": "authors", "venue_year": "venue + year", "link": "doi/url", "why_relevant": "one line"}}
   ],
-  "sources": ["every url/source you actually used in this research"]
+  "sources": ["every url/source you actually used"]
 }}"""
 
 
@@ -483,91 +500,92 @@ def _research(client: Anthropic, innovation_hint: str, doc_notes: list,
 
 # ── Pass 3: synthesize the final report ──────────────────────────────────────
 
-_SYNTH_PROMPT = """Synthesize the FINAL Technical Due Diligence Report as a single JSON object. You are writing for an engineer or scientist who is NOT a specialist in this domain.
+_SYNTH_PROMPT = """Produce a REPEATABLE venture due-diligence brief on this deep-tech deal as a single JSON object. The reader is an investor and a technically-literate engineer/scientist who is NOT a specialist in this domain. The goal is to get them ACQUAINTED with the technology and to frame the diligence — answer: what is this, how does it compare to prior work, what could it become, what are the risks, and what must we verify next.
 
 INPUTS
 ------
->>> THE ANALYST'S FRAME OF REFERENCE — READ FIRST; IT IS THE LENS FOR THE ENTIRE REPORT <<<
+>>> THE FOUNDER'S CLAIM (the person who did the research; this is the product/company thesis we are diligencing — NOT an internal analyst's idea) <<<
 {innovation_hint}
 
-CRITICAL: The uploaded papers are the raw science/discovery ONLY — on its own a scientific paper is just a paper. The analyst's frame above tells you WHAT THIS TECHNOLOGY APPLIES TO and the commercial thesis you are diligencing. ANCHOR the whole report in that frame: the innovation framing, the Applications, and the Commercial Implications must be built around what the analyst says it applies to — the science is the evidence used to SUPPORT, QUANTIFY, or (honestly) CHALLENGE that commercial framing. Do not reframe the deal around the paper's own stated purpose; reframe the paper's science around the analyst's commercial frame. If the science does not actually support the framing, say so plainly — but the analyst's frame is your starting point and orientation. (If no frame was provided, infer the most credible commercial application from the documents and state that you did so.)
+The founder's uploaded paper(s) are the underlying SCIENCE. The founder's claim above is what they say it BECOMES as a product. Treat the science as evidence for/against a venture-backable PRODUCT — not as something to peer-review. If no claim was provided, infer the most credible product from the documents and say you inferred it.
 
-Document notes (Pass 1 — the raw science):
+Document notes (the science):
 {doc_notes}
 
-External research (Pass 2):
+External research (literature / patents / datasets / benchmarks / market):
 {research}
 
-REQUIREMENTS
-------------
-- ANCHOR everything in the analyst's frame of reference above: it defines the application and commercial thesis. Frame the innovation, applications, and commercial implications around it; use the papers' science as the supporting/contradicting evidence.
-- Explain the technology in plain language first (use analogies and fundamentals), then add a deeper technical layer.
-- Do NOT repeat points across sections: cover each fact/claim ONCE, in the single most relevant section, and go deep there. Depth over breadth — never restate the same information in multiple sections.
-- Make the novelty assessment concrete and cite specific prior work from the research.
-- Rate evidence strength honestly; flag what still needs independent verification.
-- Cover commercial implications AND manufacturing scale-up / commercialization risk with severity-rated risks.
-- Keep IC-grade rigor: include a claims table and a competitive landscape.
-- Carry through 5-10 Related Research papers (with links where available). This reading list is SEPARATE from citations — do not merge them.
-- Every non-trivial external statement should carry a "source". Do not fabricate sources or numbers. If external research was limited, say so and lean on the documents.
+BEHAVIOR (important)
+--------------------
+- Prioritize practical venture diligence over academic critique. Do NOT be dismissive just because the science is abstract or early.
+- Do NOT accept a theory-to-product leap without evidence; clearly separate what is proven vs asserted vs missing.
+- Always distinguish 'interesting science' from 'commercially validated technology'.
+- Because this is outside our expertise, ground every comparison in the literature/benchmarks you were given.
+- Do NOT repeat a point across sections — cover it once, in the most relevant section, with depth.
+- Every non-trivial external statement carries a "source"; never fabricate sources or numbers.
+- NEVER make an investment recommendation or verdict (no pass/monitor/invest, no 'we should…'). The brief informs and frames diligence only.
 
 Return JSON only, no prose, no markdown fences:
 {{
-  "company_name": "subject company or technology name",
-  "field": "scientific/engineering field",
-  "innovation_summary": {{
-    "one_liner": "the innovation in one sentence a non-expert can grasp, expressed in terms of the analyst's commercial frame",
-    "inferred_innovation": "1-2 paragraphs: what the discovery is (from the papers) AND what it applies to per the analyst's frame of reference",
-    "analyst_hypothesis": "restate the analyst's frame of reference / commercial thesis (or 'none provided')",
-    "hypothesis_assessment": "MATCHES | EXCEEDS | PARTIALLY SUPPORTED | DIFFERS | UNVERIFIABLE",
-    "hypothesis_explanation": "honest explanation of whether and how the science supports the analyst's commercial frame"
+  "company_name": "the company/venture name, or the technology name if none is given",
+  "field": "the scientific/engineering field",
+  "confidence_level": "LOW | MEDIUM | HIGH — confidence that the claimed technology is real and as described (about the CLAIM/evidence, NOT an investment view)",
+  "executive_summary": {{
+    "technology": "1-2 sentences: what the technology is",
+    "commercial_claim": "what the founder claims it becomes as a product",
+    "main_diligence_concern": "the single most important thing to resolve",
+    "confidence_note": "why the confidence level above is what it is"
   }},
-  "technology_explainer": {{
-    "plain_language": "explain it to a smart engineer/scientist outside this domain",
-    "technical_depth": "the deeper mechanism / physics / chemistry / architecture",
+  "technology_explanation": {{
+    "summary": "explain the technology for a technically-literate non-specialist; avoid jargon where possible but do NOT oversimplify",
     "key_terms": [{{"term": "term", "definition": "plain definition"}}]
   }},
-  "how_it_works": {{"summary": "overview", "steps": ["mechanism/step 1", "step 2"]}},
-  "novelty_vs_prior_work": {{
-    "summary": "overall novelty verdict",
-    "whats_genuinely_new": ["specific novel element 1"],
-    "comparisons": [
-      {{"prior_approach": "named prior approach", "how_this_differs": "specific difference", "advantage": "if any", "source": "url/citation"}}
-    ]
+  "claimed_product": {{
+    "what_they_are_building": "what the company is actually building / claiming to commercialize",
+    "clarity": "CLEAR | PARTIALLY CLEAR | UNCLEAR",
+    "notes": "if the product is unclear or under-specified, say so explicitly"
   }},
-  "evidence_and_data": {{
-    "key_results": [
-      {{"claim": "result/claim", "evidence": "what supports it (and from which document/source)", "strength": "STRONG | MODERATE | WEAK", "source": "url/citation or document"}}
-    ],
-    "datasets": [{{"name": "dataset", "description": "what it is", "link": "url"}}],
-    "open_questions": ["what still needs independent verification"]
+  "theory_to_product_bridge": {{
+    "proven": ["what the underlying science actually establishes"],
+    "asserted": ["what the founder asserts but has not yet shown"],
+    "missing": ["what is absent that a product would require"],
+    "must_be_demonstrated": ["specific things that must be shown experimentally to close the gap"]
   }},
+  "prior_work_literature_map": [
+    {{"area": "sub-area", "what_prior_work_does": "...", "maturity": "lab / pilot / commercial / mature", "benchmark_it_sets": "metric + value", "differentiation": "whether/how the company appears meaningfully differentiated", "sources": ["url"]}}
+  ],
+  "benchmarking_framework": [
+    {{"metric": "the figure of merit that matters here", "why_it_matters": "...", "what_good_looks_like": "target vs existing literature/commercial, with units", "source": "url or ''"}}
+  ],
   "commercial_implications": {{
-    "summary": "commercial thesis",
-    "applications": [{{"application": "use case", "market": "end market", "notes": "context"}}],
-    "market_context": "sizing/dynamics with sources",
-    "comparable_companies": [{{"name": "company", "context": "comparison", "valuation_or_revenue": "if known"}}]
+    "what_it_could_become": "what the technology could become commercially if it works",
+    "first_markets": ["likely first market(s)"],
+    "customers": ["likely customers/buyers"],
+    "adoption_drivers": ["what would drive adoption"],
+    "why_it_matters_economically": "the economic significance if it works",
+    "comparable_companies": [{{"name": "company", "context": "comparison", "scale_or_funding": "if known"}}]
   }},
   "manufacturing_scaleup_risk": {{
-    "scale_up_path": "lab -> pilot -> commercial path as understood",
-    "readiness": "maturity assessment (e.g. TRL or lab/pilot/commercial)",
-    "key_risks": [{{"risk": "specific risk", "severity": "HIGH | MEDIUM | LOW", "mitigation": "possible mitigation"}}]
+    "summary": "overview of the path from science to a manufacturable product",
+    "risks": [{{"area": "Materials | Process control | Yield | Durability | Integration | Cost | Supply chain | Certification | Adoption", "risk": "specific risk", "severity": "HIGH | MEDIUM | LOW"}}]
   }},
-  "claims": [
-    {{"type": "TECHNOLOGY | MARKET | MANUFACTURING | IP | TEAM", "claim": "claim", "verification_status": "VERIFIED | PARTIALLY VERIFIED | UNVERIFIED", "source_label": "COMPANY CLAIM (Unverified) | VERIFIED: [Source]", "what_needs_investigation": "concrete next step", "sources": ["source"]}}
-  ],
-  "competitive_landscape": {{
-    "positioning_summary": "how the subject is positioned",
-    "peer_competitors": [{{"name": "company", "stage": "stage", "description": "overlap + edge", "sources": ["source"]}}],
-    "market_leaders": [{{"name": "incumbent", "market_position": "position", "description": "threat", "sources": ["source"]}}],
-    "competitive_risks": ["risk"],
-    "potential_acquirers": ["who and why"]
+  "key_diligence_questions": {{
+    "prototype_data": ["practical, answerable requests for prototype/measured data"],
+    "simulations": ["requested simulations/models"],
+    "benchmark_comparisons": ["specific head-to-head comparisons to request"],
+    "third_party_validation": ["independent validation to request"],
+    "patent_filings": ["IP / freedom-to-operate items to request"],
+    "manufacturing_process": ["process / scale-up details to request"],
+    "customer_pilot_evidence": ["customer / pilot / LOI evidence to request"],
+    "supplementary_datasets": ["datasets to request or evaluate against"]
   }},
   "related_research": [
     {{"title": "paper title", "authors": "authors", "venue_year": "venue + year", "link": "doi/url", "why_relevant": "why read it"}}
   ],
-  "conclusion": {{"summary": "balanced closing assessment", "what_must_be_proven": ["the key things to validate next"]}},
   "sources_consulted": 0
-}}"""
+}}
+
+Write formulas and symbols in clean, readable notation. You may use common Greek letters and units (e.g. k, mu, eta, degC, x10^-9) but PREFER spelled-out or ASCII forms; avoid exotic mathematical-script / blackboard Unicode and ASCII-art. Keep math minimal and in service of the diligence, not academic exposition."""
 
 
 def _synthesize(client: Anthropic, innovation_hint: str, doc_notes: list,
@@ -591,89 +609,77 @@ def _partial_report(doc_notes: list, research: dict, innovation_hint: str,
     docs = doc_notes or []
     title = next((d.get("title") for d in docs if d.get("title")), "") or "Technical DDR (Partial)"
     competing = research.get("competing_companies") or []
+    prior = research.get("prior_work") or []
     return {
         "partial": True,
         "partial_reason": reason,
         "company_name": title,
         "field": (research.get("field_overview", "") or "")[:160],
-        "innovation_summary": {
-            "one_liner": "",
-            "inferred_innovation": " ".join(
+        "confidence_level": "LOW",
+        "executive_summary": {
+            "technology": " ".join(
                 d.get("core_contribution", "") for d in docs if d.get("core_contribution")
-            )[:4000],
-            "analyst_hypothesis": (innovation_hint or "").strip() or "(none provided)",
-            "hypothesis_assessment": "UNVERIFIABLE",
-            "hypothesis_explanation": (
-                "Final synthesis did not complete, so the science was not fully "
-                "evaluated against the analyst's commercial frame. The sections "
-                "below are assembled directly from the document reads and the "
-                "external research gathered so far."
+            )[:1500],
+            "commercial_claim": (innovation_hint or "").strip() or "(none provided)",
+            "main_diligence_concern": (
+                "This run did not finish — the brief below is assembled from the "
+                "document reads and external research gathered so far."
             ),
+            "confidence_note": f"Synthesis did not complete ({reason}).",
         },
-        "technology_explainer": {
-            "plain_language": "",
-            "technical_depth": " ".join(
-                d.get("methods", "") for d in docs if d.get("methods")
-            )[:4000],
+        "technology_explanation": {
+            "summary": " ".join(d.get("methods", "") for d in docs if d.get("methods"))[:4000],
             "key_terms": [t for d in docs for t in (d.get("key_terms") or [])][:30],
         },
-        "how_it_works": {},
-        "novelty_vs_prior_work": {
-            "summary": research.get("novelty_findings", "") or "",
-            "whats_genuinely_new": [],
-            "comparisons": [
-                {"prior_approach": a.get("approach", ""),
-                 "how_this_differs": a.get("limitation", ""),
-                 "source": a.get("source", "")}
-                for a in (research.get("prior_approaches") or [])
-            ],
+        "claimed_product": {
+            "what_they_are_building": (innovation_hint or "").strip() or "(not provided)",
+            "clarity": "UNCLEAR",
+            "notes": "Taken from the founder's claim; not yet evaluated against the science (synthesis incomplete).",
         },
-        "evidence_and_data": {
-            "key_results": [
-                {"claim": r.get("result", ""), "evidence": r.get("conditions", ""),
-                 "strength": "", "source": d.get("filename", "")}
-                for d in docs for r in (d.get("key_results") or [])
-            ][:40],
-            "datasets": research.get("datasets_benchmarks", []) or [],
-            "open_questions": [l for d in docs for l in (d.get("limitations_stated") or [])][:20],
+        "theory_to_product_bridge": {
+            "proven": [d.get("core_contribution", "") for d in docs if d.get("core_contribution")][:6],
+            "asserted": [],
+            "missing": [],
+            "must_be_demonstrated": [l for d in docs for l in (d.get("limitations_stated") or [])][:15],
         },
+        "prior_work_literature_map": [
+            {"area": p.get("area", ""), "what_prior_work_does": p.get("what_it_does", ""),
+             "maturity": p.get("maturity", ""), "benchmark_it_sets": p.get("benchmark_it_sets", ""),
+             "differentiation": "", "sources": [p.get("source", "")]}
+            for p in prior
+        ],
+        "benchmarking_framework": [
+            {"metric": b.get("metric", ""), "why_it_matters": b.get("why_it_matters", ""),
+             "what_good_looks_like": b.get("good_value", ""), "source": b.get("source", "")}
+            for b in (research.get("benchmark_metrics") or [])
+        ],
         "commercial_implications": {
-            "summary": research.get("commercial_context", "") or "",
-            "applications": [],
-            "market_context": "",
+            "what_it_could_become": research.get("commercial_context", "") or "",
+            "first_markets": [],
+            "customers": [],
+            "adoption_drivers": [],
+            "why_it_matters_economically": "",
             "comparable_companies": [
                 {"name": c.get("name", ""), "context": c.get("what", ""),
-                 "valuation_or_revenue": c.get("stage", "")}
+                 "scale_or_funding": c.get("stage", "")}
                 for c in competing
             ],
         },
         "manufacturing_scaleup_risk": {
-            "scale_up_path": research.get("manufacturing_context", "") or "",
-            "readiness": "",
-            "key_risks": [],
+            "summary": research.get("manufacturing_context", "") or "",
+            "risks": [],
         },
-        "claims": [],
-        "competitive_landscape": {
-            "positioning_summary": "",
-            "peer_competitors": [
-                {"name": c.get("name", ""), "stage": c.get("stage", ""),
-                 "description": c.get("what", ""), "sources": [c.get("source", "")]}
-                for c in competing
-            ],
-            "market_leaders": [],
-            "competitive_risks": [],
-            "potential_acquirers": [],
+        "key_diligence_questions": {
+            "prototype_data": [],
+            "simulations": [],
+            "benchmark_comparisons": [],
+            "third_party_validation": [],
+            "patent_filings": [],
+            "manufacturing_process": [],
+            "customer_pilot_evidence": [],
+            "supplementary_datasets": [d.get("name", "") for d in (research.get("datasets") or [])],
         },
         "related_research": research.get("related_research", []) or [],
-        "conclusion": {
-            "summary": (
-                f"PARTIAL REPORT — the final synthesis did not complete ({reason}). "
-                "Everything above was assembled directly from the document reads and "
-                "the external research already gathered, so the diligence work is "
-                "preserved; re-run to produce the fully synthesized report."
-            ),
-            "what_must_be_proven": [],
-        },
         "sources_consulted": len(set(research.get("sources", []) or [])),
     }
 
