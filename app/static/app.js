@@ -12340,35 +12340,52 @@ function _ddRenderCharts(pnl, cs) {
 }
 
 // Overlay all three cases, aligned by year-from-investment.
-// Revenue = one line per case; cash = grouped per-year FCF bars (color-coded by case).
+// Same composition as the single-case charts — bars + a line over them — but
+// one color per case (bars translucent, lines solid on top). Legend shows the
+// three cases; a subtitle says what the bars vs. the line are.
 function _ddRenderChartsAll() {
     const cases = DD_CASES.filter(c => _dd.result.scenarios[c]);
     const maxLen = Math.max.apply(null, cases.map(c => (_dd.result.scenarios[c].pnl.years || []).length).concat([1]));
     const labels = Array.from({ length: maxLen }, (_, i) => 'Yr ' + (i + 1));
-    const colors = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
-    const opt = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } };
+    const line = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
+    const fill = { conservative: 'rgba(192,86,62,0.42)', base: 'rgba(91,119,68,0.42)', best_case: 'rgba(46,139,61,0.42)' };
 
-    // Revenue trajectory — lines, one per case.
-    _ddChartTitle('rev', 'Revenue by case ($M)');
-    const lineDs = (field) => cases.map(c => ({
-        label: DD_CASE_LABEL[c], data: _dd.result.scenarios[c].pnl[field],
-        borderColor: colors[c], backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, pointRadius: 2,
-    }));
-    const c1 = document.getElementById('dd-chart-rev-ebitda');
-    if (c1) { _ddDestroy('rev'); _dd.charts.rev = new Chart(c1.getContext('2d'), { type: 'line', data: { labels, datasets: lineDs('revenue') }, options: opt }); }
-
-    // Free cash flow — grouped bars, one bar per case within each year.
-    _ddChartTitle('fcf', 'Free cash flow by year & case ($M)');
-    const barDs = cases.map(c => ({
-        label: DD_CASE_LABEL[c], data: _dd.result.scenarios[c].pnl.fcf,
-        backgroundColor: colors[c], borderColor: colors[c], borderWidth: 1,
-    }));
-    const barOpt = Object.assign({}, opt, {
-        datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.9 } },
-        scales: { y: { title: { display: true, text: 'FCF ($M)' } } },
+    // bars (the "level" metric) first, then lines (the overlay) so lines draw on top.
+    const build = (barField, lineField, lineWord) => {
+        const ds = [];
+        cases.forEach(c => ds.push({
+            type: 'bar', label: DD_CASE_LABEL[c], data: _dd.result.scenarios[c].pnl[barField],
+            backgroundColor: fill[c], borderColor: line[c], borderWidth: 1, order: 2,
+        }));
+        cases.forEach(c => ds.push({
+            type: 'line', label: DD_CASE_LABEL[c] + ' ' + lineWord, data: _dd.result.scenarios[c].pnl[lineField],
+            borderColor: line[c], backgroundColor: 'transparent', borderWidth: 2.5, tension: 0.3, pointRadius: 2, order: 1,
+        }));
+        return ds;
+    };
+    const n = cases.length;
+    const mkOpt = (sub) => ({
+        responsive: true, maintainAspectRatio: false,
+        datasets: { bar: { categoryPercentage: 0.74, barPercentage: 0.92 } },
+        plugins: {
+            // Legend = one chip per case (hide the line datasets, which share the case color).
+            legend: { position: 'bottom', labels: { filter: (it) => it.datasetIndex < n } },
+            subtitle: { display: true, text: sub, position: 'bottom', padding: { top: 8, bottom: 2 },
+                color: '#6b7280', font: { size: 11, style: 'italic' } },
+        },
     });
+
+    _ddChartTitle('rev', 'Revenue & EBITDA by case ($M)');
+    const c1 = document.getElementById('dd-chart-rev-ebitda');
+    if (c1) { _ddDestroy('rev'); _dd.charts.rev = new Chart(c1.getContext('2d'), {
+        type: 'bar', data: { labels, datasets: build('revenue', 'ebitda', 'EBITDA') },
+        options: mkOpt('Bars = revenue · line = EBITDA · color = case') }); }
+
+    _ddChartTitle('fcf', 'Free cash flow & cumulative by case ($M)');
     const c2 = document.getElementById('dd-chart-fcf');
-    if (c2) { _ddDestroy('fcf'); _dd.charts.fcf = new Chart(c2.getContext('2d'), { type: 'bar', data: { labels, datasets: barDs }, options: barOpt }); }
+    if (c2) { _ddDestroy('fcf'); _dd.charts.fcf = new Chart(c2.getContext('2d'), {
+        type: 'bar', data: { labels, datasets: build('fcf', 'cumulative_fcf', 'cumulative') },
+        options: mkOpt('Bars = per-year FCF · line = cumulative · color = case') }); }
 }
 
 function _ddChartTitle(which, text) {
