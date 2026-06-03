@@ -155,7 +155,7 @@ table th {
     box-shadow: none;
     padding: 8px 0;
 }
-.nav-inner { gap: 18px; }
+.nav-inner { gap: 12px; padding: 0 20px; }
 
 /* Brand: keep "Deal Intelligence Platform" on one line, refined */
 .nav-brand,
@@ -197,7 +197,7 @@ table th {
     border: none !important;
     border-bottom: none !important;
     border-radius: 999px !important;
-    padding: 7px 13px !important;
+    padding: 7px 11px !important;
     font-family: var(--font-sans);
     font-size: 0.81rem !important;
     font-weight: 500 !important;
@@ -254,7 +254,7 @@ table th {
     color: var(--vf-warning) !important;
     background: transparent !important;
     font-weight: 500 !important;
-    padding: 6px 12px !important;
+    padding: 6px 10px !important;
     border-radius: 999px !important;
 }
 .nav-beta-group .nav-link-beta:hover:not(.active) {
@@ -265,6 +265,23 @@ table th {
     background: var(--vf-warning) !important;
     color: #fff !important;
     font-weight: 600 !important;
+}
+
+/* Keep the full nav (incl. the growing BETA cluster: VoLo Mind / Portfolio /
+   DD Financials / Fund II Deploy) on a single line as the viewport narrows.
+   Uses `.nav-inner` descendant specificity so these win over the base rules
+   AND volomind.css's own max-width:1280 nav rules without editing that file. */
+@media (max-width: 1400px) {
+    .nav-inner { gap: 10px !important; }
+    .nav-inner .nav-link { padding: 6px 9px !important; font-size: 0.78rem !important; }
+    .nav-inner .nav-beta-group { gap: 1px !important; }
+    .nav-inner .nav-beta-group .nav-link-beta { padding: 6px 8px !important; }
+}
+@media (max-width: 1280px) {
+    .nav-inner { gap: 8px !important; }
+    .nav-inner .nav-link { padding: 5px 7px !important; font-size: 0.73rem !important; }
+    .nav-inner .nav-beta-group .nav-link-beta { padding: 5px 7px !important; font-size: 0.72rem !important; }
+    .nav-inner .nav-beta-tag { padding: 4px 7px !important; }
 }
 
 /* In-tab informational banner shown at the top of beta tabs */
