@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 from typing import Optional
 
 from .drive_scan import (
@@ -77,15 +78,66 @@ def _upsert_document(conn, company_id: int, *, source: str, source_doc_id: str,
 
 
 # ── Company discovery (folder = company) ──────────────────────────────────────
+# Not every subfolder under the portfolio root is a company. The team convention
+# is to prefix cross-cutting / admin folders with "_" (e.g. "_Cap Tables",
+# "_Financials", "_Portco Meetings", "_SPAs"). We skip those, plus template /
+# dummy folders. Override the skipped prefixes via PORTFOLIO_DRIVE_SKIP_PREFIXES.
+_SKIP_PREFIXES = tuple(
+    p for p in (s.strip() for s in os.environ.get("PORTFOLIO_DRIVE_SKIP_PREFIXES", "_").split(","))
+    if p
+) or ("_",)
+_SKIP_NAME_SUBSTRINGS = ("template", "(dummy)", "ktf dummy")
+
+
+def is_company_folder(name: str) -> bool:
+    """True if a Drive subfolder name looks like an actual portfolio company
+    (not an admin / cross-cutting / template folder)."""
+    n = (name or "").strip()
+    if not n or n.startswith(_SKIP_PREFIXES):
+        return False
+    low = n.lower()
+    return not any(s in low for s in _SKIP_NAME_SUBSTRINGS)
+
+
+def _prune_non_company_rows(conn) -> int:
+    """Remove auto-created pr_companies that are clearly non-company folders AND
+    carry no data yet (no documents/investments/returns/derisking/traction/
+    updates). Cleans up folders mis-imported before the filter existed."""
+    pruned = 0
+    for r in conn.execute("SELECT id, name FROM pr_companies").fetchall():
+        if is_company_folder(r["name"]):
+            continue
+        has_data = False
+        for tbl in ("pr_documents", "pr_investments", "pr_returns",
+                    "pr_derisking_scores", "pr_traction_snapshots", "pr_company_updates"):
+            try:
+                if conn.execute(f"SELECT 1 FROM {tbl} WHERE company_id=? LIMIT 1", (r["id"],)).fetchone():
+                    has_data = True
+                    break
+            except Exception:
+                pass
+        if not has_data:
+            conn.execute("DELETE FROM pr_companies WHERE id=?", (r["id"],))  # cascades folders
+            pruned += 1
+    return pruned
+
+
 def discover_companies(conn, service, root_folder_id: str, default_fund: str = "Fund I") -> dict:
-    """List immediate subfolders of the portfolio root and upsert a pr_companies
-    row per folder. The Drive folder is the source of truth for the portfolio
-    roster — NOT the deal-report library."""
+    """List immediate subfolders of the portfolio root and upsert one
+    pr_companies row per *company* folder (skipping admin/template folders).
+    The Drive folder is the source of truth for the roster — NOT deal_reports.
+    Document extraction is NOT done here — that's per-company, on demand."""
     subfolders = list_subfolders(service, root_folder_id)
-    created, updated = 0, 0
+    created, updated, skipped = 0, 0, 0
+    skipped_names = []
     for f in subfolders:
         name = (f.get("name") or "").strip()
         if not name:
+            continue
+        if not is_company_folder(name):
+            skipped += 1
+            if len(skipped_names) < 15:
+                skipped_names.append(name)
             continue
         existing = conn.execute("SELECT id FROM pr_companies WHERE name=?", (name,)).fetchone()
         if existing:
@@ -96,7 +148,6 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
                 "INSERT INTO pr_companies (name, fund) VALUES (?, ?)", (name, default_fund))
             cid = cur.lastrowid
             created += 1
-        # Link the folder (folder_type='current'); idempotent on (company, folder_type)
         link = conn.execute(
             "SELECT id FROM pr_company_folders WHERE company_id=? AND folder_type='current'", (cid,)
         ).fetchone()
@@ -106,9 +157,11 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
                    (company_id, folder_type, drive_folder_id, drive_folder_name, parent_folder_id, match_confidence)
                    VALUES (?, 'current', ?, ?, ?, 'exact')""",
                 (cid, f["id"], name, root_folder_id))
+    pruned = _prune_non_company_rows(conn)
     conn.commit()
     return {"subfolders": len(subfolders), "companies_created": created,
-            "companies_updated": updated}
+            "companies_updated": updated, "skipped": skipped,
+            "skipped_examples": skipped_names, "pruned": pruned}
 
 
 # ── Document ingestion for one company ────────────────────────────────────────

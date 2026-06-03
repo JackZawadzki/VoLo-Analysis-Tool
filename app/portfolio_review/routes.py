@@ -1436,13 +1436,14 @@ def api_pr_ingest_company(company_id: int, user: CurrentUser = Depends(get_curre
 @api.post("/sync-all")
 def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
                     user: CurrentUser = Depends(get_current_user)):
-    """One-click ingestion: discover the roster from the Drive folder, pull
-    Granola notes, then extract every company's documents into pr_documents.
-    Granola failures (e.g. no API key) don't block the Drive ingestion."""
+    """Build/refresh the portfolio roster from the Drive folder (one subfolder =
+    one company, skipping the team's "_"-prefixed admin folders) and pull Granola
+    notes. Document extraction is PER-COMPANY and on-demand (open a company →
+    "Sync & update"), so this stays fast and never times out on large drives."""
     if user.role != "admin":
         raise HTTPException(403, "Only admins can sync")
     from ..routes.drive import _get_drive_service
-    from .ingest import discover_companies, ingest_company
+    from .ingest import discover_companies
     folder = (parent_folder_id or _DEFAULT_PORTFOLIO_PARENT_FOLDER_ID).strip()
     if not folder:
         raise HTTPException(400, "No parent_folder_id and PORTFOLIO_DRIVE_PARENT_FOLDER_ID unset")
@@ -1458,16 +1459,7 @@ def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
         except Exception as e:
             granola = {"status": "failed", "error": str(e)}
 
-        totals = {"documents_upserted": 0, "granola_docs": 0}
-        errors = []
-        for c in conn.execute("SELECT id, name FROM pr_companies").fetchall():
-            try:
-                r = ingest_company(conn, service, c["id"])
-                totals["documents_upserted"] += r.get("documents_upserted", 0)
-                totals["granola_docs"] += r.get("granola", 0)
-            except Exception as e:
-                errors.append({"company": c["name"], "error": str(e)})
-        return {"discover": discover, "granola": granola, "totals": totals, "errors": errors}
+        return {"discover": discover, "granola": granola}
     except HTTPException:
         raise
     except Exception as e:

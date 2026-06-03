@@ -156,12 +156,17 @@
     const msg = document.getElementById('pf-admin-msg');
     const btn = document.getElementById('pf-sync');
     btn.disabled = true; const t = btn.textContent; btn.textContent = 'Syncing…';
-    msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> Discovering companies, pulling Granola, extracting documents…</div>`;
+    msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> Building the company roster from Drive + pulling Granola notes…</div>`;
     try {
       const r = await postJSON(`${API}/sync-all`);
-      const d = r.discover || {}, tot = r.totals || {};
-      msg.innerHTML = `<div class="pf-ok pf-tiny">Synced ${d.companies_created || 0} new / ${d.companies_updated || 0} existing companies · ${tot.documents_upserted || 0} documents · ${tot.granola_docs || 0} notes.</div>`;
-      setTimeout(renderDashboard, 1200);
+      const d = r.discover || {}, g = r.granola || {};
+      const gn = (g.associations_new != null || g.associations_updated != null)
+        ? `${(g.associations_new || 0) + (g.associations_updated || 0)} notes linked`
+        : (g.status === 'failed' ? 'failed (check GRANOLA_API_KEY)' : (g.status || '—'));
+      const skip = d.skipped ? `, skipped ${d.skipped} non-company folders` : '';
+      const prune = d.pruned ? `, removed ${d.pruned} old` : '';
+      msg.innerHTML = `<div class="pf-ok pf-tiny">Roster: ${d.companies_created || 0} new / ${d.companies_updated || 0} existing companies${skip}${prune}. Granola: ${esc(gn)}. Open a company → <strong>Sync &amp; update</strong> to pull its documents.</div>`;
+      setTimeout(renderDashboard, 1800);
     } catch (e) {
       btn.disabled = false; btn.textContent = t;
       msg.innerHTML = `<div class="pf-gen-err">Sync failed: ${esc(e.message)}</div>`;
@@ -249,17 +254,22 @@
     const latestQ = der.length ? der[der.length - 1] : {};
     const sub = [c.sector, c.fund, (d.traction && d.traction.commercial_status) || c.commercial_status]
       .filter(Boolean).map(esc).join(' · ');
+    const nDocs = (d.documents || []).length;
+    const docStatus = nDocs
+      ? `<span class="pf-dim">${nDocs} document${nDocs === 1 ? '' : 's'} synced</span>`
+      : `<span class="pf-dim">no documents synced yet</span>`;
 
     el.innerHTML = `
       <button class="pf-back" id="pf-back">← Portfolio</button>
       <div class="pf-detail-head">
         <div>
           <h1 class="pf-title">${esc(c.name)}</h1>
-          <p class="pf-sub">${sub || '—'}</p>
+          <p class="pf-sub">${sub ? sub + ' · ' : ''}${docStatus}</p>
         </div>
         <div class="pf-detail-right">
           <div class="pf-detail-q">${quartileBadge(latestQ.quartile, latestQ.is_exited)}<div class="pf-kpi-label">derisking</div></div>
-          <button class="pf-btn" id="pf-gen">${d.update ? 'Re-generate update' : 'Generate update'}</button>
+          ${nDocs ? `<button class="pf-btn pf-btn-ghost" id="pf-regen" title="Re-run the LLM on the ${nDocs} already-synced documents (no re-pull)">Regenerate</button>` : ''}
+          <button class="pf-btn" id="pf-gen">${nDocs ? 'Sync &amp; update' : 'Sync from Drive &amp; update'}</button>
         </div>
       </div>
       <div id="pf-gen-msg"></div>
@@ -273,21 +283,48 @@
       </div>
     `;
     document.getElementById('pf-back').addEventListener('click', renderDashboard);
-    document.getElementById('pf-gen').addEventListener('click', () => generate(id));
+    document.getElementById('pf-gen').addEventListener('click', () => syncAndUpdate(id));
+    const _regen = document.getElementById('pf-regen');
+    if (_regen) _regen.addEventListener('click', () => regenerateOnly(id));
   }
 
-  async function generate(id) {
+  // Primary action: pull THIS company's Drive folder (+ linked Granola notes)
+  // into the document store, then run the two-pass LLM over it.
+  async function syncAndUpdate(id) {
     const btn = document.getElementById('pf-gen');
+    const regen = document.getElementById('pf-regen');
     const msg = document.getElementById('pf-gen-msg');
-    btn.disabled = true; const label = btn.textContent;
-    btn.textContent = 'Generating…';
-    msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Reading documents + notes and writing the update… this takes ~20–60s.</div>`;
+    btn.disabled = true; if (regen) regen.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Syncing…';
+    msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Pulling this company's documents from its Drive folder…</div>`;
+    try {
+      let ing = null;
+      try { ing = await postJSON(`${API}/company/${id}/ingest`); }
+      catch (e) { ing = { _err: e.message }; }
+      const n = (ing && ing.documents_upserted) || 0;
+      msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Synced ${n} document${n === 1 ? '' : 's'}. Reading them + notes and writing the update… (~20–60s)</div>`;
+      await postJSON(`${API}/company/${id}/generate-update`);
+      await renderCompany(id);
+    } catch (e) {
+      btn.disabled = false; if (regen) regen.disabled = false; btn.textContent = label;
+      msg.innerHTML = `<div class="pf-card pf-gen-err">${esc(e.message)}</div>`;
+    }
+  }
+
+  // Secondary: re-run the LLM on already-synced documents (no Drive re-pull).
+  async function regenerateOnly(id) {
+    const btn = document.getElementById('pf-regen');
+    const gen = document.getElementById('pf-gen');
+    const msg = document.getElementById('pf-gen-msg');
+    btn.disabled = true; if (gen) gen.disabled = true;
+    const label = btn.textContent; btn.textContent = 'Generating…';
+    msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Reading already-synced documents + notes and writing the update… (~20–60s)</div>`;
     try {
       await postJSON(`${API}/company/${id}/generate-update`);
       await renderCompany(id);
     } catch (e) {
-      btn.disabled = false; btn.textContent = label;
-      msg.innerHTML = `<div class="pf-card pf-gen-err">Couldn't generate update: ${esc(e.message)}</div>`;
+      btn.disabled = false; if (gen) gen.disabled = false; btn.textContent = label;
+      msg.innerHTML = `<div class="pf-card pf-gen-err">${esc(e.message)}</div>`;
     }
   }
 
@@ -295,7 +332,7 @@
     if (!u) {
       return `<div class="pf-card pf-update pf-update-off">
         <div class="pf-card-title">AI update</div>
-        <div class="pf-empty">No update generated yet. Click <strong>Generate update</strong> to have the model read this company's documents + notes and produce a structured review.</div>
+        <div class="pf-empty">No update generated yet. Click <strong>Sync &amp; update</strong> to pull this company's Drive folder + notes and have the model produce a structured review.</div>
       </div>`;
     }
     const gapHtml = gaps.length
@@ -367,7 +404,7 @@
 
   function documentsCard(docs) {
     if (!docs.length) {
-      return `<div class="pf-card"><div class="pf-card-title">Documents</div><div class="pf-empty">No documents ingested. Run ingestion to pull this company's Drive folder + notes.</div></div>`;
+      return `<div class="pf-card"><div class="pf-card-title">Documents</div><div class="pf-empty">No documents synced yet. Click <strong>Sync &amp; update</strong> above to pull this company's Drive folder.</div></div>`;
     }
     const rows = docs.map(d => `
       <tr>
@@ -386,7 +423,7 @@
 
   function notesCard(notes) {
     if (!notes.length) {
-      return `<div class="pf-card"><div class="pf-card-title">Recent notes</div><div class="pf-empty">No linked meeting notes.</div></div>`;
+      return `<div class="pf-card"><div class="pf-card-title">Meeting notes (Granola)</div><div class="pf-empty">No Granola notes matched to this company yet.</div></div>`;
     }
     const items = notes.map(n => `
       <div class="pf-note">
@@ -396,7 +433,7 @@
         </div>
         ${n.note_summary ? `<p class="pf-note-sum">${esc(String(n.note_summary).slice(0, 220))}</p>` : ''}
       </div>`).join('');
-    return `<div class="pf-card"><div class="pf-card-title">Recent notes</div>${items}</div>`;
+    return `<div class="pf-card"><div class="pf-card-title">Meeting notes (Granola)</div>${items}</div>`;
   }
 
   function governanceCard(investments, seats, returns) {
