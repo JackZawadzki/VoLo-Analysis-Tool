@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=211">
+    <link rel="stylesheet" href="/static/styles.css?v=213">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
     <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
@@ -1376,41 +1376,6 @@
     </div>
 
     <div id="dd-workspace" style="display:none;">
-        <details class="dd-method"><summary>What these controls do</summary><div class="dd-method-body">
-            <p><strong>Exit basis.</strong> How the company is valued at exit: the exit multiple is applied to yearly <em>EBITDA</em>/profit (EV/EBITDA) or to <em>Revenue</em> (EV/Revenue). The seeded multiple comes from <strong>EV/EBITDA</strong> comps, so EV/EBITDA is the default. If you switch to EV/Revenue, the multiple is auto-converted to the equivalent revenue multiple (= EBITDA-multiple × exit margin) so the valuation stays consistent — then edit it if you have a revenue-multiple thesis. (Revenue and EBITDA multiples sit on very different scales: ~10× EBITDA ≈ ~3× revenue at a 30% margin.)</p>
-            <p><strong>Primary metric.</strong> The outcome you're analyzing. It highlights the matching row in the comparison below and re-orients the "What Moves the Outcome" tornado and the Sensitivity Grid to that metric. (The comparison table always lists every metric regardless.)</p>
-            <p><strong>Recovery on failure.</strong> If the company fails, how much you get back as a multiple of capital invested (0 = total loss, 0.5 = half back). It only affects the risk-adjusted "Expected" figures, and matters most for low probability-of-success cases.</p>
-            <p><strong>TRL.</strong> Technology Readiness Level (1–9). Seeds Probability of Success and Time-to-Launch from calibrated tables (higher TRL = more likely, sooner). It only seeds those defaults — it is not itself a sensitivity driver.</p>
-        </div></details>
-        <div class="dd-global-row">
-            <label class="dd-global-field">Exit basis
-                <select id="dd-exit-type" onchange="_ddExitBasisChanged()">
-                    <option value="ev_ebitda" selected>EV / EBITDA</option>
-                    <option value="ev_revenue">EV / Revenue</option>
-                </select>
-            </label>
-            <label class="dd-global-field">Primary metric
-                <select id="dd-metric" onchange="_ddMaybeRerun()">
-                    <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
-                    <option value="moic">MOIC (if it reaches exit)</option>
-                    <option value="irr">IRR (if it reaches exit)</option>
-                    <option value="cash_breakeven">Cash to Breakeven ($M)</option>
-                </select>
-            </label>
-            <label class="dd-global-field">Recovery on failure (× invested)
-                <input type="number" id="dd-recovery" value="0" step="0.25" min="0" onchange="_ddMaybeRerun()">
-            </label>
-            <label class="dd-global-field">TRL <span class="dd-help">(seeds defaults)</span>
-                <select id="dd-trl" onchange="_ddApplyTRL()">
-                    <option value="">—</option>
-                    <option value="1">1</option><option value="2">2</option><option value="3">3</option>
-                    <option value="4">4</option><option value="5">5</option><option value="6">6</option>
-                    <option value="7">7</option><option value="8">8</option><option value="9">9</option>
-                </select>
-            </label>
-            <span id="dd-trl-note" class="dd-help"></span>
-        </div>
-
         <div class="dd-pnl-container">
             <h3 class="dd-section-title">Core Assumptions</h3>
             <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
@@ -1418,6 +1383,29 @@
                 <p><strong>Theory.</strong> Underwriting under deep uncertainty: three explicit cases (Conservative / Base / Best) bound the range instead of pretending to a single point estimate. The Base case is seeded from the deal report where available (founder revenue, comps exit multiple); Conservative &amp; Best are your downside and upside around it. Anything you don't want to model can be marked <strong>N/A</strong> and is dropped from the math entirely — never silently assumed. The outputs are only as good as these inputs; there's no hidden oracle.</p>
                 <p><strong>Math.</strong> Revenue starts at Year-1 and grows at the CAGR, tapering toward terminal growth. Operating spend is an absolute $/yr plan (ramping ~15%/yr), independent of revenue. Exit EV = exit-revenue × multiple (EV/Revenue basis) or exit-EBITDA × multiple (EV/EBITDA basis). Ownership = entry × (1 − dilution)^rounds. MOIC = EV × ownership ÷ check. Expected MOIC = POS × MOIC + (1 − POS) × recovery.</p>
             </div></details>
+            <div class="dd-setup-row">
+                <label class="dd-setup-field">Exit multiple applies to
+                    <span class="dd-help" title="The seeded multiple is an EV/EBITDA comps multiple, so EBITDA is the default. Switching to Revenue auto-converts it to the equivalent revenue multiple (× exit margin) so the valuation stays consistent — then edit it for a revenue-multiple thesis.">ⓘ</span>
+                    <select id="dd-exit-type" onchange="_ddExitBasisChanged()">
+                        <option value="ev_ebitda" selected>EBITDA (profit)</option>
+                        <option value="ev_revenue">Revenue (sales)</option>
+                    </select>
+                </label>
+                <label class="dd-setup-field">Recovery on failure
+                    <span class="dd-help" title="If the company fails (no exit), how much you get back as a multiple of capital invested. 0 = total loss, 0.5 = half back. Only affects the risk-adjusted Expected figures; pairs with Probability of Success below.">(× invested ⓘ)</span>
+                    <input type="number" id="dd-recovery" value="0" step="0.25" min="0" onchange="_ddMaybeRerun()">
+                </label>
+                <label class="dd-setup-field">Seed from TRL
+                    <span class="dd-help" title="Technology Readiness Level (1–9). Fills Probability of Success + Time-to-Launch from calibrated tables (higher TRL = more likely, sooner). Seeds defaults only — not a sensitivity driver.">ⓘ</span>
+                    <select id="dd-trl" onchange="_ddApplyTRL()">
+                        <option value="">—</option>
+                        <option value="1">1</option><option value="2">2</option><option value="3">3</option>
+                        <option value="4">4</option><option value="5">5</option><option value="6">6</option>
+                        <option value="7">7</option><option value="8">8</option><option value="9">9</option>
+                    </select>
+                </label>
+                <span id="dd-trl-note" class="dd-help"></span>
+            </div>
             <p id="dd-seed-note" class="dd-field-hint" style="display:none;"></p>
             <p class="dd-field-hint">Set each case. Tick <strong>N/A</strong> for any metric that's unknown or you don't want to model — it's dropped from the run and the sensitivity decomposition. <strong>Sensitivity</strong> and <strong>Impact</strong> populate after you run.</p>
             <div class="dd-table-scroll">
@@ -1439,6 +1427,17 @@
                 <table id="dd-comp-table" class="dd-pnl-table"></table>
             </div>
 
+            <div class="dd-drivers-head">
+                <div class="dd-drivers-title">Driver analysis</div>
+                <label class="dd-metric-axis">Show drivers of
+                    <select id="dd-metric" onchange="_ddMaybeRerun()">
+                        <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
+                        <option value="moic">MOIC (if it reaches exit)</option>
+                        <option value="irr">IRR (if it reaches exit)</option>
+                        <option value="cash_breakeven">Cash to Breakeven ($M)</option>
+                    </select>
+                </label>
+            </div>
             <div class="dd-two-col-output">
                 <div class="dd-pnl-container">
                     <h3 class="dd-section-title">What Moves the Outcome</h3>
