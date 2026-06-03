@@ -105,6 +105,7 @@
                 <div class="nav-beta-group" title="These tabs are still in development. Outputs may be incomplete or change without notice.">
                     <span class="nav-beta-tag">BETA · In Development</span>
                     <a href="#" class="nav-link nav-link-beta" data-tab="volomind">VoLo Mind</a>
+                    <a href="#" class="nav-link nav-link-beta" data-tab="portfolio" title="Portfolio monitoring — holdings, AI updates, derisking">Portfolio</a>
                     <a href="#" class="nav-link nav-link-beta" data-tab="ddanalysis">DD Financial Analysis</a>
                     <a href="#" class="nav-link nav-link-beta" data-tab="funddeployment">Fund II Deployment</a>
                 </div>
@@ -2290,6 +2291,14 @@
 
 </div><!-- /tab-funddeployment -->
 
+    <!-- Portfolio (rework) — native in-SPA portfolio monitoring. Rendered by
+         portfolio.js; fail-soft and isolated from the rest of the app. -->
+    <div id="tab-portfolio" class="tab-content">
+      <div id="portfolio-root" class="pf-root">
+        <div class="pf-loading">Loading portfolio…</div>
+      </div>
+    </div><!-- /tab-portfolio -->
+
     {# VoLo Mind (Beta) — isolated tab content. Renders even if the feature
        flag is off (the JS will then fail the /health check and show a
        "temporarily unavailable" panel rather than the full UI). #}
@@ -2323,6 +2332,8 @@
     <script src="/static/app.js?v=212"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
+    <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
+    <script src="/static/portfolio.js?v=5"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

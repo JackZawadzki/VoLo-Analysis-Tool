@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block title %}Portfolio Review{% endblock %}
+{% block content %}
+
+<header class="mb-8">
+  <h1 class="text-2xl font-bold text-gray-900">Portfolio Review</h1>
+  <p class="text-gray-500 mt-1 text-sm">Live portfolio metrics across all sections. Source-of-truth lives in the
+    Excel working doc; the app syncs and renders. Comments are saved in the database.</p>
+</header>
+
+<!-- Top-level metrics tiles -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Companies</div>
+    <div class="text-3xl font-bold mt-1">{{ n_companies }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Investments</div>
+    <div class="text-3xl font-bold mt-1">{{ n_investments }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Active Board Seats</div>
+    <div class="text-3xl font-bold mt-1">{{ n_board_seats }}</div>
+  </div>
+  <div class="pr-card p-4">
+    <div class="text-xs text-gray-500 uppercase tracking-wide">Last Sync</div>
+    <div class="text-sm font-medium mt-2">
+      {% if last_import %}
+        <span class="px-2 py-0.5 rounded text-xs font-medium
+          {% if last_import.status == 'success' %}bg-green-100 text-green-800
+          {% elif last_import.status == 'partial' %}bg-yellow-100 text-yellow-800
+          {% else %}bg-red-100 text-red-800{% endif %}">
+          {{ last_import.status }}
+        </span>
+        <div class="text-xs text-gray-500 mt-1">
+          {{ last_import.finished_at or last_import.started_at }} · {{ last_import.rows_imported }} rows
+        </div>
+      {% else %}
+        <span class="text-gray-400">No import yet</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Google Drive sync -->
+<div id="drive-sync-card" class="pr-card p-5 mb-6">
+  <div class="flex items-center gap-3 mb-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M7.71 3.5L1.15 15l3.36 5.5L11 9 7.71 3.5z" fill="#0066DA"/>
+      <path d="M16.21 8.5L12.85 3 9.79 8.5l3.36 5.5h6.71L16.21 8.5z" fill="#FFC107"/>
+      <path d="M19.85 14L13 14l3.21 5.5h6.79l-3.15-5.5z" fill="#EA4335"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-gray-900">Sync workbook from Google Drive</h2>
+    <span id="drive-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
+  </div>
+  <div id="drive-sync-content" class="text-sm text-gray-600">Checking connection…</div>
+
+  <!-- Bulk folder discovery — uses default parent folder (Portfolio Company
+       Information shared drive). Surfaced even when the workbook syncer is
+       disconnected so the admin sees what this button does, but the actual
+       call requires Drive auth. -->
+  <div class="mt-4 pt-4 border-t border-gray-100">
+    <div class="flex items-center justify-between gap-3">
+      <div class="text-sm text-gray-700">
+        <strong>Discover company folders</strong>
+        <p class="text-xs text-gray-500 mt-1">Walks the team's
+          <em>Portfolio Company Information</em> shared drive and links each
+          subfolder to a portfolio company by name match. Re-run any time —
+          links update in place.</p>
+      </div>
+      <button id="discover-folders-btn"
+        class="px-3 py-2 text-sm bg-gray-900 text-white rounded hover:bg-black whitespace-nowrap">
+        Discover folders
+      </button>
+    </div>
+    <div id="discover-folders-result" class="mt-3 text-sm"></div>
+  </div>
+</div>
+
+<!-- Direct workbook upload (drop-zone) -->
+<div id="upload-import-card" class="pr-card p-5 mb-6">
+  <div class="flex items-center gap-3 mb-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 16V4M12 4l-4 4M12 4l4 4" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="#16a34a" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-gray-900">Upload workbook from your computer</h2>
+    <span id="upload-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
+  </div>
+  <div class="text-sm text-gray-600 mb-3">
+    Drop the latest <code class="px-1 py-0.5 bg-gray-100 rounded text-xs">.xlsx</code> portfolio workbook here, or click to pick a file.
+    Runs the same importer as the Drive sync — pr_imports gets a new audit row either way.
+  </div>
+  <div id="upload-dropzone"
+       class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-green-500 hover:bg-green-50 transition">
+    <div id="upload-dropzone-default" class="text-sm text-gray-500">
+      <strong class="text-gray-700">Drop .xlsx here</strong> or click to browse
+      <div class="text-xs text-gray-400 mt-1">Max ~50MB · admin only</div>
+    </div>
+    <div id="upload-dropzone-active" class="hidden text-sm text-green-700 font-medium">
+      Release to upload
+    </div>
+    <div id="upload-dropzone-busy" class="hidden text-sm text-gray-700">
+      <span class="inline-block animate-pulse">Importing… this can take 30-60 seconds for a full workbook.</span>
+    </div>
+  </div>
+  <input id="upload-file-input" type="file" accept=".xlsx,.xlsm" class="hidden" />
+  <div id="upload-result" class="mt-3 text-sm"></div>
+</div>
+
+<!-- Granola notes sync -->
+<div id="granola-sync-card" class="pr-card p-5 mb-10">
+  <div class="flex items-center gap-3 mb-3">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="4" width="18" height="16" rx="2" stroke="#7c3aed" stroke-width="2"/>
+      <path d="M8 9h8M8 13h8M8 17h5" stroke="#7c3aed" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+    <h2 class="text-lg font-semibold text-gray-900">Sync Granola meeting notes</h2>
+    <span id="granola-status-badge" class="text-xs px-2 py-0.5 rounded ml-auto"></span>
+  </div>
+  <div class="text-sm text-gray-600">
+    Pulls notes from the team Granola workspace. Filters to:
+    <span class="inline-flex flex-wrap gap-1 ml-1">
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Investment Committee</span>
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Portco Updates</span>
+      <span class="px-1.5 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">Screening + Rapid Fire Meeting</span>
+    </span>
+    Each note is auto-linked to portfolio companies whose CEO/CFO is an attendee, or whose name appears in the title.
+  </div>
+  <div class="mt-3 flex items-center gap-3">
+    <button id="granola-sync-btn"
+      class="px-3 py-2 text-sm bg-purple-600 text-white rounded hover:bg-purple-700">
+      Sync Granola notes
+    </button>
+    <span id="granola-last-sync" class="text-xs text-gray-500"></span>
+  </div>
+  <div id="granola-sync-result" class="mt-3 text-sm"></div>
+</div>
+
+<!-- Sections grid -->
+<h2 class="text-lg font-semibold text-gray-900 mb-3">Metric sections</h2>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for s in sections %}
+    {% if s.slug not in ('archive',) %}
+    <a href="/portfolio-review/{{ s.slug }}"
+       class="pr-card p-5 hover:shadow-md transition border-l-4"
+       style="border-left-color: {{ s.color }};">
+      <div class="flex items-center gap-3">
+        <span class="pr-section-pill" style="background: {{ s.color }}">{{ s.num }}</span>
+        <div class="font-semibold text-gray-900">{{ s.name }}</div>
+      </div>
+      <div class="text-sm text-gray-500 mt-2">
+        {% if s.slug == 'inputs' %}Master ledger of investments, financials, and SPV LPs.
+        {% elif s.slug == 'carta-source' %}Raw paste-dumps from Carta — IRR, SOI, firm-level returns.
+        {% elif s.slug == 'returns' %}Per-deal IRR, multiples, gain/loss and SPV roll-up.
+        {% elif s.slug == 'valuation' %}NAV vs cost, ownership %, top 5 concentration.
+        {% elif s.slug == 'composition' %}Sector / geography / round-graduation breakdown.
+        {% elif s.slug == 'traction' %}Stoplight, commercial status, revenue growth.
+        {% elif s.slug == 'derisking' %}Stage-banded ranking on the 7 derisking dimensions. AI-scored against IC memo + decks + Granola notes.
+        {% elif s.slug == 'follow-on' %}Bridges, conversions, and priced follow-on rounds.
+        {% elif s.slug == 'governance' %}Board seats and D&O.
+        {% elif s.slug == 'summary' %}Aggregated roll-up across every section.
+        {% elif s.slug == 'directory' %}CEO / CFO contact info.
+        {% endif %}
+      </div>
+    </a>
+    {% endif %}
+  {% endfor %}
+</div>
+
+<!-- Section-level comment thread -->
+<div class="mt-12">
+  <h2 class="text-lg font-semibold text-gray-900 mb-3">General notes</h2>
+  <div id="general-comments" class="pr-card p-5">
+    <div class="text-sm text-gray-500">Loading…</div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/portfolio_review/comments.js?v=2"></script>
+<script src="/static/portfolio_review/drive_sync.js?v=1"></script>
+<script src="/static/portfolio_review/granola_sync.js?v=1"></script>
+<script src="/static/portfolio_review/file_upload.js?v=1"></script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    new CommentsWidget(document.getElementById('general-comments'), 'section', 'general');
+    new DriveSyncCard(document.getElementById('drive-sync-card'));
+    new DiscoverFoldersButton();
+    new GranolaSyncCard(document.getElementById('granola-sync-card'));
+    new UploadImportCard(document.getElementById('upload-import-card'));
+  });
+</script>
+{% endblock %}
