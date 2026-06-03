@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=216">
+    <link rel="stylesheet" href="/static/styles.css?v=217">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1443,7 +1443,7 @@
                     <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
                         <p><strong>What it shows.</strong> A ranking of which single assumption has the most leverage on the outcome — i.e. where to spend your diligence and negotiating energy. The longest bars are the things the deal hinges on.</p>
                         <p><strong>Theory.</strong> A one-at-a-time sensitivity probe: each assumption is flexed alone across its Conservative→Best range, with all others held at Base, and the resulting move is measured. Levers that don't enter the chosen metric are honestly shown as "no effect" rather than a fabricated zero.</p>
-                        <p><strong>Math.</strong> Bar = metric(lever at Best) − metric(lever at Conservative), others at Base. Impact % = |bar| ÷ Σ|bars|. Because returns are multiplicative, the single-lever bars don't add up to the total move; the remainder is shown explicitly as "Interactions."</p>
+                        <p><strong>Math.</strong> Two attribution modes (toggle above the bars). <em>One-at-a-time:</em> each bar = metric(lever at Best) − metric(lever at Conservative), others at Base; because returns compound, the bars don't sum to the total, so the leftover is shown as an explicit "Interactions" bar. <em>Fair share (Shapley):</em> each lever's bar is its Shapley value — its average marginal contribution across every order the levers could be added in — which fairly distributes that compounding across the levers so the bars sum to the total with no leftover. (Shapley value, cooperative game theory; the unique fair attribution — the same math behind SHAP in machine learning.)</p>
                     </div></details>
                     <div id="dd-tornado"></div>
                 </div>
@@ -1475,6 +1475,7 @@
                 <div class="dd-table-scroll">
                     <table id="dd-pnl-table" class="dd-pnl-table"></table>
                 </div>
+                <div id="dd-chart-mode" class="dd-chart-mode"></div>
                 <div class="dd-charts-grid">
                     <div class="dd-chart-card"><h4>Revenue &amp; EBITDA</h4><canvas id="dd-chart-rev-ebitda" height="260"></canvas></div>
                     <div class="dd-chart-card"><h4>Free Cash Flow &amp; Cumulative</h4><canvas id="dd-chart-fcf" height="260"></canvas></div>
@@ -2324,7 +2325,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=216"></script>
+    <script src="/static/app.js?v=217"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=5"></script>

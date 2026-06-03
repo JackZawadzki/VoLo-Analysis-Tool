@@ -11617,6 +11617,8 @@ const _dd = {
     seed: null,           // report-derived Cons/Base/Best presets (revenue + exit multiple)
     exitBasis: 'ev_ebitda',  // tracks the exit-basis selector to convert the multiple on toggle
     gridX: null, gridY: null,  // selected Sensitivity-Grid axes (null → engine picks the metric's default pair)
+    tornadoMode: 'shapley',    // 'shapley' (fair share, no interaction bar) or 'oat' (one-at-a-time)
+    chartMode: 'single',       // detail charts: 'single' (selected case) or 'all' (overlay all 3 cases)
     deal: { check_size_m: 2.0, pre_money_m: 15.0, round_size_m: null, exit_year: null },
     result: null,
     charts: {},
@@ -12140,47 +12142,70 @@ function _ddRenderSensitivity() {
     }
     const mName = _ddMetricName(s.metric);
     const fmt = (v, signed) => _ddMetricFmt(v, s.metric, signed);
-    const maxAbs = Math.max(...s.drivers.map(d => d.abs_swing), Math.abs(s.interaction), 0.001);
-    let inertCount = 0;
+    const canShap = !!s.shapley_available;
+    const mode = (canShap && _dd.tornadoMode !== 'oat') ? 'shapley' : 'oat';
+
     let html = '';
-    if (s.metric === 'dcf_value') {
-        html += `<p class="dd-caveat">⚠ <b>DCF Value is indicative for early-stage deals.</b> It's dominated by the terminal (exit-multiple) value and highly sensitive to the discount rate, so treat it as a cross-check on the multiple-based MOIC — not a primary valuation. It's most reliable for later-stage, cash-generating companies.</p>`;
-    }
-    html += `<p class="dd-field-hint">Each bar = the change in <b>${mName}</b> when that assumption alone moves from its Conservative to its Best value (others held at Base). Total swing ${fmt(s.total_swing, true)} (Conservative ${fmt(s.metric_conservative)} → Best ${fmt(s.metric_best)}).</p>`;
-    html += '<div class="dd-tornado">';
-    for (const d of s.drivers) {
-        const inert = d.abs_swing < 0.005;
-        if (inert) inertCount++;
-        const w = Math.max(2, 100 * d.abs_swing / maxAbs);
-        const dir = d.swing >= 0 ? 'pos' : 'neg';
-        html += `<div class="dd-torn-row${inert ? ' dd-torn-inert' : ''}">
-            <div class="dd-torn-label">${d.label}</div>
-            <div class="dd-torn-track">${inert ? `<span class="dd-inert-tag">no effect on ${mName}</span>` : `<div class="dd-torn-bar ${dir}" style="width:${w}%"></div>`}</div>
-            <div class="dd-torn-val">${inert ? '<span class="dd-muted">0</span>' : fmt(d.swing, true) + ' <span class="dd-muted">' + d.impact_pct + '%</span>'}</div>
+    if (canShap) {
+        html += `<div class="dd-torn-mode">
+            <span class="dd-torn-mode-lbl">Attribution</span>
+            <div class="dd-scenario-pills">
+                <button class="dd-pill ${mode === 'shapley' ? 'active' : ''}" onclick="_ddSetTornadoMode('shapley')">Fair share (Shapley)</button>
+                <button class="dd-pill ${mode === 'oat' ? 'active' : ''}" onclick="_ddSetTornadoMode('oat')">One-at-a-time</button>
+            </div>
         </div>`;
-        // fill the assumption-table columns
-        const se = document.getElementById('dd-sens-' + d.key);
+    }
+
+    // Bars per mode: Shapley fair-share (sums to the total, no interaction bar) vs the
+    // one-at-a-time swing (doesn't sum → an explicit Interactions bar).
+    const bars = s.drivers.map(d => ({ label: d.label, key: d.key, val: (mode === 'shapley' ? (d.shapley || 0) : d.swing) }));
+    const sumAbs = bars.reduce((a, b) => a + Math.abs(b.val), 0) || 1;
+    bars.forEach(b => { b.pct = Math.round(100 * Math.abs(b.val) / sumAbs); });
+    bars.sort((a, b) => Math.abs(b.val) - Math.abs(a.val));
+    const maxAbs = Math.max(...bars.map(b => Math.abs(b.val)), (mode === 'oat' ? Math.abs(s.interaction) : 0), 0.001);
+
+    if (mode === 'shapley') {
+        html += `<p class="dd-field-hint">Each bar = that assumption's <b>fair share</b> of the full Conservative→Best move in <b>${mName}</b> — the compounding between levers is split across them (Shapley value), so the bars sum to the total with no leftover. Total swing ${fmt(s.total_swing, true)} (${fmt(s.metric_conservative)} → ${fmt(s.metric_best)}).</p>`;
+    } else {
+        html += `<p class="dd-field-hint">Each bar = the change in <b>${mName}</b> when that assumption alone moves Conservative→Best (others held at Base). Because returns compound, the bars don't sum to the total — the remainder is the <em>Interactions</em> bar. Total swing ${fmt(s.total_swing, true)} (${fmt(s.metric_conservative)} → ${fmt(s.metric_best)}).</p>`;
+    }
+    html += '<div class="dd-tornado">';
+    let inertCount = 0;
+    for (const b of bars) {
+        const inert = Math.abs(b.val) < 0.005;
+        if (inert) inertCount++;
+        const w = Math.max(2, 100 * Math.abs(b.val) / maxAbs);
+        const dir = b.val >= 0 ? 'pos' : 'neg';
+        html += `<div class="dd-torn-row${inert ? ' dd-torn-inert' : ''}">
+            <div class="dd-torn-label">${b.label}</div>
+            <div class="dd-torn-track">${inert ? `<span class="dd-inert-tag">no effect on ${mName}</span>` : `<div class="dd-torn-bar ${dir}" style="width:${w}%"></div>`}</div>
+            <div class="dd-torn-val">${inert ? '<span class="dd-muted">0</span>' : fmt(b.val, true) + ' <span class="dd-muted">' + b.pct + '%</span>'}</div>
+        </div>`;
+        const se = document.getElementById('dd-sens-' + b.key);
         if (se) se.innerHTML = inert
             ? `<span class="dd-muted" title="Does not affect ${mName} on the current basis">n/a</span>`
-            : `<span class="dd-sens-val ${dir}">${fmt(d.swing, true)}</span>`;
-        const ie = document.getElementById('dd-impact-' + d.key);
+            : `<span class="dd-sens-val ${dir}">${fmt(b.val, true)}</span>`;
+        const ie = document.getElementById('dd-impact-' + b.key);
         if (ie) ie.innerHTML = inert
             ? '<span class="dd-muted">—</span>'
-            : `<span class="dd-impact-bar" style="width:${Math.max(4, d.impact_pct)}%"></span><span class="dd-impact-num">${d.impact_pct}%</span>`;
+            : `<span class="dd-impact-bar" style="width:${Math.max(4, b.pct)}%"></span><span class="dd-impact-num">${b.pct}%</span>`;
     }
-    // interaction residual
-    const iw = Math.max(2, 100 * Math.abs(s.interaction) / maxAbs);
-    html += `<div class="dd-torn-row dd-torn-interaction">
-        <div class="dd-torn-label">Interactions <span class="dd-help" title="Combined effects that can't be attributed to a single assumption">(combined)</span></div>
-        <div class="dd-torn-track"><div class="dd-torn-bar int" style="width:${iw}%"></div></div>
-        <div class="dd-torn-val">${fmt(s.interaction, true)} <span class="dd-muted">${s.interaction_pct}%</span></div>
-    </div>`;
+    if (mode === 'oat' && Math.abs(s.interaction) > 0.005) {
+        const iw = Math.max(2, 100 * Math.abs(s.interaction) / maxAbs);
+        html += `<div class="dd-torn-row dd-torn-interaction">
+            <div class="dd-torn-label">Interactions <span class="dd-help" title="Combined effects that can't be attributed to a single assumption">(combined)</span></div>
+            <div class="dd-torn-track"><div class="dd-torn-bar int" style="width:${iw}%"></div></div>
+            <div class="dd-torn-val">${fmt(s.interaction, true)} <span class="dd-muted">${s.interaction_pct}%</span></div>
+        </div>`;
+    }
     html += '</div>';
     if (inertCount > 0) {
-        html += `<p class="dd-field-hint" style="margin-top:8px;">Levers marked <em>no effect</em> don't enter ${mName} on this basis — e.g. margins &amp; opex only matter under EV/EBITDA; discount rate, terminal growth, capex and time-to-launch drive DCF Value / IRR / cash, not a multiple-based MOIC. Switch the basis or primary metric to test them.</p>`;
+        html += `<p class="dd-field-hint" style="margin-top:8px;">Levers marked <em>no effect</em> don't enter ${mName} on this basis — e.g. margins &amp; opex only matter under EV/EBITDA; capex and time-to-launch drive IRR / cash, not a multiple-based MOIC. Switch the basis or primary metric to test them.</p>`;
     }
     host.innerHTML = html;
 }
+
+function _ddSetTornadoMode(m) { _dd.tornadoMode = m; _ddRenderSensitivity(); }
 
 // ── Two-way grid ──────────────────────────────────────────────────
 function _ddRenderTwoWay() {
@@ -12239,6 +12264,7 @@ function _ddRenderDetail(cs) {
         <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(ret.exit_ev_m)}M</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">DCF Value</div><div class="dd-hero-value">$${_ddFmt(ret.dcf_enterprise_value_m)}M</div></div>`;
     _ddRenderPnl(pnl);
+    _ddRenderChartModeToggle();
     _ddRenderCharts(pnl, cs);
 }
 
@@ -12280,6 +12306,9 @@ function _ddDestroy(k) { if (_dd.charts[k]) { _dd.charts[k].destroy(); delete _d
 
 function _ddRenderCharts(pnl, cs) {
     if (typeof Chart === 'undefined') return;
+    if (_dd.chartMode === 'all') { _ddRenderChartsAll(); return; }
+    _ddChartTitle('rev', 'Revenue & EBITDA');
+    _ddChartTitle('fcf', 'Free Cash Flow & Cumulative');
     const pre = pnl.pre_launch_years || 0;
     const labels = pnl.years.map(y => y <= pre ? `Pre ${y}` : `Yr ${y - pre}`);
     const c1 = document.getElementById('dd-chart-rev-ebitda');
@@ -12306,6 +12335,47 @@ function _ddRenderCharts(pnl, cs) {
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } },
         });
     }
+}
+
+// Overlay all three cases (one line per case), aligned by year-from-investment.
+function _ddRenderChartsAll() {
+    const cases = DD_CASES.filter(c => _dd.result.scenarios[c]);
+    const maxLen = Math.max.apply(null, cases.map(c => (_dd.result.scenarios[c].pnl.years || []).length).concat([1]));
+    const labels = Array.from({ length: maxLen }, (_, i) => 'Yr ' + (i + 1));
+    const colors = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
+    const ds = (field) => cases.map(c => ({
+        label: DD_CASE_LABEL[c], data: _dd.result.scenarios[c].pnl[field],
+        borderColor: colors[c], backgroundColor: 'transparent', borderWidth: 2, tension: 0.3, pointRadius: 2,
+    }));
+    const opt = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } };
+    _ddChartTitle('rev', 'Revenue by case ($M)');
+    const c1 = document.getElementById('dd-chart-rev-ebitda');
+    if (c1) { _ddDestroy('rev'); _dd.charts.rev = new Chart(c1.getContext('2d'), { type: 'line', data: { labels, datasets: ds('revenue') }, options: opt }); }
+    _ddChartTitle('fcf', 'Cumulative cash flow by case ($M)');
+    const c2 = document.getElementById('dd-chart-fcf');
+    if (c2) { _ddDestroy('fcf'); _dd.charts.fcf = new Chart(c2.getContext('2d'), { type: 'line', data: { labels, datasets: ds('cumulative_fcf') }, options: opt }); }
+}
+
+function _ddChartTitle(which, text) {
+    const cv = document.getElementById(which === 'rev' ? 'dd-chart-rev-ebitda' : 'dd-chart-fcf');
+    const card = cv && cv.closest('.dd-chart-card'), h = card && card.querySelector('h4');
+    if (h) h.textContent = text;
+}
+
+function _ddRenderChartModeToggle() {
+    const el = document.getElementById('dd-chart-mode'); if (!el) return;
+    el.innerHTML = `<span class="dd-pill-label">Charts</span>
+        <div class="dd-scenario-pills">
+            <button class="dd-pill ${_dd.chartMode === 'single' ? 'active' : ''}" onclick="_ddSetChartMode('single')">Selected case</button>
+            <button class="dd-pill ${_dd.chartMode === 'all' ? 'active' : ''}" onclick="_ddSetChartMode('all')">Compare all three</button>
+        </div>`;
+}
+
+function _ddSetChartMode(m) {
+    _dd.chartMode = m;
+    _ddRenderChartModeToggle();
+    const sc = _dd.result && _dd.result.scenarios[_dd.detailScenario];
+    if (sc) _ddRenderCharts(sc.pnl, _dd.detailScenario);
 }
 
 // ── Tab init hook ─────────────────────────────────────────────────

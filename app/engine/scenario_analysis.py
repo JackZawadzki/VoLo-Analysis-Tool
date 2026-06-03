@@ -890,6 +890,26 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         d["impact_pct"] = round(100.0 * d["abs_swing"] / denom, 1) if denom > 1e-9 else 0.0
     drivers.sort(key=lambda d: d["abs_swing"], reverse=True)
 
+    # ── Shapley attribution of the Conservative→Best swing ───────────────────────
+    # The first-order bars leave the lever-compounding in the "interaction" residual.
+    # Shapley fairly splits that compounding across the levers so they sum to the total
+    # swing (no leftover). Game: baseline = all-Conservative, each lever toggles to its
+    # Best value. Null-effect levers (≈0 standalone swing) are skipped (φ≈0).
+    SHAP_CAP = 12
+    active = [d for d in drivers if d["abs_swing"] >= 0.005]
+    shapley_available = 0 < len(active) <= SHAP_CAP
+    if shapley_available:
+        akeys = [d["key"] for d in active]
+        phi = _dd_shapley(akeys, dict(cons), {k: best.get(k) for k in akeys},
+                          deal_params, recovery_moic, metric)
+        for d in drivers:
+            d["shapley"] = round(phi.get(d["key"], 0.0), 3)
+        shapley_resid = round(total_swing - sum(phi.values()), 3)
+    else:
+        for d in drivers:
+            d["shapley"] = 0.0
+        shapley_resid = round(total_swing, 3)
+
     return {
         "available": len(drivers) > 0,
         "metric": metric,
@@ -904,6 +924,8 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         # Bridge residuals: contributions + residual = (case outcome − base outcome)
         "interaction_down": round((metric_cons - metric_base) - sum_down, 3),
         "interaction_up": round((metric_best - metric_base) - sum_up, 3),
+        "shapley_available": shapley_available,
+        "shapley_resid": shapley_resid,
     }
 
 
