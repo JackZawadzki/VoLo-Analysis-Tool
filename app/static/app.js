@@ -11615,6 +11615,7 @@ const _dd = {
     reportData: null,
     overview: null,
     seed: null,           // report-derived Cons/Base/Best presets (revenue + exit multiple)
+    exitBasis: 'ev_ebitda',  // tracks the exit-basis selector to convert the multiple on toggle
     deal: { check_size_m: 2.0, pre_money_m: 15.0, round_size_m: null, exit_year: null },
     result: null,
     charts: {},
@@ -11697,6 +11698,31 @@ function _ddMetricFmt(v, m, signed) {
 
 // Re-run automatically when the metric/basis changes (so the view tracks the choice).
 function _ddMaybeRerun() { if (_dd.result) ddRun(); }
+
+// Exit-basis toggle. The seeded multiple is an EV/EBITDA comps multiple, so EV/EBITDA is
+// the default. On switch, convert the exit-multiple cells via each case's exit EBITDA
+// margin (revenue-mult = EBITDA-mult × margin) so the valuation stays consistent on the
+// new basis — then re-run. Skips conversion when the margin isn't positive or there's no
+// prior run to read margins from.
+function _ddExitBasisChanged() {
+    const sel = document.getElementById('dd-exit-type');
+    const newBasis = sel ? sel.value : 'ev_ebitda';
+    const oldBasis = _dd.exitBasis || newBasis;
+    const margins = (_dd.result && _dd.result.comparison && _dd.result.comparison.exit_ebitda_margin_pct) || null;
+    if (oldBasis !== newBasis && margins) {
+        DD_CASES.forEach(cs => {
+            const el = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], 'exit_multiple'));
+            if (!el || el.value === '') return;
+            const m = (margins[cs] != null ? margins[cs] : 0) / 100;
+            if (!(m > 0.02)) return;                                  // pre-profit / negative margin → leave as-is
+            let v = parseFloat(el.value); if (isNaN(v)) return;
+            v = (newBasis === 'ev_revenue') ? v * m : v / m;          // EBITDA-mult ↔ revenue-mult
+            el.value = Math.round(v * 100) / 100;
+        });
+    }
+    _dd.exitBasis = newBasis;
+    _ddMaybeRerun();
+}
 
 // ── TRL seeder: pre-fill POS + Time-to-Launch from the calibrated TRL tables ──
 function _ddApplyTRL() {
@@ -11785,6 +11811,9 @@ function ddReportChanged() {
             _ddRenderDealStrip();
             ddBuildTable(_dd.seed.preset);       // per-field: underived fields fall back to presets
             _ddRenderSeedNote();
+            // The freshly-seeded multiple is an EV/EBITDA comps multiple → reset basis to match.
+            const _etSel = document.getElementById('dd-exit-type');
+            if (_etSel) { _etSel.value = 'ev_ebitda'; _dd.exitBasis = 'ev_ebitda'; }
             // Seed the TRL selector (and POS/launch defaults) from the report's TRL.
             const trl = ov.trl || inp.trl;
             const trlSel = document.getElementById('dd-trl');
@@ -12048,7 +12077,7 @@ function _ddRenderComparison() {
     const c = _dd.result.comparison;
     // The selected Primary metric maps to one of these comparison rows — highlight it
     // so the selector visibly drives the table (it also re-orients the tornado + grid).
-    const pmField = { expected_moic: 'expected_moic', moic: 'moic', irr: 'irr_pct', dcf_value: 'dcf_ev_m', cash_breakeven: 'peak_burn_m' }[_dd.result.primary_metric];
+    const pmField = { expected_moic: 'expected_moic', moic: 'moic', irr: 'irr_pct', cash_breakeven: 'peak_burn_m' }[_dd.result.primary_metric];
     const rows = [
         { label: 'Expected MOIC <span class="dd-help" title="Probability-weighted, risk-adjusted: (chance of reaching exit × the exit return) + (chance of failure × recovery). This is the headline number.">ⓘ</span>', f: 'expected_moic', suf: 'x', hi: true },
         { label: 'MOIC if it reaches exit <span class="dd-help" title="Return IF the company survives to a liquidity event (sale / IPO) instead of failing. NOT a win guarantee — a small or down exit can still be below 1.0x (you lose money). The Expected rows weight this by the probability of reaching exit.">ⓘ</span>', f: 'moic', suf: 'x' },
@@ -12056,7 +12085,7 @@ function _ddRenderComparison() {
         { label: 'IRR if it reaches exit', f: 'irr_pct', suf: '%', dp: 1 },
         { label: 'Probability of Success', f: 'prob_success_pct', suf: '%', dp: 0 },
         { label: 'Exit Enterprise Value', f: 'exit_ev_m', pre: '$', suf: 'M' },
-        { label: 'DCF Value (PV) <span class="dd-help" title="Indicative only. A DCF built on coarse early-stage cash-flow assumptions is dominated by the terminal value — which here is just the exit-multiple bet, discounted. Use as a cross-check, not a primary valuation; most meaningful for later-stage, cash-generating companies.">ⓘ indicative</span>', f: 'dcf_ev_m', pre: '$', suf: 'M' },
+        { label: 'DCF Value (PV)', f: 'dcf_ev_m', pre: '$', suf: 'M' },
         { label: 'Exit-Year Revenue', f: 'exit_revenue_m', pre: '$', suf: 'M' },
         { label: 'Exit EBITDA Margin', f: 'exit_ebitda_margin_pct', suf: '%', dp: 1 },
         { label: 'Exit Ownership', f: 'exit_ownership_pct', suf: '%', dp: 1 },

@@ -1377,16 +1377,16 @@
 
     <div id="dd-workspace" style="display:none;">
         <details class="dd-method"><summary>What these controls do</summary><div class="dd-method-body">
-            <p><strong>Exit basis.</strong> How the company is valued at exit: the exit multiple is applied to yearly <em>Revenue</em> (EV/Revenue) or to <em>EBITDA</em>/profit (EV/EBITDA). Pick the one matching how this company will actually be valued. Note: the seeded multiple comes from <strong>EV/EBITDA</strong> comps, and revenue vs EBITDA multiples live on very different scales — set a multiple appropriate to the basis you choose.</p>
+            <p><strong>Exit basis.</strong> How the company is valued at exit: the exit multiple is applied to yearly <em>EBITDA</em>/profit (EV/EBITDA) or to <em>Revenue</em> (EV/Revenue). The seeded multiple comes from <strong>EV/EBITDA</strong> comps, so EV/EBITDA is the default. If you switch to EV/Revenue, the multiple is auto-converted to the equivalent revenue multiple (= EBITDA-multiple × exit margin) so the valuation stays consistent — then edit it if you have a revenue-multiple thesis. (Revenue and EBITDA multiples sit on very different scales: ~10× EBITDA ≈ ~3× revenue at a 30% margin.)</p>
             <p><strong>Primary metric.</strong> The outcome you're analyzing. It highlights the matching row in the comparison below and re-orients the "What Moves the Outcome" tornado and the Sensitivity Grid to that metric. (The comparison table always lists every metric regardless.)</p>
             <p><strong>Recovery on failure.</strong> If the company fails, how much you get back as a multiple of capital invested (0 = total loss, 0.5 = half back). It only affects the risk-adjusted "Expected" figures, and matters most for low probability-of-success cases.</p>
             <p><strong>TRL.</strong> Technology Readiness Level (1–9). Seeds Probability of Success and Time-to-Launch from calibrated tables (higher TRL = more likely, sooner). It only seeds those defaults — it is not itself a sensitivity driver.</p>
         </div></details>
         <div class="dd-global-row">
             <label class="dd-global-field">Exit basis
-                <select id="dd-exit-type" onchange="_ddMaybeRerun()">
+                <select id="dd-exit-type" onchange="_ddExitBasisChanged()">
+                    <option value="ev_ebitda" selected>EV / EBITDA</option>
                     <option value="ev_revenue">EV / Revenue</option>
-                    <option value="ev_ebitda">EV / EBITDA</option>
                 </select>
             </label>
             <label class="dd-global-field">Primary metric
@@ -1394,7 +1394,6 @@
                     <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
                     <option value="moic">MOIC (if it reaches exit)</option>
                     <option value="irr">IRR (if it reaches exit)</option>
-                    <option value="dcf_value">DCF Value (PV, $M)</option>
                     <option value="cash_breakeven">Cash to Breakeven ($M)</option>
                 </select>
             </label>
@@ -1435,6 +1434,7 @@
                     <p><strong>What it shows.</strong> What you make if the deal goes poorly, as expected, or well — across every metric that matters (return, risk, exit value, runway). The spread between the Conservative and Best columns is the shape of the bet.</p>
                     <p><strong>Theory.</strong> The same deterministic model run under each case, side by side — the core decision view. Every column is internally consistent because all of its metrics come from one run of that case's assumptions. "Expected" figures are probability-weighted; "if it reaches exit" figures assume the company survives to a liquidity event (sale / IPO), which can still be a money-losing exit.</p>
                     <p><strong>Math.</strong> IRR = MOIC^(1/hold) − 1. DCF Value = Σ PV(FCF) + PV(terminal), discounted at the WACC. Cash to Breakeven = the deepest cumulative-FCF trough — the peak capital consumed before free cash flow turns positive (higher = worse).</p>
+                    <p><strong>On DCF Value.</strong> Treat it as a cross-check only. For early-stage deals it's dominated by the terminal value (essentially the exit-multiple bet, discounted) and is highly sensitive to the discount rate, so don't rely on it as a primary valuation — it's most meaningful for later-stage, cash-generating companies.</p>
                 </div></details>
                 <table id="dd-comp-table" class="dd-pnl-table"></table>
             </div>
@@ -2321,7 +2321,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=211"></script>
+    <script src="/static/app.js?v=212"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
     <script>
