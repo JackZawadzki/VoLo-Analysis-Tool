@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=221">
+    <link rel="stylesheet" href="/static/styles.css?v=222">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1485,14 +1485,7 @@
 
             <div class="dd-drivers-head">
                 <div class="dd-drivers-title">Driver analysis</div>
-                <label class="dd-metric-axis">Show drivers of
-                    <select id="dd-metric" onchange="_ddMetricChanged()">
-                        <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
-                        <option value="moic">MOIC (if it reaches exit)</option>
-                        <option value="irr">IRR (if it reaches exit)</option>
-                        <option value="cash_breakeven">Cash to Breakeven ($M)</option>
-                    </select>
-                </label>
+                <span class="dd-drivers-metric-echo" id="dd-metric-echo">Metric is set in the assumptions table above</span>
             </div>
             <div class="dd-two-col-output">
                 <div class="dd-pnl-container">
@@ -2382,7 +2375,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=221"></script>
+    <script src="/static/app.js?v=222"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=5"></script>

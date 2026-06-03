@@ -5141,6 +5141,12 @@ h2 .info-tip-body {
 .dd-assump-table thead th { position:sticky; top:0; background:#5B7744; color:#fff; font-size:11px; text-transform:uppercase; letter-spacing:.04em; z-index:1; }
 .dd-assump-table .dd-a-th-label { text-align:left; }
 .dd-a-th-base { background:#4a6337 !important; }
+/* Header group row holding the metric selector over the Sensitivity + Impact columns */
+.dd-assump-table .dd-a-grouphead th { position:static; background:#5B7744; border-bottom:none; padding-top:9px; padding-bottom:2px; }
+.dd-a-gh-blank { background:#5B7744; }
+.dd-a-gh-drivers { text-align:left !important; }
+.dd-a-metric-label { display:inline-flex; align-items:center; gap:8px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#d3e2c4; white-space:nowrap; }
+.dd-a-metric-label select { font-size:12.5px; font-weight:600; text-transform:none; letter-spacing:0; padding:4px 10px; border:1px solid #cdd8be; border-radius:6px; background:#fff; color:#3a5228; cursor:pointer; }
 .dd-a-group td { background:#f0f4ec; color:#3a5228; font-weight:700; text-transform:uppercase; font-size:11px; letter-spacing:.05em; text-align:left; }
 .dd-a-label { text-align:left; font-weight:600; color:#1f2937; }
 .dd-a-unit { color:#9ca3af; font-weight:400; font-size:11px; }
@@ -5255,6 +5261,7 @@ h2 .info-tip-body {
 .dd-drivers-title { font-size:15px; font-weight:700; color:#3a5228; letter-spacing:.01em; }
 .dd-metric-axis { display:flex; align-items:center; gap:9px; font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:#5b6b47; }
 .dd-metric-axis select { font-size:13px; font-weight:600; text-transform:none; letter-spacing:0; padding:6px 12px; border:1px solid #c9d4ba; border-radius:6px; background:#fff; color:#3a5228; cursor:pointer; }
+.dd-drivers-metric-echo { font-size:12.5px; font-weight:600; font-style:italic; color:#5b6b47; }
 .dd-drivers-head + .dd-two-col-output { margin-top:0; border:1px solid #d8e0cd; border-top:none; border-radius:0 0 10px 10px; padding:14px; background:#fcfdfb; }
 
 /* ==========================================================

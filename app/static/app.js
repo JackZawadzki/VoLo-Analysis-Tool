@@ -11703,7 +11703,11 @@ function _ddMetricFmt(v, m, signed) {
 function _ddMaybeRerun() { if (_dd.result) ddRun(); }
 
 // Changing the metric resets the grid axes so the engine picks the new metric's default pair.
-function _ddMetricChanged() { _dd.gridX = null; _dd.gridY = null; _ddMaybeRerun(); }
+// Persist the choice so it survives table rebuilds (the selector lives in the table header).
+function _ddMetricChanged() {
+    _dd.metric = (document.getElementById('dd-metric') || {}).value || 'expected_moic';
+    _dd.gridX = null; _dd.gridY = null; _ddMaybeRerun();
+}
 
 // Pick a Sensitivity-Grid axis; if the choice collides with the other axis, swap them, then re-run.
 function _ddGridAxisChanged(which, val) {
@@ -11966,7 +11970,26 @@ function _ddCurrentValue(key) {
 function ddBuildTable(preset) {
     const tbl = document.getElementById('dd-assump-table');
     if (!tbl) return;
-    let html = `<thead><tr>
+    // Metric selector lives in the header, spanning the Sensitivity + Impact columns,
+    // so it's clear which metric those columns (and the tornado/grid below) describe.
+    const curMetric = _dd.metric || (document.getElementById('dd-metric') || {}).value || 'expected_moic';
+    const metricOpts = [
+        ['expected_moic', 'Expected MOIC (risk-adjusted)'],
+        ['moic', 'MOIC (if it reaches exit)'],
+        ['irr', 'IRR (if it reaches exit)'],
+        ['cash_breakeven', 'Cash to Breakeven ($M)'],
+    ].map(([v, l]) => `<option value="${v}"${v === curMetric ? ' selected' : ''}>${l}</option>`).join('');
+    let html = `<thead>
+    <tr class="dd-a-grouphead">
+        <th colspan="5" class="dd-a-gh-blank"></th>
+        <th colspan="2" class="dd-a-gh-drivers">
+            <label class="dd-a-metric-label">Drivers of
+                <select id="dd-metric" onchange="_ddMetricChanged()">${metricOpts}</select>
+            </label>
+        </th>
+        <th class="dd-a-gh-blank"></th>
+    </tr>
+    <tr>
         <th class="dd-a-th-label">Assumption</th>
         <th>Current</th>
         <th class="dd-a-th-case">Conservative</th>
@@ -12131,6 +12154,12 @@ function _ddRenderComparison() {
 function _ddRenderSensitivity() {
     const s = _dd.result.sensitivity;
     const host = document.getElementById('dd-tornado');
+    // Echo the active metric by the driver-analysis section (the selector lives up in the table).
+    const echo = document.getElementById('dd-metric-echo');
+    if (echo) {
+        const cm = (document.getElementById('dd-metric') || {}).value || 'expected_moic';
+        echo.textContent = 'Showing drivers of ' + _ddMetricName(cm);
+    }
     // reset table cols
     DD_FIELDS.forEach(f => { if (f.key) {
         const se = document.getElementById('dd-sens-' + f.key); if (se) se.innerHTML = '<span class="dd-muted">—</span>';
