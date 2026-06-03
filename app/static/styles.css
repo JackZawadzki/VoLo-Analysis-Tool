@@ -5170,7 +5170,8 @@ h2 .info-tip-body {
 /* Two-way grid heatmap */
 .dd-grid-table { border-collapse:collapse; font-size:12px; margin-top:8px; }
 .dd-grid-table th { background:#f0f4ec; color:#3a5228; padding:5px 8px; border:1px solid #e5e7eb; font-weight:600; }
-.dd-grid-corner { font-size:10px; color:#6B7280; }
+.dd-grid-corner { font-size:10.5px; font-weight:700; color:#3a5228; text-transform:uppercase; letter-spacing:.03em; text-align:right; vertical-align:middle; }
+.dd-grid-axislabel { text-align:center; font-size:10.5px; font-weight:700; color:#3a5228; text-transform:uppercase; letter-spacing:.03em; background:#e7efdc; }
 .dd-grid-cell { padding:6px 10px; border:1px solid rgba(255,255,255,.5); color:#1f2937; text-align:center; font-variant-numeric:tabular-nums; }
 .dd-grid-base { outline:2px solid #1f2937; font-weight:700; }
 

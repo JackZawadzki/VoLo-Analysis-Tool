@@ -12199,11 +12199,13 @@ function _ddRenderTwoWay() {
     const axfmt = (v, u) => u === '$M' ? ('$' + v + 'M') : (u === 'x' ? (v + 'x') : (u === '%' ? (v + '%') : (u === 'yr' ? (v + ' yr') : v)));
     const opts = (sel) => (tw.eligible_axes || []).map(a => `<option value="${a.key}"${a.key === sel ? ' selected' : ''}>${a.label}</option>`).join('');
     let html = `<div class="dd-grid-axes">
-        <label>Rows ↓ <select onchange="_ddGridAxisChanged('y', this.value)">${opts(tw.y_key)}</select></label>
-        <label>Columns → <select onchange="_ddGridAxisChanged('x', this.value)">${opts(tw.x_key)}</select></label>
+        <label>Rows <select onchange="_ddGridAxisChanged('y', this.value)">${opts(tw.y_key)}</select></label>
+        <label>Columns <select onchange="_ddGridAxisChanged('x', this.value)">${opts(tw.x_key)}</select></label>
     </div>`;
-    html += `<p class="dd-field-hint">${_ddMetricName(tw.metric)} across ${tw.x_label} (→) and ${tw.y_label} (↓). Base = ${axfmt(tw.base_x, tw.x_unit)} / ${axfmt(tw.base_y, tw.y_unit)}.</p>`;
-    html += '<table class="dd-grid-table"><thead><tr><th class="dd-grid-corner">' + tw.y_label + ' ↓ / ' + tw.x_label + ' →</th>';
+    html += `<p class="dd-field-hint">${_ddMetricName(tw.metric)} — columns: <b>${tw.x_label}</b>, rows: <b>${tw.y_label}</b>. Base = ${axfmt(tw.base_x, tw.x_unit)} / ${axfmt(tw.base_y, tw.y_unit)}.</p>`;
+    html += '<table class="dd-grid-table"><thead>';
+    html += `<tr><th class="dd-grid-corner" rowspan="2">${tw.y_label}</th><th class="dd-grid-axislabel" colspan="${tw.x_axis.length}">${tw.x_label}</th></tr>`;
+    html += '<tr>';
     tw.x_axis.forEach(x => html += `<th>${axfmt(x, tw.x_unit)}</th>`);
     html += '</tr></thead><tbody>';
     tw.y_axis.forEach((y, ri) => {
