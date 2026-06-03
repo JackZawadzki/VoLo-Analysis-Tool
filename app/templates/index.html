@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=213">
+    <link rel="stylesheet" href="/static/styles.css?v=214">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
     <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
@@ -1431,7 +1431,7 @@
             <div class="dd-drivers-head">
                 <div class="dd-drivers-title">Driver analysis</div>
                 <label class="dd-metric-axis">Show drivers of
-                    <select id="dd-metric" onchange="_ddMaybeRerun()">
+                    <select id="dd-metric" onchange="_ddMetricChanged()">
                         <option value="expected_moic">Expected MOIC (risk-adjusted)</option>
                         <option value="moic">MOIC (if it reaches exit)</option>
                         <option value="irr">IRR (if it reaches exit)</option>
@@ -2329,7 +2329,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=212"></script>
+    <script src="/static/app.js?v=215"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->

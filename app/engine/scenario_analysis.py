@@ -907,40 +907,117 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
     }
 
 
+# Per-axis sweep specs for the two-way grid. kind=mult → base × factors; kind=add →
+# base + deltas (clamped). Used to sweep whichever two assumptions matter for the metric.
+_DD_AXIS_SPEC = {
+    "exit_multiple":          {"label": "Exit Multiple",          "unit": "x",  "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
+    "revenue_cagr_pct":       {"label": "Revenue CAGR",           "unit": "%",  "kind": "add",  "d": (-30, -15, 0, 15, 30), "min": 0},
+    "revenue_y1_m":           {"label": "Year-1 Revenue",         "unit": "$M", "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
+    "prob_success_pct":       {"label": "Probability of Success", "unit": "%",  "kind": "add",  "d": (-20, -10, 0, 10, 20), "min": 5, "max": 95},
+    "dilution_per_round_pct": {"label": "Dilution per Round",     "unit": "%",  "kind": "add",  "d": (-10, -5, 0, 5, 10), "min": 0, "max": 90},
+    "time_to_launch_years":   {"label": "Time to Launch",         "unit": "yr", "kind": "add",  "d": (-2, -1, 0, 1, 2), "min": 0, "int": True},
+    "gross_margin_end_pct":   {"label": "Gross Margin",           "unit": "%",  "kind": "add",  "d": (-10, -5, 0, 5, 10), "min": 0, "max": 95},
+    "opex_commercial_m":      {"label": "Operating Spend",        "unit": "$M", "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
+    "opex_prelaunch_m":       {"label": "Pre-launch Spend",       "unit": "$M", "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
+    "capex_pct_rev":          {"label": "Capex Intensity",        "unit": "%",  "kind": "add",  "d": (-3, -1.5, 0, 1.5, 3), "min": 0},
+}
+
+
+def _dd_axis_values(key: str, base_val: float) -> list:
+    """Five sweep points around base_val for the given axis (clamped, de-duped)."""
+    spec = _DD_AXIS_SPEC[key]
+    raw = ([base_val * f for f in spec["f"]] if spec["kind"] == "mult"
+           else [base_val + d for d in spec["d"]])
+    out, seen = [], set()
+    for v in raw:
+        lo, hi = spec.get("min"), spec.get("max")
+        if lo is not None:
+            v = max(lo, v)
+        if hi is not None:
+            v = min(hi, v)
+        v = round(v) if spec.get("int") else round(v, 2)
+        if v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+def _dd_grid_axes(metric: str, base: dict):
+    """(default_pair, eligible_keys) — the assumptions that meaningfully move `metric`,
+    most-useful default first. Inert levers are not offered (e.g. Exit Multiple and
+    Revenue CAGR are excluded for Cash to Breakeven; POS only enters Expected MOIC)."""
+    ebitda = (base.get("exit_multiple_type", "ev_revenue") or "ev_revenue") == "ev_ebitda"
+    if metric == "cash_breakeven":
+        elig = ["opex_commercial_m", "gross_margin_end_pct", "revenue_y1_m", "opex_prelaunch_m", "time_to_launch_years", "capex_pct_rev"]
+        default = ("opex_commercial_m", "gross_margin_end_pct")
+    elif metric == "expected_moic":
+        elig = ["prob_success_pct", "exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct"]
+        if ebitda:
+            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        default = ("prob_success_pct", "exit_multiple")
+    elif metric == "irr":
+        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct", "time_to_launch_years"]
+        if ebitda:
+            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        default = ("time_to_launch_years", "exit_multiple")
+    else:  # moic (if it reaches exit)
+        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct"]
+        if ebitda:
+            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        default = ("exit_multiple", "revenue_cagr_pct")
+    elig = [k for k in elig if k in _DD_AXIS_SPEC and not _is_na(base.get(k))]
+    return default, elig
+
+
 def _dd_two_way_grid(base: dict, deal_params: dict, recovery_moic: float,
-                     metric: str = "expected_moic") -> dict:
+                     metric: str = "expected_moic", x_key: str = None, y_key: str = None) -> dict:
     """
-    Excel-style data table: metric across Exit Multiple (x) × Revenue CAGR (y) —
-    the two assumptions a multiple-based return actually responds to. (Discount
-    rate is deliberately not an axis here: MOIC is exit-value based and does not
-    depend on the discount rate, which only drives the DCF value.)
+    Excel-style data table: the selected `metric` swept across two assumptions. Axes
+    are metric-aware — only levers that actually move the metric are offered, and the
+    default pair is the most insightful for it (Exit Multiple × Revenue CAGR for MOIC,
+    Operating Spend × Gross Margin for Cash to Breakeven, etc.).
     """
-    if not base or _is_na(base.get("exit_multiple")) or _is_na(base.get("revenue_cagr_pct")):
+    if not base:
         return {"available": False}
-    base_mult = _num(base, "exit_multiple", 10.0)
-    base_cagr = _num(base, "revenue_cagr_pct", 90.0)
-    x_axis = [round(base_mult * f, 2) for f in (0.6, 0.8, 1.0, 1.2, 1.4)]
-    y_axis = [round(base_cagr + d, 1) for d in (-30, -15, 0, 15, 30) if base_cagr + d > 0]
+    default, eligible = _dd_grid_axes(metric, base)
+    if len(eligible) < 2:
+        return {"available": False, "reason": "Not enough live axes for this metric."}
+    dx, dy = default
+    if dx not in eligible:
+        dx = eligible[0]
+    if dy not in eligible or dy == dx:
+        dy = next((k for k in eligible if k != dx), eligible[0])
+    x_key = x_key if x_key in eligible else dx
+    if y_key not in eligible or y_key == x_key:
+        y_key = dy if dy != x_key else next((k for k in eligible if k != x_key), dy)
+    base_x = _num(base, x_key, 0.0)
+    base_y = _num(base, y_key, 0.0)
+    x_axis = _dd_axis_values(x_key, base_x)
+    y_axis = _dd_axis_values(y_key, base_y)
     grid = []
-    for cagr in y_axis:
+    for yv in y_axis:
         row = []
-        for mult in x_axis:
+        for xv in x_axis:
             a = dict(base)
-            a["exit_multiple"] = mult
-            a["revenue_cagr_pct"] = cagr
+            a[x_key] = xv
+            a[y_key] = yv
             ret, _ = _dd_run_one(a, deal_params, recovery_moic)
             row.append(round(_dd_metric_value(ret, metric), 2))
         grid.append(row)
     return {
         "available": True, "metric": metric,
-        "x_label": "Exit Multiple", "y_label": "Revenue CAGR (%)",
+        "x_key": x_key, "y_key": y_key,
+        "x_label": _DD_AXIS_SPEC[x_key]["label"], "y_label": _DD_AXIS_SPEC[y_key]["label"],
+        "x_unit": _DD_AXIS_SPEC[x_key]["unit"], "y_unit": _DD_AXIS_SPEC[y_key]["unit"],
         "x_axis": x_axis, "y_axis": y_axis, "grid": grid,
-        "base_x": base_mult, "base_y": base_cagr,
+        "base_x": round(base_x, 2), "base_y": round(base_y, 2),
+        "eligible_axes": [{"key": k, "label": _DD_AXIS_SPEC[k]["label"]} for k in eligible],
     }
 
 
 def run_dd_analysis(scenarios: dict, deal_params: dict,
-                    recovery_moic: float = 0.0, primary_metric: str = "expected_moic") -> dict:
+                    recovery_moic: float = 0.0, primary_metric: str = "expected_moic",
+                    grid_x: str = None, grid_y: str = None) -> dict:
     """
     Interactive DD underwriting engine. `scenarios` is
     {conservative|base|best_case: assumptions}, where any field may be N/A
@@ -976,7 +1053,7 @@ def run_dd_analysis(scenarios: dict, deal_params: dict,
     }
 
     sensitivity = _dd_decompose(scenarios, deal_params, results, recovery_moic, primary_metric)
-    two_way = _dd_two_way_grid(scenarios.get("base") or {}, deal_params, recovery_moic, primary_metric)
+    two_way = _dd_two_way_grid(scenarios.get("base") or {}, deal_params, recovery_moic, primary_metric, grid_x, grid_y)
 
     return {
         "scenarios": results,

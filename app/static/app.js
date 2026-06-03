@@ -11616,6 +11616,7 @@ const _dd = {
     overview: null,
     seed: null,           // report-derived Cons/Base/Best presets (revenue + exit multiple)
     exitBasis: 'ev_ebitda',  // tracks the exit-basis selector to convert the multiple on toggle
+    gridX: null, gridY: null,  // selected Sensitivity-Grid axes (null → engine picks the metric's default pair)
     deal: { check_size_m: 2.0, pre_money_m: 15.0, round_size_m: null, exit_year: null },
     result: null,
     charts: {},
@@ -11698,6 +11699,19 @@ function _ddMetricFmt(v, m, signed) {
 
 // Re-run automatically when the metric/basis changes (so the view tracks the choice).
 function _ddMaybeRerun() { if (_dd.result) ddRun(); }
+
+// Changing the metric resets the grid axes so the engine picks the new metric's default pair.
+function _ddMetricChanged() { _dd.gridX = null; _dd.gridY = null; _ddMaybeRerun(); }
+
+// Pick a Sensitivity-Grid axis; if the choice collides with the other axis, swap them, then re-run.
+function _ddGridAxisChanged(which, val) {
+    const tw = (_dd.result && _dd.result.two_way) || {};
+    let x = tw.x_key, y = tw.y_key;
+    if (which === 'x') { if (val === y) y = x; x = val; }
+    else { if (val === x) x = y; y = val; }
+    _dd.gridX = x; _dd.gridY = y;
+    _ddMaybeRerun();
+}
 
 // Exit-basis toggle. The seeded multiple is an EV/EBITDA comps multiple, so EV/EBITDA is
 // the default. On switch, convert the exit-multiple cells via each case's exit EBITDA
@@ -12030,6 +12044,8 @@ function ddRun() {
         scenarios: _ddReadScenarios(),
         recovery_moic: recovery,
         primary_metric: metric,
+        grid_x: _dd.gridX,
+        grid_y: _dd.gridY,
     };
     const btn = document.getElementById('dd-run-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
@@ -12170,20 +12186,28 @@ function _ddRenderSensitivity() {
 function _ddRenderTwoWay() {
     const tw = _dd.result.two_way;
     const host = document.getElementById('dd-twoway');
-    if (!tw || !tw.available) { host.innerHTML = '<p class="dd-field-hint">Two-way grid needs a defined Exit Multiple and Revenue CAGR in the Base case.</p>'; return; }
+    if (!tw || !tw.available) { host.innerHTML = `<p class="dd-field-hint">${(tw && tw.reason) || 'No 2-D grid available for this metric.'}</p>`; return; }
     const flat = tw.grid.flat();
     const lo = Math.min(...flat), hi = Math.max(...flat);
+    const lowerBetter = (tw.metric === 'cash_breakeven');   // less cash burned = better
     const color = (v) => {
-        const t = hi > lo ? (v - lo) / (hi - lo) : 0.5;
+        let t = hi > lo ? (v - lo) / (hi - lo) : 0.5;
+        if (lowerBetter) t = 1 - t;                          // so green = less burn, red = more
         const r = Math.round(220 - t * 130), g = Math.round(150 + t * 70), b = Math.round(120 - t * 40);
         return `rgb(${r},${g},${b})`;
     };
-    let html = `<p class="dd-field-hint">${_ddMetricName(tw.metric)} across ${tw.x_label} (→) and ${tw.y_label} (↓). Base = ${tw.base_x}x / ${tw.base_y}%.</p>`;
+    const axfmt = (v, u) => u === '$M' ? ('$' + v + 'M') : (u === 'x' ? (v + 'x') : (u === '%' ? (v + '%') : (u === 'yr' ? (v + ' yr') : v)));
+    const opts = (sel) => (tw.eligible_axes || []).map(a => `<option value="${a.key}"${a.key === sel ? ' selected' : ''}>${a.label}</option>`).join('');
+    let html = `<div class="dd-grid-axes">
+        <label>Rows ↓ <select onchange="_ddGridAxisChanged('y', this.value)">${opts(tw.y_key)}</select></label>
+        <label>Columns → <select onchange="_ddGridAxisChanged('x', this.value)">${opts(tw.x_key)}</select></label>
+    </div>`;
+    html += `<p class="dd-field-hint">${_ddMetricName(tw.metric)} across ${tw.x_label} (→) and ${tw.y_label} (↓). Base = ${axfmt(tw.base_x, tw.x_unit)} / ${axfmt(tw.base_y, tw.y_unit)}.</p>`;
     html += '<table class="dd-grid-table"><thead><tr><th class="dd-grid-corner">' + tw.y_label + ' ↓ / ' + tw.x_label + ' →</th>';
-    tw.x_axis.forEach(x => html += `<th>${x}x</th>`);
+    tw.x_axis.forEach(x => html += `<th>${axfmt(x, tw.x_unit)}</th>`);
     html += '</tr></thead><tbody>';
     tw.y_axis.forEach((y, ri) => {
-        html += `<tr><th>${y}%</th>`;
+        html += `<tr><th>${axfmt(y, tw.y_unit)}</th>`;
         tw.grid[ri].forEach((v, ci) => {
             const isBase = Math.abs(tw.x_axis[ci] - tw.base_x) < 1e-6 && Math.abs(y - tw.base_y) < 1e-6;
             html += `<td class="dd-grid-cell ${isBase ? 'dd-grid-base' : ''}" style="background:${color(v)}">${_ddMetricFmt(v, tw.metric)}</td>`;

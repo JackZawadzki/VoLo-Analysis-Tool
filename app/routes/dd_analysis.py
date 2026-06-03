@@ -103,6 +103,8 @@ class DDAnalyzeRequest(BaseModel):
     scenarios: dict  # {conservative|base|best_case: assumptions_dict (nullable fields)}
     recovery_moic: float = 0.0
     primary_metric: str = "expected_moic"
+    grid_x: Optional[str] = None
+    grid_y: Optional[str] = None
 
 
 # ── Endpoints ──────────────────────────────────────────────────────
@@ -153,6 +155,7 @@ def analyze(req: DDAnalyzeRequest, user: CurrentUser = Depends(get_current_user)
             req.scenarios, deal_params,
             recovery_moic=req.recovery_moic,
             primary_metric=req.primary_metric,
+            grid_x=req.grid_x, grid_y=req.grid_y,
         )
         return {"status": "ok", "result": result}
     except Exception as e:
