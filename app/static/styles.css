@@ -4435,6 +4435,9 @@ h2 .info-tip-body {
 .dd-chart-card h4 { font-size: 0.82rem; font-weight: 700; color: var(--text-primary, #1a1a2e); margin: 0 0 12px; }
 .dd-chart-card canvas { width: 100% !important; height: 260px !important; }
 .dd-chart-wide { grid-column: span 2; }
+/* Compare-all mode: stack charts full-width so grouped bars / overlaid lines have room */
+.dd-charts-grid.dd-charts-stack { grid-template-columns: 1fr; }
+.dd-charts-grid.dd-charts-stack .dd-chart-card canvas { height: 320px !important; }
 @media (max-width: 900px) { .dd-charts-grid { grid-template-columns: 1fr; } .dd-chart-wide { grid-column: span 1; } }
 
 /* Comparison panel */
