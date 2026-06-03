@@ -278,10 +278,11 @@ table th {
     .nav-inner .nav-beta-group .nav-link-beta { padding: 6px 8px !important; }
 }
 @media (max-width: 1280px) {
-    .nav-inner { gap: 8px !important; }
-    .nav-inner .nav-link { padding: 5px 7px !important; font-size: 0.73rem !important; }
-    .nav-inner .nav-beta-group .nav-link-beta { padding: 5px 7px !important; font-size: 0.72rem !important; }
-    .nav-inner .nav-beta-tag { padding: 4px 7px !important; }
+    .nav-inner { gap: 7px !important; }
+    .nav-inner .nav-link { padding: 5px 6px !important; font-size: 0.72rem !important; }
+    .nav-inner .nav-beta-group { gap: 0 !important; }
+    .nav-inner .nav-beta-group .nav-link-beta { padding: 5px 6px !important; font-size: 0.71rem !important; }
+    .nav-inner .nav-beta-tag { padding: 4px 6px !important; }
 }
 
 /* In-tab informational banner shown at the top of beta tabs */
