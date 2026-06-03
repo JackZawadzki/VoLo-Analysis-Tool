@@ -47,10 +47,12 @@ from anthropic import Anthropic, RateLimitError, APIStatusError
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-# Opus 4.8 — the latest Opus (what Claude Code itself runs on). Env-overridable
-# so you can pin a different model (e.g. "claude-opus-4-7") without a code change
-# or redeploy if a run ever 404s on the ID.
+# Opus 4.8 — the latest Opus (what Claude Code itself runs on). Env-overridable.
+# If the API rejects this ID (e.g. the account/SDK doesn't expose 4.8 yet), the
+# engine probes at run start and AUTO-FALLS-BACK to FALLBACK_MODEL — so a run
+# always uses the best AVAILABLE Opus instead of dying on an unknown model name.
 MODEL = os.environ.get("TECH_DDR_MODEL", "claude-opus-4-8")
+FALLBACK_MODEL = os.environ.get("TECH_DDR_FALLBACK_MODEL", "claude-opus-4-7")
 
 
 def _envint(name: str, default: int) -> int:
@@ -202,6 +204,33 @@ def _create_with_backoff(client: Anthropic, **kwargs):
     raise RuntimeError("Anthropic call failed without a specific error.")
 
 
+def _resolve_model(client: Anthropic, preferred: str, fallback: str) -> str:
+    """Probe the preferred model with a 1-token call; if the API rejects the ID
+    (model not found / no access), fall back. Costs a fraction of a cent and
+    guarantees the run uses the best AVAILABLE Opus instead of failing on an
+    unknown model name."""
+    if not fallback or fallback == preferred:
+        return preferred
+    try:
+        client.messages.create(
+            model=preferred, max_tokens=1,
+            messages=[{"role": "user", "content": "ok"}],
+        )
+        return preferred
+    except APIStatusError as e:
+        if getattr(e, "status_code", None) in (403, 404):
+            print(f"[TechDDR] model '{preferred}' unavailable ({e.status_code}); "
+                  f"using fallback '{fallback}'", flush=True)
+            return fallback
+        return preferred
+    except Exception as e:
+        msg = str(e).lower()
+        if "model" in msg and ("not_found" in msg or "not found" in msg or "404" in msg):
+            print(f"[TechDDR] model '{preferred}' not found; using fallback '{fallback}'", flush=True)
+            return fallback
+        return preferred
+
+
 def _last_text(response) -> str:
     text = ""
     for block in response.content:
@@ -211,10 +240,10 @@ def _last_text(response) -> str:
 
 
 def _plain_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget,
-                temperature: float = 0.2) -> str:
+                model: str = MODEL, temperature: float = 0.2) -> str:
     """A single, tool-free Opus call (records token usage)."""
     resp = _create_with_backoff(
-        client, model=MODEL, max_tokens=max_tokens, temperature=temperature,
+        client, model=model, max_tokens=max_tokens, temperature=temperature,
         system=_SYSTEM, messages=[{"role": "user", "content": prompt}],
     )
     budget.record(resp)
@@ -222,7 +251,7 @@ def _plain_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget
 
 
 def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget,
-                 temperature: float = 0.3, on_search=None) -> str:
+                 model: str = MODEL, temperature: float = 0.3, on_search=None) -> str:
     """An agentic Opus + web_search call. Bounded by RESEARCH_MAX_ITERS, the
     web_search max_uses, and the token/time budget."""
     messages = [{"role": "user", "content": prompt}]
@@ -231,7 +260,7 @@ def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budge
         if budget.exhausted():
             break
         resp = _create_with_backoff(
-            client, model=MODEL, max_tokens=max_tokens, temperature=temperature,
+            client, model=model, max_tokens=max_tokens, temperature=temperature,
             system=_SYSTEM, tools=[WEB_SEARCH_TOOL], messages=messages,
         )
         budget.record(resp)
@@ -345,13 +374,14 @@ Return JSON only, no prose, no markdown fences:
 }}"""
 
 
-def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget) -> dict:
+def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget,
+                   model: str = MODEL) -> dict:
     text = text or ""
     if len(text) <= _SINGLE_DOC_CALL_CHARS:
         raw = _plain_call(
             client,
             _READ_PROMPT.format(part_note="", filename=filename, doc_text=text),
-            max_tokens=PASS1_OUT_TOKENS, budget=budget, temperature=0.1,
+            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model, temperature=0.1,
         )
         notes = _extract_json(raw)
         notes.setdefault("filename", filename)
@@ -372,7 +402,7 @@ def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget)
         raw = _plain_call(
             client,
             _READ_PROMPT.format(part_note=part_note, filename=filename, doc_text=ch),
-            max_tokens=PASS1_OUT_TOKENS, budget=budget, temperature=0.1,
+            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model, temperature=0.1,
         )
         partial.append(_extract_json(raw))
 
@@ -438,14 +468,14 @@ Return JSON only, no prose, no markdown fences:
 
 
 def _research(client: Anthropic, innovation_hint: str, doc_notes: list,
-              budget: _Budget, on_search=None) -> dict:
+              budget: _Budget, model: str = MODEL, on_search=None) -> dict:
     prompt = _RESEARCH_PROMPT.format(
         max_searches=WEB_SEARCH_MAX_USES,
         innovation_hint=(innovation_hint.strip() or "(none provided — infer the innovation from the documents)"),
         doc_notes=json.dumps(doc_notes, ensure_ascii=False)[:120_000],
     )
     raw = _search_call(client, prompt, max_tokens=PASS2_OUT_TOKENS, budget=budget,
-                       temperature=0.3, on_search=on_search)
+                       model=model, temperature=0.3, on_search=on_search)
     return _extract_json(raw) if raw else {}
 
 
@@ -470,6 +500,7 @@ REQUIREMENTS
 ------------
 - ANCHOR everything in the analyst's frame of reference above: it defines the application and commercial thesis. Frame the innovation, applications, and commercial implications around it; use the papers' science as the supporting/contradicting evidence.
 - Explain the technology in plain language first (use analogies and fundamentals), then add a deeper technical layer.
+- Do NOT repeat points across sections: cover each fact/claim ONCE, in the single most relevant section, and go deep there. Depth over breadth — never restate the same information in multiple sections.
 - Make the novelty assessment concrete and cite specific prior work from the research.
 - Rate evidence strength honestly; flag what still needs independent verification.
 - Cover commercial implications AND manufacturing scale-up / commercialization risk with severity-rated risks.
@@ -538,14 +569,14 @@ Return JSON only, no prose, no markdown fences:
 
 
 def _synthesize(client: Anthropic, innovation_hint: str, doc_notes: list,
-                research: dict, budget: _Budget) -> dict:
+                research: dict, budget: _Budget, model: str = MODEL) -> dict:
     prompt = _SYNTH_PROMPT.format(
         innovation_hint=(innovation_hint.strip() or "(none provided — infer the innovation from the documents)"),
         doc_notes=json.dumps(doc_notes, ensure_ascii=False)[:90_000],
         research=json.dumps(research, ensure_ascii=False)[:90_000],
     )
     raw = _plain_call(client, prompt, max_tokens=PASS3_OUT_TOKENS, budget=budget,
-                      temperature=0.3)
+                      model=model, temperature=0.3)
     return _extract_json(raw)
 
 
@@ -692,20 +723,31 @@ def analyze_tech(api_key: str, docs: list, innovation_hint: str = "",
     client = Anthropic(api_key=api_key, max_retries=1, timeout=_CALL_TIMEOUT)
     budget = _Budget()
 
+    # Resolve the model up front: prefer MODEL (Opus 4.8), but if the API rejects
+    # the ID, fall back automatically so the run never dies on the model name.
+    model = _resolve_model(client, MODEL, FALLBACK_MODEL)
+    _p(12, f"Using {model}. Reading documents...")
+
     # ── Pass 1: read each document in full (skips remaining docs if budget runs
     #            out; a single doc failing must not kill the run).
     n = len(docs)
     doc_notes = []
+    read_errors = []
     for i, d in enumerate(docs):
         if budget.exhausted():
             break
         _p(15 + int(35 * i / n), f"Reading document {i + 1}/{n}: {d['filename']}")
         try:
-            doc_notes.append(_read_document(client, d["filename"], d["text"], budget))
+            doc_notes.append(_read_document(client, d["filename"], d["text"], budget, model))
         except Exception as e:
+            read_errors.append(str(e))
             print(f"[TechDDR] read failed for {d['filename']}: {e}", flush=True)
     if not doc_notes:
-        return {"error": "Could not read any document before the time/cost budget was reached."}
+        # Surface the REAL cause (e.g. an API/model error) rather than blaming
+        # the budget — this only fires when document reads actually failed.
+        if read_errors:
+            return {"error": f"The AI model call failed while reading the document(s): {read_errors[0][:300]}"}
+        return {"error": "No document text could be read — try again, or use fewer/smaller PDFs."}
 
     # ── Pass 2: external grounding (OPTIONAL — skipped if budget exhausted).
     research = {}
@@ -721,7 +763,7 @@ def analyze_tech(api_key: str, docs: list, innovation_hint: str = "",
                f"Researching literature, datasets & related work ({search_seen['n']} searches)...")
 
         try:
-            research = _research(client, innovation_hint, doc_notes, budget, on_search=_on_search)
+            research = _research(client, innovation_hint, doc_notes, budget, model, on_search=_on_search)
         except Exception as e:
             print(f"[TechDDR] research pass failed: {e}", flush=True)
             research = {}
@@ -732,7 +774,7 @@ def analyze_tech(api_key: str, docs: list, innovation_hint: str = "",
     _p(74, "Synthesizing the technical due-diligence report...")
     report = None
     try:
-        report = _synthesize(client, innovation_hint, doc_notes, research, budget)
+        report = _synthesize(client, innovation_hint, doc_notes, research, budget, model)
     except Exception as e:
         print(f"[TechDDR] synthesis call failed: {e}", flush=True)
     if not report or report.get("error"):
@@ -744,7 +786,7 @@ def analyze_tech(api_key: str, docs: list, innovation_hint: str = "",
     report.setdefault("_research_sources",
                       research.get("sources", []) if isinstance(research, dict) else [])
     report["_doc_filenames"] = [d["filename"] for d in docs]
-    report["_usage"] = {**budget.summary(), "docs_submitted": n,
+    report["_usage"] = {**budget.summary(), "model": model, "docs_submitted": n,
                         "docs_read": len(doc_notes), "input_truncated": truncated}
     if not report.get("sources_consulted"):
         report["sources_consulted"] = len(set(report.get("_research_sources") or []))
