@@ -240,10 +240,11 @@ def _last_text(response) -> str:
 
 
 def _plain_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget,
-                model: str = MODEL, temperature: float = 0.2) -> str:
-    """A single, tool-free Opus call (records token usage)."""
+                model: str = MODEL) -> str:
+    """A single, tool-free Opus call (records token usage). NOTE: `temperature`
+    is intentionally not sent — Opus 4.8 deprecated it (returns 400)."""
     resp = _create_with_backoff(
-        client, model=model, max_tokens=max_tokens, temperature=temperature,
+        client, model=model, max_tokens=max_tokens,
         system=_SYSTEM, messages=[{"role": "user", "content": prompt}],
     )
     budget.record(resp)
@@ -251,16 +252,17 @@ def _plain_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget
 
 
 def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget,
-                 model: str = MODEL, temperature: float = 0.3, on_search=None) -> str:
+                 model: str = MODEL, on_search=None) -> str:
     """An agentic Opus + web_search call. Bounded by RESEARCH_MAX_ITERS, the
-    web_search max_uses, and the token/time budget."""
+    web_search max_uses, and the token/time budget. (`temperature` is not sent —
+    Opus 4.8 deprecated it.)"""
     messages = [{"role": "user", "content": prompt}]
     final_text = ""
     for _ in range(RESEARCH_MAX_ITERS):
         if budget.exhausted():
             break
         resp = _create_with_backoff(
-            client, model=model, max_tokens=max_tokens, temperature=temperature,
+            client, model=model, max_tokens=max_tokens,
             system=_SYSTEM, tools=[WEB_SEARCH_TOOL], messages=messages,
         )
         budget.record(resp)
@@ -381,7 +383,7 @@ def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget,
         raw = _plain_call(
             client,
             _READ_PROMPT.format(part_note="", filename=filename, doc_text=text),
-            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model, temperature=0.1,
+            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model,
         )
         notes = _extract_json(raw)
         notes.setdefault("filename", filename)
@@ -402,7 +404,7 @@ def _read_document(client: Anthropic, filename: str, text: str, budget: _Budget,
         raw = _plain_call(
             client,
             _READ_PROMPT.format(part_note=part_note, filename=filename, doc_text=ch),
-            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model, temperature=0.1,
+            max_tokens=PASS1_OUT_TOKENS, budget=budget, model=model,
         )
         partial.append(_extract_json(raw))
 
@@ -475,7 +477,7 @@ def _research(client: Anthropic, innovation_hint: str, doc_notes: list,
         doc_notes=json.dumps(doc_notes, ensure_ascii=False)[:120_000],
     )
     raw = _search_call(client, prompt, max_tokens=PASS2_OUT_TOKENS, budget=budget,
-                       model=model, temperature=0.3, on_search=on_search)
+                       model=model, on_search=on_search)
     return _extract_json(raw) if raw else {}
 
 
@@ -576,7 +578,7 @@ def _synthesize(client: Anthropic, innovation_hint: str, doc_notes: list,
         research=json.dumps(research, ensure_ascii=False)[:90_000],
     )
     raw = _plain_call(client, prompt, max_tokens=PASS3_OUT_TOKENS, budget=budget,
-                      model=model, temperature=0.3)
+                      model=model)
     return _extract_json(raw)
 
 
