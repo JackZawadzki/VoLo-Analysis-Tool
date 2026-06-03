@@ -5233,3 +5233,7 @@ h2 .info-tip-body {
 .dd-wf-colhead { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#9aa28c; border-bottom:1px solid #eef1ea; margin-bottom:2px; }
 .dd-wf-colhead .dd-wf-delta, .dd-wf-colhead .dd-wf-run { font-weight:600; }
 .dd-wf-resid { opacity:.7; font-style:italic; }
+
+/* ── DD: highlight the selected Primary-metric row in the comparison ── */
+#dd-comp-table tr.dd-row-primary td { background:#eef4e6; box-shadow: inset 3px 0 0 #5B7744; }
+.dd-primary-tag { font-size:10px; font-weight:700; color:#5B7744; text-transform:uppercase; letter-spacing:.04em; margin-left:6px; vertical-align:middle; }

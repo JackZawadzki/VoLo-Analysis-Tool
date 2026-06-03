@@ -11717,7 +11717,7 @@ function _ddApplyTRL() {
         };
         seed('prob_success_pct', p.prob_success_pct);
         seed('time_to_launch_years', p.time_to_launch_years);
-        if (note) note.textContent = `TRL ${p.trl} — seeded POS + launch (${p.label}). Implied exit-multiple haircut ≈ ${p.exit_multiple_discount}×.`;
+        if (note) note.textContent = `TRL ${p.trl} — seeded Probability of Success + Time-to-Launch (${p.label}).`;
         if (_dd.result) ddRun();
     }).catch(() => {});
 }
@@ -12046,6 +12046,9 @@ function _ddRenderHero() {
 // ── Scenario comparison table ─────────────────────────────────────
 function _ddRenderComparison() {
     const c = _dd.result.comparison;
+    // The selected Primary metric maps to one of these comparison rows — highlight it
+    // so the selector visibly drives the table (it also re-orients the tornado + grid).
+    const pmField = { expected_moic: 'expected_moic', moic: 'moic', irr: 'irr_pct', dcf_value: 'dcf_ev_m', cash_breakeven: 'peak_burn_m' }[_dd.result.primary_metric];
     const rows = [
         { label: 'Expected MOIC <span class="dd-help" title="Probability-weighted, risk-adjusted: (chance of reaching exit × the exit return) + (chance of failure × recovery). This is the headline number.">ⓘ</span>', f: 'expected_moic', suf: 'x', hi: true },
         { label: 'MOIC if it reaches exit <span class="dd-help" title="Return IF the company survives to a liquidity event (sale / IPO) instead of failing. NOT a win guarantee — a small or down exit can still be below 1.0x (you lose money). The Expected rows weight this by the probability of reaching exit.">ⓘ</span>', f: 'moic', suf: 'x' },
@@ -12069,7 +12072,9 @@ function _ddRenderComparison() {
             const disp = v == null ? '—' : (r.pre || '') + _ddFmt(v, r.dp) + (r.suf || '');
             return `<td class="dd-num">${disp}</td>`;
         }).join('');
-        html += `<tr class="${r.hi ? 'dd-row-total' : ''}"><td>${r.label}</td>${cells}</tr>`;
+        const cls = [r.hi ? 'dd-row-total' : '', r.f === pmField ? 'dd-row-primary' : ''].filter(Boolean).join(' ');
+        const tag = r.f === pmField ? ' <span class="dd-primary-tag">▶ primary</span>' : '';
+        html += `<tr class="${cls}"><td>${r.label}${tag}</td>${cells}</tr>`;
     }
     html += '</tbody>';
     document.getElementById('dd-comp-table').innerHTML = html;

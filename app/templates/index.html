@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=206">
+    <link rel="stylesheet" href="/static/styles.css?v=211">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=22">
     <!-- VoLo Mind (Beta) — isolated styles, prefixed `vm-` -->
@@ -1376,6 +1376,12 @@
     </div>
 
     <div id="dd-workspace" style="display:none;">
+        <details class="dd-method"><summary>What these controls do</summary><div class="dd-method-body">
+            <p><strong>Exit basis.</strong> How the company is valued at exit: the exit multiple is applied to yearly <em>Revenue</em> (EV/Revenue) or to <em>EBITDA</em>/profit (EV/EBITDA). Pick the one matching how this company will actually be valued. Note: the seeded multiple comes from <strong>EV/EBITDA</strong> comps, and revenue vs EBITDA multiples live on very different scales — set a multiple appropriate to the basis you choose.</p>
+            <p><strong>Primary metric.</strong> The outcome you're analyzing. It highlights the matching row in the comparison below and re-orients the "What Moves the Outcome" tornado and the Sensitivity Grid to that metric. (The comparison table always lists every metric regardless.)</p>
+            <p><strong>Recovery on failure.</strong> If the company fails, how much you get back as a multiple of capital invested (0 = total loss, 0.5 = half back). It only affects the risk-adjusted "Expected" figures, and matters most for low probability-of-success cases.</p>
+            <p><strong>TRL.</strong> Technology Readiness Level (1–9). Seeds Probability of Success and Time-to-Launch from calibrated tables (higher TRL = more likely, sooner). It only seeds those defaults — it is not itself a sensitivity driver.</p>
+        </div></details>
         <div class="dd-global-row">
             <label class="dd-global-field">Exit basis
                 <select id="dd-exit-type" onchange="_ddMaybeRerun()">
@@ -1393,7 +1399,7 @@
                 </select>
             </label>
             <label class="dd-global-field">Recovery on failure (× invested)
-                <input type="number" id="dd-recovery" value="0" step="0.25" min="0">
+                <input type="number" id="dd-recovery" value="0" step="0.25" min="0" onchange="_ddMaybeRerun()">
             </label>
             <label class="dd-global-field">TRL <span class="dd-help">(seeds defaults)</span>
                 <select id="dd-trl" onchange="_ddApplyTRL()">
@@ -2315,7 +2321,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=210"></script>
+    <script src="/static/app.js?v=211"></script>
     <!-- VoLo Mind (Beta) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/volomind.js?v=10"></script>
     <script>
