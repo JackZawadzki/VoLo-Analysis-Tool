@@ -330,7 +330,6 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
     else:
         prelaunch_rd_burn = rev_y1 * rd_start if rev_y1 > 0 else 0.5
         prelaunch_ga_burn = rev_y1 * ga_start * 0.5 if rev_y1 > 0 else 0.15
-    prelaunch_capex_burn = rev_y1 * capex_pct if rev_y1 > 0 else 0.1
 
     # Build P&L arrays
     cogs, gross_profit, gross_margin_pct_arr = [], [], []
@@ -340,6 +339,7 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
     capex_arr, delta_nwc, fcf = [], [], []
 
     prev_nwc = 0.0
+    prev_commercial_opex = 0.0   # running absolute opex, for the operating-leverage ramp
     for i, rev in enumerate(revenue):
         is_prelaunch = i < pre_launch
         # commercial_idx: position within the commercial phase
@@ -362,7 +362,7 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
             ebt_val = ebit_val
             tax_val = 0.0
             ni = ebt_val
-            capex_val = prelaunch_capex_burn
+            capex_val = 0.0   # pre-launch cash burn is captured entirely in opex_prelaunch_m
             nwc_val = 0.0
             dnwc = 0.0
             fcf_val = ni - capex_val
@@ -373,9 +373,18 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
             gp = rev * gm
 
             if use_abs_opex:
-                # Absolute plan: commercial-year-1 spend, ramping modestly each year,
-                # independent of revenue. Booked as R&D so total_opex stays correct.
-                rd = opex_commercial_m * ((1.0 + opex_ramp) ** commercial_idx)
+                # Absolute plan, revenue-INDEPENDENT (so a weak case can't look cheaper by
+                # selling less). Operating leverage: spend grows fast early but the growth
+                # DECELERATES toward terminal growth (like revenue), so the cost base flattens
+                # instead of compounding forever. Year-1 spend is unchanged and the early
+                # ramp is barely touched, so the cash trough (cash-to-breakeven) is preserved.
+                if commercial_idx == 0:
+                    rd = opex_commercial_m
+                else:
+                    opex_decay = max(0.0, 1.0 - commercial_idx / max(n_commercial, 1))
+                    opex_growth = terminal_g + (opex_ramp - terminal_g) * opex_decay
+                    rd = prev_commercial_opex * (1.0 + opex_growth)
+                prev_commercial_opex = rd
                 sm = 0.0
                 ga = 0.0
             else:
@@ -566,23 +575,36 @@ def compute_deal_returns(
     total_bridge_delay = 0.0
 
     if finance_mode == "burn_driven":
-        # Dilution is a CONSEQUENCE of the cash the company must raise to fund its burn,
-        # not a hand-entered number. Future rounds cover the peak cumulative-FCF trough
-        # beyond the current round, each priced at the company's projected enterprise value
-        # that year (floored at the entry post-money so we don't model sub-entry down-rounds).
-        # More burn → more capital raised → more dilution → lower exit ownership → lower MOIC,
-        # so operating assumptions (margin, opex, capex, timing) flow through to the return.
+        # Dilution is a CONSEQUENCE of the cash the company must raise to fund its burn, not a
+        # hand-entered number. Future rounds cover the peak cumulative-FCF trough beyond the
+        # current round, split across `future_rounds` raises. Each round is TIMED to when the
+        # burn accumulates (not spaced evenly in calendar time) and PRICED at the higher of
+        # (a) a modest round-over-round step-up on the entry valuation and (b) the company's
+        # revenue-based value that year — so a growing company prices off its progress while a
+        # slow one still steps up modestly instead of raising flat. More burn → more raised →
+        # more dilution → lower exit ownership → lower MOIC, so operating assumptions flow through.
         peak_burn = pnl.get("peak_cumulative_burn") or 0.0
         current_round = round_size_m or check_size_m
         future_need = max(0.0, peak_burn - current_round)
+        cum = pnl.get("cumulative_fcf") or []
         running = ownership
         nr = max(0, int(future_rounds or 0))
+        STEPUP = 1.3   # modest minimum valuation step-up per round
         if future_need > 1e-9 and nr > 0:
             per_round = future_need / nr
+
+            def _burn_year(frac):
+                # first year the cumulative burn reaches `frac` of the peak trough
+                target = frac * peak_burn
+                for k in range(len(cum)):
+                    if -cum[k] >= target:
+                        return k
+                return exit_idx
+
             for j in range(1, nr + 1):
-                yi = max(0, min(len(ev_arr) - 1, round(j * exit_idx / (nr + 1)))) if ev_arr else 0
-                company_ev = ev_arr[yi] if (ev_arr and 0 <= yi < len(ev_arr)) else 0.0
-                pre = max(post_money, company_ev)
+                yi = min(_burn_year(j / (nr + 1)), exit_idx)
+                market_ev = ev_arr[yi] if (ev_arr and 0 <= yi < len(ev_arr)) else 0.0
+                pre = max(post_money * (STEPUP ** j), market_ev)
                 dil = per_round / (pre + per_round) if (pre + per_round) > 0 else 0.0
                 before = running
                 running *= (1.0 - dil)
