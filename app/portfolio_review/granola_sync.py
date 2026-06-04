@@ -75,7 +75,12 @@ def _resolve_allowed_folders(custom: Optional[Iterable[str]] = None) -> set[str]
     else:
         env = os.environ.get("PORTFOLIO_GRANOLA_FOLDERS", "").strip()
         names = [n for n in (s.strip() for s in env.split(",")) if n] if env else list(_DEFAULT_ALLOWED_FOLDERS)
-    return {_normalize(n) for n in names if n}
+    norm = {_normalize(n) for n in names if n}
+    # "*" / "all" disables the folder filter entirely — scan EVERY Granola note
+    # and rely on company mention-matching to keep only the relevant ones.
+    if "*" in norm or "all" in norm:
+        return {"*"}
+    return norm
 
 
 def _normalize(s: str) -> str:
@@ -121,6 +126,8 @@ def _note_in_allowed_folders(folder_membership: list, allowed: set[str]) -> bool
     multiple folders (e.g. "Portco Updates" + a company-specific folder).
     Robust to a few alternative shapes — see _folder_entry_names.
     """
+    if "*" in allowed:        # wildcard — scan all folders (and folderless notes)
+        return True
     if not folder_membership:
         return False
     for f in folder_membership:
