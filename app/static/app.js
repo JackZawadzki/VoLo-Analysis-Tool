@@ -11615,7 +11615,7 @@ const _dd = {
     reportData: null,
     overview: null,
     seed: null,           // report-derived Cons/Base/Best presets (revenue + exit multiple)
-    exitBasis: 'ev_ebitda',  // tracks the exit-basis selector to convert the multiple on toggle
+    exitBasis: 'ev_revenue',  // tracks the exit-basis selector to convert the multiple on toggle
     gridX: null, gridY: null,  // selected Sensitivity-Grid axes (null → engine picks the metric's default pair)
     tornadoMode: 'shapley',    // 'shapley' (fair share, no interaction bar) or 'oat' (one-at-a-time)
     chartMode: 'single',       // detail charts: 'single' (selected case) or 'all' (overlay all 3 cases)
@@ -11645,10 +11645,9 @@ const DD_FIELDS = [
     { key: 'discount_rate_pct', label: 'Discount Rate (WACC)', unit: '%', step: 1, dft: [35, 25, 20] },
     { key: 'terminal_growth_pct', label: 'Terminal Growth', unit: '%', step: 0.5, dft: [2, 3, 3] },
     { key: 'exit_year', label: 'Exit Year', unit: 'yr · blank = end of horizon', step: 1, dft: ['', '', ''] },
-    { group: 'Risk & Dilution' },
+    { group: 'Risk & Financing' },
     { key: 'prob_success_pct', label: 'Probability of Success', unit: '%', step: 5, dft: [35, 60, 85] },
-    { key: 'dilution_per_round_pct', label: 'Dilution per Round', unit: '%', step: 1, dft: [25, 20, 15] },
-    { key: 'future_rounds', label: 'Future Financing Rounds', unit: '#', step: 1, dft: [2, 2, 2], driver: false },
+    { key: 'future_rounds', label: 'Future Financing Rounds', unit: '# · dilution is derived from the burn', step: 1, dft: [2, 2, 2] },
 ];
 const DD_CASES = ['conservative', 'base', 'best_case'];
 const DD_CASE_PREFIX = { conservative: 'c', base: 'b', best_case: 'x' };
@@ -11829,9 +11828,10 @@ function ddReportChanged() {
             _ddRenderDealStrip();
             ddBuildTable(_dd.seed.preset);       // per-field: underived fields fall back to presets
             _ddRenderSeedNote();
-            // The freshly-seeded multiple is an EV/EBITDA comps multiple → reset basis to match.
+            // We value on a revenue multiple by default (the seed converts the EV/EBITDA comp
+            // into a revenue multiple), so reset the basis to revenue on a fresh report.
             const _etSel = document.getElementById('dd-exit-type');
-            if (_etSel) { _etSel.value = 'ev_ebitda'; _dd.exitBasis = 'ev_ebitda'; }
+            if (_etSel) { _etSel.value = 'ev_revenue'; _dd.exitBasis = 'ev_revenue'; }
             // Seed the TRL selector (and POS/launch defaults) from the report's TRL.
             const trl = ov.trl || inp.trl;
             const trlSel = document.getElementById('dd-trl');
@@ -11916,14 +11916,21 @@ function _ddDeriveSeed() {
         }
     }
 
-    // Exit multiple: Conservative/Best = comps range ends, Base = midpoint.
+    // Exit multiple: the comps are EV/EBITDA, but we value on a REVENUE multiple by default.
+    // Convert with an assumed mature EBITDA margin (revenue-mult = EBITDA-mult × margin) so we
+    // never apply a ~15× EBITDA comp straight to revenue (which would ~2× over-state the exit).
+    // It's a starting estimate — the analyst edits the cell, and the basis toggle reconciles it
+    // exactly against each case's projected exit margin.
+    const EXIT_MARGIN_ASSUMPTION = 0.25;
     const rng = ov.exit_multiple_range || inp.exit_multiple_range;
     if (Array.isArray(rng) && rng.length === 2 && isFinite(rng[0]) && isFinite(rng[1])
             && Math.min(rng[0], rng[1]) > 0) {   // a non-positive multiple is nonsensical → fall back to preset
-        const lo = Math.min(rng[0], rng[1]), hi = Math.max(rng[0], rng[1]);
+        const lo = Math.min(rng[0], rng[1]) * EXIT_MARGIN_ASSUMPTION;
+        const hi = Math.max(rng[0], rng[1]) * EXIT_MARGIN_ASSUMPTION;
         out.preset.exit_multiple = [r2(lo), r2((lo + hi) / 2), r2(hi)];
         out.current.exit_multiple = r2((lo + hi) / 2);
         out.multipleSeeded = true;
+        out.multipleMargin = EXIT_MARGIN_ASSUMPTION;
     }
     return out;
 }
@@ -11935,10 +11942,11 @@ function _ddRenderSeedNote() {
     const s = _dd.seed || {};
     const withGrowth = s.current && s.current.revenue_cagr_pct != null ? ' &amp; growth rate' : '';
     let msg;
+    const multNote = `exit multiple from the comps range (converted from EV/EBITDA to a revenue multiple at an assumed ~${Math.round((s.multipleMargin || 0.25) * 100)}% mature margin — edit it for your view)`;
     if (s.revenueSeeded && s.multipleSeeded) {
-        msg = `<strong>Seeded from ${s.company}:</strong> Year-1 revenue${withGrowth} from the founder's financial model, and exit multiple from the comps range. Conservative &amp; Best are bands around these — edit any cell.`;
+        msg = `<strong>Seeded from ${s.company}:</strong> Year-1 revenue${withGrowth} from the founder's financial model, and ${multNote}. Conservative &amp; Best are bands around these — edit any cell.`;
     } else if (s.multipleSeeded) {
-        msg = `<strong>Seeded from ${s.company}:</strong> exit multiple from the comps range. No founder revenue in this report, so revenue uses generic defaults.`;
+        msg = `<strong>Seeded from ${s.company}:</strong> ${multNote}. No founder revenue in this report, so revenue uses generic defaults.`;
     } else if (s.revenueSeeded) {
         msg = `<strong>Seeded from ${s.company}:</strong> Year-1 revenue${withGrowth} from the founder's financial model.`;
     } else {

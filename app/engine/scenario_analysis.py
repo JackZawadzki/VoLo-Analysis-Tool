@@ -524,6 +524,7 @@ def compute_deal_returns(
     fundraising_plan: Optional[list] = None,
     prob_success: Optional[float] = None,
     recovery_moic: float = 0.0,
+    finance_mode: str = "fixed",
 ) -> dict:
     """
     Given a P&L projection, compute implied MOIC / IRR for the investor.
@@ -551,11 +552,45 @@ def compute_deal_returns(
     post_money = pre_money_m + (round_size_m or check_size_m)
     ownership = check_size_m / post_money
 
+    exit_idx = (int(exit_year) - 1) if exit_year else (pnl["n_years"] - 1)
+    exit_idx = max(0, min(exit_idx, pnl["n_years"] - 1))
+    ev_arr = pnl.get("ev_by_year") or []
+
     # ── Dilution walkthrough ──────────────────────────────────────
     dilution_schedule = []
     total_bridge_delay = 0.0
 
-    if fundraising_plan and len(fundraising_plan) > 0:
+    if finance_mode == "burn_driven":
+        # Dilution is a CONSEQUENCE of the cash the company must raise to fund its burn,
+        # not a hand-entered number. Future rounds cover the peak cumulative-FCF trough
+        # beyond the current round, each priced at the company's projected enterprise value
+        # that year (floored at the entry post-money so we don't model sub-entry down-rounds).
+        # More burn → more capital raised → more dilution → lower exit ownership → lower MOIC,
+        # so operating assumptions (margin, opex, capex, timing) flow through to the return.
+        peak_burn = pnl.get("peak_cumulative_burn") or 0.0
+        current_round = round_size_m or check_size_m
+        future_need = max(0.0, peak_burn - current_round)
+        running = ownership
+        nr = max(0, int(future_rounds or 0))
+        if future_need > 1e-9 and nr > 0:
+            per_round = future_need / nr
+            for j in range(1, nr + 1):
+                yi = max(0, min(len(ev_arr) - 1, round(j * exit_idx / (nr + 1)))) if ev_arr else 0
+                company_ev = ev_arr[yi] if (ev_arr and 0 <= yi < len(ev_arr)) else 0.0
+                pre = max(post_money, company_ev)
+                dil = per_round / (pre + per_round) if (pre + per_round) > 0 else 0.0
+                before = running
+                running *= (1.0 - dil)
+                dilution_schedule.append({
+                    "label": f"Round {j}", "type": "priced", "year": yi + 1,
+                    "raise_m": round(per_round, 2), "pre_money_m": round(pre, 2),
+                    "dilution_pct": round(dil * 100, 1),
+                    "ownership_before_pct": round(before * 100, 2),
+                    "ownership_after_pct": round(running * 100, 2),
+                })
+        exit_ownership = running
+        dilution_factor = (exit_ownership / ownership) if ownership > 0 else 0.0
+    elif fundraising_plan and len(fundraising_plan) > 0:
         # Detailed round-by-round dilution
         running_ownership = ownership
         for rnd in fundraising_plan:
@@ -600,11 +635,7 @@ def compute_deal_returns(
         dilution_factor = (1.0 - dilution_per_round_pct / 100.0) ** future_rounds
         exit_ownership = ownership * dilution_factor
 
-    exit_idx = (int(exit_year) - 1) if exit_year else (pnl["n_years"] - 1)
-    exit_idx = max(0, min(exit_idx, pnl["n_years"] - 1))
-
     # Value the company at the CHOSEN exit year (falls back to terminal-year EV).
-    ev_arr = pnl.get("ev_by_year")
     exit_ev = ev_arr[exit_idx] if (ev_arr and 0 <= exit_idx < len(ev_arr)) else pnl["exit_year_ev"]
     investor_proceeds = exit_ev * exit_ownership
 
@@ -749,7 +780,8 @@ _DD_DRIVERS = [
     ("revenue_y1_m", "Year-1 Revenue"),
     ("revenue_cagr_pct", "Revenue CAGR"),
     ("time_to_launch_years", "Time to Launch"),
-    ("gross_margin_end_pct", "Gross Margin"),
+    ("gross_margin_start_pct", "Gross Margin (start)"),
+    ("gross_margin_end_pct", "Gross Margin (mature)"),
     ("opex_commercial_m", "Operating Spend (commercial)"),
     ("opex_prelaunch_m", "Operating Spend (pre-launch)"),
     ("capex_pct_rev", "Capex Intensity"),
@@ -757,7 +789,7 @@ _DD_DRIVERS = [
     ("discount_rate_pct", "Discount Rate"),
     ("terminal_growth_pct", "Terminal Growth"),
     ("prob_success_pct", "Probability of Success"),
-    ("dilution_per_round_pct", "Dilution per Round"),
+    ("future_rounds", "Future Rounds"),
     ("exit_year", "Exit Year"),
 ]
 
@@ -788,6 +820,7 @@ def _dd_run_one(assumptions: dict, deal_params: dict, recovery_moic: float) -> d
         fundraising_plan=assumptions.get("fundraising_plan"),
         prob_success=(None if _is_na(ps) else _num(assumptions, "prob_success_pct", 100.0) / 100.0),
         recovery_moic=_num(assumptions, "recovery_moic", recovery_moic),
+        finance_mode="burn_driven",
     ), pnl
 
 
@@ -936,7 +969,6 @@ _DD_AXIS_SPEC = {
     "revenue_cagr_pct":       {"label": "Revenue CAGR",           "unit": "%",  "kind": "add",  "d": (-30, -15, 0, 15, 30), "min": 0},
     "revenue_y1_m":           {"label": "Year-1 Revenue",         "unit": "$M", "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
     "prob_success_pct":       {"label": "Probability of Success", "unit": "%",  "kind": "add",  "d": (-20, -10, 0, 10, 20), "min": 5, "max": 95},
-    "dilution_per_round_pct": {"label": "Dilution per Round",     "unit": "%",  "kind": "add",  "d": (-10, -5, 0, 5, 10), "min": 0, "max": 90},
     "time_to_launch_years":   {"label": "Time to Launch",         "unit": "yr", "kind": "add",  "d": (-2, -1, 0, 1, 2), "min": 0, "int": True},
     "gross_margin_end_pct":   {"label": "Gross Margin",           "unit": "%",  "kind": "add",  "d": (-10, -5, 0, 5, 10), "min": 0, "max": 95},
     "opex_commercial_m":      {"label": "Operating Spend",        "unit": "$M", "kind": "mult", "f": (0.6, 0.8, 1.0, 1.2, 1.4)},
@@ -968,24 +1000,20 @@ def _dd_grid_axes(metric: str, base: dict):
     """(default_pair, eligible_keys) — the assumptions that meaningfully move `metric`,
     most-useful default first. Inert levers are not offered (e.g. Exit Multiple and
     Revenue CAGR are excluded for Cash to Breakeven; POS only enters Expected MOIC)."""
-    ebitda = (base.get("exit_multiple_type", "ev_revenue") or "ev_revenue") == "ev_ebitda"
+    # With burn-driven dilution, operating assumptions (opex, margin, capex) move the return
+    # metrics through the funding-need → dilution channel regardless of exit basis, so they're
+    # eligible grid axes for every metric (not just EV/EBITDA).
     if metric == "cash_breakeven":
         elig = ["opex_commercial_m", "gross_margin_end_pct", "revenue_y1_m", "opex_prelaunch_m", "time_to_launch_years", "capex_pct_rev"]
         default = ("opex_commercial_m", "gross_margin_end_pct")
     elif metric == "expected_moic":
-        elig = ["prob_success_pct", "exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct"]
-        if ebitda:
-            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        elig = ["prob_success_pct", "exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "opex_commercial_m", "gross_margin_end_pct"]
         default = ("prob_success_pct", "exit_multiple")
     elif metric == "irr":
-        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct", "time_to_launch_years"]
-        if ebitda:
-            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "opex_commercial_m", "gross_margin_end_pct", "time_to_launch_years"]
         default = ("time_to_launch_years", "exit_multiple")
     else:  # moic (if it reaches exit)
-        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "dilution_per_round_pct"]
-        if ebitda:
-            elig += ["gross_margin_end_pct", "opex_commercial_m"]
+        elig = ["exit_multiple", "revenue_cagr_pct", "revenue_y1_m", "opex_commercial_m", "gross_margin_end_pct"]
         default = ("exit_multiple", "revenue_cagr_pct")
     elig = [k for k in elig if k in _DD_AXIS_SPEC and not _is_na(base.get(k))]
     return default, elig

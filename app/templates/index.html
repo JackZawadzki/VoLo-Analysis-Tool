@@ -1441,10 +1441,10 @@
             </div></details>
             <div class="dd-setup-row">
                 <label class="dd-setup-field">Exit multiple applies to
-                    <span class="dd-help" title="The seeded multiple is an EV/EBITDA comps multiple, so EBITDA is the default. Switching to Revenue auto-converts it to the equivalent revenue multiple (× exit margin) so the valuation stays consistent — then edit it for a revenue-multiple thesis.">ⓘ</span>
+                    <span class="dd-help" title="Default is a revenue multiple — appropriate for the pre-profit growth companies we back (it's always positive, so it works in every case). The seed converts the EV/EBITDA comp into a revenue multiple (revenue-mult = EBITDA-mult × margin). Switch to EBITDA for a genuinely profitable company; the toggle reconciles the two exactly via each case's projected exit margin.">ⓘ</span>
                     <select id="dd-exit-type" onchange="_ddExitBasisChanged()">
-                        <option value="ev_ebitda" selected>EBITDA (profit)</option>
-                        <option value="ev_revenue">Revenue (sales)</option>
+                        <option value="ev_revenue" selected>Revenue (sales)</option>
+                        <option value="ev_ebitda">EBITDA (profit)</option>
                     </select>
                 </label>
                 <label class="dd-setup-field">Recovery on failure
@@ -2375,7 +2375,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=226"></script>
+    <script src="/static/app.js?v=229"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=11"></script>
