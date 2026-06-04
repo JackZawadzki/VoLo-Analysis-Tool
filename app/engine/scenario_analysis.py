@@ -250,8 +250,13 @@ def build_pnl_projection(assumptions: dict, custom_revenues: Optional[list] = No
     Returns a dict with year-by-year arrays for every line item plus
     summary valuation metrics.
     """
-    n_commercial = int(_num(assumptions, "projection_years", 10))
+    # `projection_years` is the TOTAL horizon (a shared hold period). Pre-launch years eat
+    # INTO it, so a slower-to-launch case gets fewer commercial years rather than a longer
+    # overall timeline — keeping all three cases on a common hold so their IRRs compare.
+    horizon = int(_num(assumptions, "projection_years", 10))
     pre_launch = int(_num(assumptions, "time_to_launch_years", 0))
+    pre_launch = max(0, min(pre_launch, horizon - 1))   # always leave >= 1 commercial year
+    n_commercial = max(1, horizon - pre_launch)
     rev_y1 = _num(assumptions, "revenue_y1_m", 1.0)
     cagr = _num(assumptions, "revenue_cagr_pct", 100.0) / 100.0
 

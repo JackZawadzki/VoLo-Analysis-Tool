@@ -1542,7 +1542,7 @@
                 <ol class="dd-calc-steps">
                     <li class="dd-calc-step">
                         <h4>Revenue trajectory</h4>
-                        <p>Revenue starts at the Year-1 value and compounds at the CAGR, but the growth rate <em>decays</em> toward terminal growth as the company matures (hyper-growth doesn't last forever). Any pre-launch years (Time to Commercial Launch) are zero-revenue burn years tacked on the front.</p>
+                        <p>Revenue starts at the Year-1 value and compounds at the CAGR, but the growth rate <em>decays</em> toward terminal growth as the company matures (hyper-growth doesn't last forever). The Hold / Horizon is a fixed total shared by all three cases; pre-launch years (Time to Commercial Launch) are zero-revenue burn years that eat <em>into</em> that horizon — so a slower-to-launch case gets fewer commercial years on the same hold, rather than a longer timeline. That keeps the three cases comparable.</p>
                         <div class="dd-calc-formula">growth<sub>t</sub> = terminal_growth + (CAGR − terminal_growth) × (1 − t / N)<br>revenue<sub>t</sub> = revenue<sub>t−1</sub> × (1 + growth<sub>t</sub>)</div>
                     </li>
                     <li class="dd-calc-step">
@@ -2434,7 +2434,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=229"></script>
+    <script src="/static/app.js?v=231"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=11"></script>
