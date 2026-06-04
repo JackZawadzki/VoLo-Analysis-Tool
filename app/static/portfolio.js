@@ -162,6 +162,7 @@
           <a class="pf-btn pf-btn-ghost pf-hidden" id="pf-connect" target="_blank" rel="noopener">Connect Drive</a>
           <button class="pf-btn" id="pf-sync">Sync from Drive + Granola</button>
           <button class="pf-btn pf-btn-ghost" id="pf-genall">Generate all updates</button>
+          <button class="pf-btn pf-btn-ghost pf-btn-xs pf-danger-btn" id="pf-reset" title="Delete the entire portfolio roster + documents and start over">Reset…</button>
         </div>
       </div>
       <div id="pf-admin-msg"></div>
@@ -189,6 +190,21 @@
     if (sync) sync.addEventListener('click', adminSync);
     const genall = document.getElementById('pf-genall');
     if (genall) genall.addEventListener('click', adminGenAll);
+    const reset = document.getElementById('pf-reset');
+    if (reset) reset.addEventListener('click', adminReset);
+  }
+
+  async function adminReset() {
+    const msg = document.getElementById('pf-admin-msg');
+    if (prompt('This DELETES the entire portfolio roster + all ingested documents/notes, then you re-sync from scratch. (Your Google Drive is NOT touched.) Type DELETE to confirm:') !== 'DELETE') return;
+    msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> Wiping the portfolio…</div>`;
+    try {
+      const r = await postJSON(`${API}/companies/reset?confirm=DELETE`);
+      msg.innerHTML = `<div class="pf-ok pf-tiny">Deleted ${r.deleted_companies || 0} companies. Now click <strong>Sync from Drive + Granola</strong> to repopulate cleanly.</div>`;
+      setTimeout(renderDashboard, 1500);
+    } catch (e) {
+      msg.innerHTML = `<div class="pf-gen-err">Reset failed: ${esc(e.message)}</div>`;
+    }
   }
 
   async function adminSync() {

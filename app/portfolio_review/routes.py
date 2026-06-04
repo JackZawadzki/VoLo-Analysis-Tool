@@ -1498,6 +1498,35 @@ def api_pr_purge_hidden(user: CurrentUser = Depends(get_current_user)):
         conn.close()
 
 
+@api.post("/companies/reset")
+def api_pr_reset(confirm: str = Query("", description="Must equal 'DELETE' to proceed."),
+                 user: CurrentUser = Depends(get_current_user)):
+    """FULL WIPE of the portfolio (roster + documents + notes + updates + scores)
+    so the next Sync rebuilds it from scratch. Admin only; requires confirm=DELETE.
+    Audit/cursor tables (pr_imports, pr_sync_state, pr_granola_syncs) are left
+    intact. Drive itself is never touched — only this app's mirror."""
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can reset the portfolio")
+    if confirm != "DELETE":
+        raise HTTPException(400, "Pass confirm=DELETE to wipe the portfolio.")
+    conn = get_db()
+    try:
+        n = conn.execute("SELECT COUNT(*) AS n FROM pr_companies").fetchone()["n"]
+        for tbl in ("pr_documents", "pr_company_folders", "pr_investments", "pr_returns",
+                    "pr_derisking_scores", "pr_traction_snapshots", "pr_company_updates",
+                    "pr_granola_notes", "pr_financial_snapshots", "pr_financials",
+                    "pr_valuations", "pr_follow_ons", "pr_board_seats", "pr_comments",
+                    "pr_companies"):
+            try:
+                conn.execute(f"DELETE FROM {tbl}")
+            except Exception:
+                pass  # table may not exist on older schemas
+        conn.commit()
+        return {"deleted_companies": n}
+    finally:
+        conn.close()
+
+
 @api.post("/sync-all")
 def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
                     user: CurrentUser = Depends(get_current_user)):
