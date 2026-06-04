@@ -161,7 +161,7 @@
         <div class="pf-admin-btns">
           <a class="pf-btn pf-btn-ghost pf-hidden" id="pf-connect" target="_blank" rel="noopener">Connect Drive</a>
           <button class="pf-btn" id="pf-sync">Sync from Drive + Granola</button>
-          <button class="pf-btn pf-btn-ghost" id="pf-genall">Generate all updates</button>
+          <button class="pf-btn pf-btn-ghost" id="pf-genall">Process all (sync + update)</button>
           <button class="pf-btn pf-btn-ghost pf-btn-xs pf-danger-btn" id="pf-reset" title="Delete the entire portfolio roster + documents and start over">Reset…</button>
         </div>
       </div>
@@ -228,20 +228,34 @@
     }
   }
 
+  // Bulk: for EVERY (non-hidden) company, pull its Drive docs THEN run the LLM —
+  // one company at a time so no single request times out; resumable if interrupted.
   async function adminGenAll() {
-    if (!confirm('Generate AI updates for every company with documents? Runs the LLM sequentially — can take several minutes.')) return;
     const msg = document.getElementById('pf-admin-msg');
     const btn = document.getElementById('pf-genall');
-    btn.disabled = true; const t = btn.textContent; btn.textContent = 'Generating…';
-    msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> Generating updates across the portfolio…</div>`;
-    try {
-      const r = await postJSON(`${API}/generate-all`);
-      msg.innerHTML = `<div class="pf-ok pf-tiny">Generated ${r.generated || 0} updates${(r.errors && r.errors.length) ? ` · ${r.errors.length} failed` : ''}.</div>`;
-      setTimeout(renderDashboard, 1200);
-    } catch (e) {
-      btn.disabled = false; btn.textContent = t;
-      msg.innerHTML = `<div class="pf-gen-err">Generate-all failed: ${esc(e.message)}</div>`;
+    const sync = document.getElementById('pf-sync');
+    let data;
+    try { data = await getJSON(`${API}/overview`); }
+    catch (e) { msg.innerHTML = `<div class="pf-gen-err">${esc(e.message)}</div>`; return; }
+    const cos = (data.holdings || []).map(h => ({ id: h.id, name: h.name }));
+    if (!cos.length) { msg.innerHTML = `<div class="pf-ok pf-tiny">No companies yet — run Sync first.</div>`; return; }
+    if (!confirm(`Pull documents + generate an update for all ${cos.length} companies? Runs per company (ingest + LLM) — can take a while for a full portfolio. Keep this tab open.`)) return;
+    btn.disabled = true; if (sync) sync.disabled = true;
+    const label = btn.textContent;
+    let done = 0, docs = 0; const failed = [];
+    for (const co of cos) {
+      btn.textContent = `Processing ${done + 1}/${cos.length}…`;
+      msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> ${done + 1}/${cos.length} — ${esc(co.name)}: pulling documents + writing update…</div>`;
+      try {
+        const ing = await postJSON(`${API}/company/${co.id}/ingest`).catch(() => ({}));
+        docs += (ing && ing.documents_upserted) || 0;
+        await postJSON(`${API}/company/${co.id}/generate-update`);
+      } catch (e) { failed.push(co.name); }
+      done++;
     }
+    btn.disabled = false; if (sync) sync.disabled = false; btn.textContent = label;
+    msg.innerHTML = `<div class="pf-ok pf-tiny">Processed ${done} companies · ${docs} documents synced${failed.length ? ` · ${failed.length} failed (${esc(failed.slice(0, 5).join(', '))})` : ''}.</div>`;
+    setTimeout(renderDashboard, 1500);
   }
 
   function attentionStrip(flags) {

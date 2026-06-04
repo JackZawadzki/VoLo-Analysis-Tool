@@ -192,9 +192,17 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
 
 
 # ── Document ingestion for one company ────────────────────────────────────────
-def ingest_company(conn, service, company_id: int, max_files: int = 60) -> dict:
-    """Walk every linked Drive folder for one company, extract text from each
-    supported file, and upsert into pr_documents. Also mirrors Granola notes."""
+# Per-company file cap (override via PORTFOLIO_MAX_FILES_PER_COMPANY). Each
+# company's folder is walked RECURSIVELY; only text-extractable files (PDF/DOCX/
+# PPTX/XLSX/TXT/…) are pulled — images/videos with no text are skipped.
+_MAX_FILES_PER_COMPANY = int(os.environ.get("PORTFOLIO_MAX_FILES_PER_COMPANY", "200") or 200)
+
+
+def ingest_company(conn, service, company_id: int, max_files: int = _MAX_FILES_PER_COMPANY) -> dict:
+    """Walk every linked Drive folder for one company (recursively), extract text
+    from each supported file, and upsert into pr_documents. Also mirrors Granola
+    notes. Skips files already pulled at the same Drive modifiedTime, so it's
+    resumable + cheap on re-sync. Idempotent (content-hash)."""
     folders = conn.execute(
         "SELECT * FROM pr_company_folders WHERE company_id=?", (company_id,)).fetchall()
     seen, inserted, changed, skipped = 0, 0, 0, 0
@@ -206,6 +214,15 @@ def ingest_company(conn, service, company_id: int, max_files: int = 60) -> dict:
             continue
         for fmeta in files[:max_files]:
             seen += 1
+            # Skip files already pulled at this Drive modifiedTime — makes
+            # re-sync cheap and lets a timed-out ingest resume where it left off.
+            prev = conn.execute(
+                "SELECT source_modified FROM pr_documents "
+                "WHERE company_id=? AND source='drive' AND source_doc_id=?",
+                (company_id, fmeta["id"])).fetchone()
+            if prev and prev["source_modified"] and prev["source_modified"] == fmeta.get("modifiedTime"):
+                skipped += 1
+                continue
             text = _download_and_extract_text(service, fmeta)
             if not text:
                 skipped += 1
