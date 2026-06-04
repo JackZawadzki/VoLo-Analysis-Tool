@@ -1227,7 +1227,7 @@ def api_pr_overview(user: CurrentUser = Depends(get_current_user)):
     conn = get_db()
     try:
         today = date.today().isoformat()
-        companies = conn.execute("SELECT * FROM pr_companies ORDER BY name").fetchall()
+        companies = conn.execute("SELECT * FROM pr_companies WHERE excluded=0 ORDER BY name").fetchall()
         holdings, attention = [], []
         totals = {"n_companies": 0, "n_reviewed": 0, "n_docs": 0, "n_flags": 0}
 
@@ -1286,7 +1286,10 @@ def api_pr_overview(user: CurrentUser = Depends(get_current_user)):
         _lvl = {"alert": 0, "warn": 1, "info": 2}
         attention.sort(key=lambda f: _lvl.get(f.get("level"), 9))
         holdings.sort(key=lambda h: (_lvl.get(h["top_flag_level"], 9), h["name"]))
-        return {"totals": totals, "holdings": holdings, "attention": attention}
+        hidden = [{"id": r["id"], "name": r["name"]} for r in conn.execute(
+            "SELECT id, name FROM pr_companies WHERE excluded=1 ORDER BY name").fetchall()]
+        totals["n_hidden"] = len(hidden)
+        return {"totals": totals, "holdings": holdings, "attention": attention, "hidden": hidden}
     finally:
         conn.close()
 
@@ -1440,6 +1443,27 @@ def api_pr_ingest_company(company_id: int, user: CurrentUser = Depends(get_curre
     except Exception as e:
         logger.exception("Ingestion failed")
         raise HTTPException(500, f"Ingestion failed: {e}")
+    finally:
+        conn.close()
+
+
+@api.post("/company/{company_id}/exclude")
+def api_pr_exclude_company(company_id: int,
+                           excluded: bool = Query(True, description="True = hide (not a company); False = restore."),
+                           user: CurrentUser = Depends(get_current_user)):
+    """Manual override of the AI roster classification: hide a folder that isn't a
+    real portfolio company, or restore one. Non-destructive — flips the excluded
+    flag only; documents are never deleted."""
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can change the roster")
+    conn = get_db()
+    try:
+        if not conn.execute("SELECT id FROM pr_companies WHERE id=?", (company_id,)).fetchone():
+            raise HTTPException(404, f"Company {company_id} not found")
+        conn.execute("UPDATE pr_companies SET excluded=? WHERE id=?",
+                     (1 if excluded else 0, company_id))
+        conn.commit()
+        return {"company_id": company_id, "excluded": bool(excluded)}
     finally:
         conn.close()
 

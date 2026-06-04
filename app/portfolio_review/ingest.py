@@ -23,8 +23,10 @@ deployed environment; locally we seed pr_documents directly (see seed_demo).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
+import re
 from typing import Optional
 
 from .drive_scan import (
@@ -99,55 +101,81 @@ def is_company_folder(name: str) -> bool:
     return not any(s in low for s in _SKIP_NAME_SUBSTRINGS)
 
 
-def _prune_non_company_rows(conn) -> int:
-    """Remove auto-created pr_companies that are clearly non-company folders AND
-    carry no data yet (no documents/investments/returns/derisking/traction/
-    updates). Cleans up folders mis-imported before the filter existed."""
-    pruned = 0
-    for r in conn.execute("SELECT id, name FROM pr_companies").fetchall():
-        if is_company_folder(r["name"]):
-            continue
-        has_data = False
-        for tbl in ("pr_documents", "pr_investments", "pr_returns",
-                    "pr_derisking_scores", "pr_traction_snapshots", "pr_company_updates"):
-            try:
-                if conn.execute(f"SELECT 1 FROM {tbl} WHERE company_id=? LIMIT 1", (r["id"],)).fetchone():
-                    has_data = True
-                    break
-            except Exception:
-                pass
-        if not has_data:
-            conn.execute("DELETE FROM pr_companies WHERE id=?", (r["id"],))  # cascades folders
-            pruned += 1
-    return pruned
+def classify_company_folders(names: list[str]) -> dict[str, bool]:
+    """Decide which Drive subfolder names are actual portfolio COMPANIES vs
+    organizational / admin / thematic folders, using one cheap LLM call over all
+    the names. Falls back to the name heuristic (is_company_folder) when the LLM
+    is unavailable. A "_"-prefixed or template/dummy folder is never a company
+    regardless of the model (belt-and-suspenders). Returns {name: is_company}."""
+    clean = [n for n in (names or []) if n and n.strip()]
+    heur = {n: is_company_folder(n) for n in clean}
+    if not clean:
+        return heur
+    try:
+        from anthropic import Anthropic
+        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        if not key:
+            return heur
+        model = os.environ.get("PORTFOLIO_MAP_MODEL", "claude-haiku-4-5-20251001")
+        prompt = (
+            "These are subfolder names under a venture fund's 'Portfolio Company Information' "
+            "Drive folder. Classify each as a PORTFOLIO COMPANY (a startup the fund invested in) "
+            "or NOT a company (an organizational, administrative, thematic, or template folder — "
+            "e.g. 'Cap Tables', '2024 Projections & Updates', 'Board Best Practices', "
+            "'Fundraising Updates', 'Portfolio Operations Team Folder', template/dummy folders).\n"
+            'Return ONLY JSON: {"companies": ["<exact names that ARE companies>"]}.\n\n'
+            "FOLDERS:\n" + "\n".join(f"- {n}" for n in clean))
+        client = Anthropic(api_key=key)
+        msg = client.messages.create(model=model, max_tokens=2000,
+                                     messages=[{"role": "user", "content": prompt}])
+        raw = "".join(b.text for b in msg.content if hasattr(b, "text")).strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```\s*$", "", raw)
+        m = re.search(r"\{.*\}", raw, re.DOTALL)
+        companies = set(json.loads(m.group()).get("companies", [])) if m else set()
+        if not companies:
+            return heur
+        # The LLM decides; the heuristic vetoes obvious admin folders ("_", template).
+        return {n: (n in companies) and is_company_folder(n) for n in clean}
+    except Exception as e:
+        logger.warning("folder classification LLM failed (%s); using name heuristic", e)
+        return heur
 
 
 def discover_companies(conn, service, root_folder_id: str, default_fund: str = "Fund I") -> dict:
-    """List immediate subfolders of the portfolio root and upsert one
-    pr_companies row per *company* folder (skipping admin/template folders).
-    The Drive folder is the source of truth for the roster — NOT deal_reports.
-    Document extraction is NOT done here — that's per-company, on demand."""
+    """List immediate subfolders of the portfolio root and record one
+    pr_companies row per folder, with an LLM deciding which are portfolio
+    COMPANIES (excluded=0) vs organizational folders (excluded=1).
+
+    NON-DESTRUCTIVE: folders judged non-company are HIDDEN, never deleted, so no
+    documents are ever lost and the classification is reversible (manual override
+    via the exclude toggle). The Drive folder is the roster's source of truth —
+    NOT deal_reports. Document extraction is per-company, on demand."""
     subfolders = list_subfolders(service, root_folder_id)
-    created, updated, skipped = 0, 0, 0
-    skipped_names = []
+    classification = classify_company_folders([(f.get("name") or "").strip() for f in subfolders])
+    created, updated, excluded = 0, 0, 0
+    excluded_names = []
     for f in subfolders:
         name = (f.get("name") or "").strip()
         if not name:
             continue
-        if not is_company_folder(name):
-            skipped += 1
-            if len(skipped_names) < 15:
-                skipped_names.append(name)
-            continue
+        is_co = bool(classification.get(name, is_company_folder(name)))
+        flag = 0 if is_co else 1
+        if not is_co and len(excluded_names) < 20:
+            excluded_names.append(name)
         existing = conn.execute("SELECT id FROM pr_companies WHERE name=?", (name,)).fetchone()
         if existing:
             cid = existing["id"]
-            updated += 1
+            conn.execute("UPDATE pr_companies SET excluded=? WHERE id=?", (flag, cid))
+            updated += 1 if is_co else 0
         else:
             cur = conn.execute(
-                "INSERT INTO pr_companies (name, fund) VALUES (?, ?)", (name, default_fund))
+                "INSERT INTO pr_companies (name, fund, excluded) VALUES (?, ?, ?)",
+                (name, default_fund, flag))
             cid = cur.lastrowid
-            created += 1
+            created += 1 if is_co else 0
+        excluded += 0 if is_co else 1
         link = conn.execute(
             "SELECT id FROM pr_company_folders WHERE company_id=? AND folder_type='current'", (cid,)
         ).fetchone()
@@ -155,13 +183,12 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
             conn.execute(
                 """INSERT INTO pr_company_folders
                    (company_id, folder_type, drive_folder_id, drive_folder_name, parent_folder_id, match_confidence)
-                   VALUES (?, 'current', ?, ?, ?, 'exact')""",
+                   VALUES (?, 'current', ?, ?, ?, 'auto')""",
                 (cid, f["id"], name, root_folder_id))
-    pruned = _prune_non_company_rows(conn)
     conn.commit()
     return {"subfolders": len(subfolders), "companies_created": created,
-            "companies_updated": updated, "skipped": skipped,
-            "skipped_examples": skipped_names, "pruned": pruned}
+            "companies_updated": updated, "excluded": excluded,
+            "excluded_examples": excluded_names}
 
 
 # ── Document ingestion for one company ────────────────────────────────────────

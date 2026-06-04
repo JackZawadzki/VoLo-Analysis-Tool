@@ -5475,6 +5475,11 @@ h2 .info-tip-body {
 }
 .pf-btn-ghost:hover { background: var(--bg-white); border-color: var(--accent); }
 #pf-admin-msg:not(:empty) { margin-top: 10px; }
+.pf-btn-xs { padding: 4px 9px !important; font-size: 0.72rem; }
+.pf-linklike { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.pf-linklike:hover { text-decoration: underline; }
+.pf-hidden-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 2px; border-bottom: 1px solid var(--border-light); font-size: 0.85rem; color: var(--text-secondary); }
+.pf-hidden-row:last-child { border-bottom: none; }
 
 /* ── DD: Sensitivity-Grid axis pickers ── */
 .dd-grid-axes { display:flex; flex-wrap:wrap; gap:16px; margin:0 0 10px; }

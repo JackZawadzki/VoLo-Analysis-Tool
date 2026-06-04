@@ -79,6 +79,7 @@
       ]);
     } catch (e) { el.innerHTML = errorState(e); return; }
     const admin = !!(me && me.role === 'admin');
+    _admin = admin;
 
     const t = data.totals || {};
     const kpis = [
@@ -101,12 +102,37 @@
       ${adminToolbar(admin)}
       ${attentionStrip(data.attention || [])}
       ${holdingsTable(data.holdings || [])}
+      ${admin ? hiddenCard(data.hidden || []) : ''}
     `;
     el.onclick = (e) => {
       const node = e.target.closest('[data-company]');
       if (node && el.contains(node)) renderCompany(Number(node.dataset.company));
     };
     if (admin) wireAdmin();
+    el.querySelectorAll('[data-restore]').forEach(b =>
+      b.addEventListener('click', (e) => { e.stopPropagation(); restoreCompany(Number(b.dataset.restore)); }));
+    const _ht = document.getElementById('pf-hidden-toggle');
+    if (_ht) _ht.addEventListener('click', () => {
+      const list = document.getElementById('pf-hidden-list');
+      if (list) list.classList.toggle('pf-hidden');
+    });
+  }
+
+  // Folders the AI judged not to be portfolio companies — hidden, restorable.
+  function hiddenCard(hidden) {
+    if (!hidden || !hidden.length) return '';
+    const items = hidden.map(h => `
+      <div class="pf-hidden-row"><span>${esc(h.name)}</span>
+        <button class="pf-btn pf-btn-ghost pf-btn-xs" data-restore="${h.id}">Restore as company</button></div>`).join('');
+    return `<div class="pf-card">
+      <div class="pf-card-title"><button class="pf-linklike" id="pf-hidden-toggle">${hidden.length} hidden folder${hidden.length === 1 ? '' : 's'} — judged not companies (click to review) &#9662;</button></div>
+      <div id="pf-hidden-list" class="pf-hidden">${items}</div>
+    </div>`;
+  }
+
+  async function restoreCompany(id) {
+    try { await postJSON(`${API}/company/${id}/exclude?excluded=false`); renderDashboard(); }
+    catch (e) { alert('Restore failed: ' + e.message); }
   }
 
   // ── admin ingestion controls ──────────────────────────────────────────────
@@ -163,8 +189,8 @@
       const gn = (g.associations_new != null || g.associations_updated != null)
         ? `${(g.associations_new || 0) + (g.associations_updated || 0)} notes linked`
         : (g.status === 'failed' ? 'failed (check GRANOLA_API_KEY)' : (g.status || '—'));
-      const skip = d.skipped ? `, skipped ${d.skipped} non-company folders` : '';
-      const prune = d.pruned ? `, removed ${d.pruned} old` : '';
+      const skip = d.excluded ? `, hid ${d.excluded} non-company folder${d.excluded === 1 ? '' : 's'}` : '';
+      const prune = '';
       msg.innerHTML = `<div class="pf-ok pf-tiny">Roster: ${d.companies_created || 0} new / ${d.companies_updated || 0} existing companies${skip}${prune}. Granola: ${esc(gn)}. Open a company → <strong>Sync &amp; update</strong> to pull its documents.</div>`;
       setTimeout(renderDashboard, 1800);
     } catch (e) {
@@ -268,6 +294,7 @@
         </div>
         <div class="pf-detail-right">
           <div class="pf-detail-q">${quartileBadge(latestQ.quartile, latestQ.is_exited)}<div class="pf-kpi-label">derisking</div></div>
+          ${_admin ? `<button class="pf-btn pf-btn-ghost pf-btn-xs" id="pf-hide" title="Hide — this folder isn't a portfolio company (reversible)">Not a company</button>` : ''}
           ${nDocs ? `<button class="pf-btn pf-btn-ghost" id="pf-regen" title="Re-run the LLM on the ${nDocs} already-synced documents (no re-pull)">Regenerate</button>` : ''}
           <button class="pf-btn" id="pf-gen">${nDocs ? 'Sync &amp; update' : 'Sync from Drive &amp; update'}</button>
         </div>
@@ -286,6 +313,12 @@
     document.getElementById('pf-gen').addEventListener('click', () => syncAndUpdate(id));
     const _regen = document.getElementById('pf-regen');
     if (_regen) _regen.addEventListener('click', () => regenerateOnly(id));
+    const _hide = document.getElementById('pf-hide');
+    if (_hide) _hide.addEventListener('click', async () => {
+      if (!confirm("Hide this from the portfolio? It's removed from the roster (reversible — restore from the dashboard). No documents are deleted.")) return;
+      try { await postJSON(`${API}/company/${id}/exclude?excluded=true`); renderDashboard(); }
+      catch (e) { alert('Failed: ' + e.message); }
+    });
   }
 
   // Primary action: pull THIS company's Drive folder (+ linked Granola notes)
@@ -461,6 +494,7 @@
 
   // ── boot / switchTab hook ─────────────────────────────────────────────────
   let _rendered = false;
+  let _admin = false;
   function showPortfolio() {
     if (!root()) return;
     if (!_rendered) { _rendered = true; renderDashboard(); }

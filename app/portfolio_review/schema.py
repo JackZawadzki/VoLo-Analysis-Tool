@@ -440,6 +440,11 @@ def apply_schema(conn) -> None:
         "ALTER TABLE pr_documents ADD COLUMN extracted_hash TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_documents ADD COLUMN extract_model  TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE pr_documents ADD COLUMN extracted_at   TEXT",
+        # Roster curation: an LLM classifies each Drive subfolder as a portfolio
+        # company or an org/admin folder. Non-companies are HIDDEN (excluded=1),
+        # never deleted, so nothing is lost and a misclassification is reversible
+        # via a manual toggle.
+        "ALTER TABLE pr_companies ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0",
     ]
     for stmt in _MIGRATIONS:
         try:
