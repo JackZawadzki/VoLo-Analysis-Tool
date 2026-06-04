@@ -1250,6 +1250,17 @@ def api_pr_overview(user: CurrentUser = Depends(get_current_user)):
             ret = _row_to_dict(ret) if ret else {}
 
             flags = _pr_company_flags(cd, tr, der, ret, today)
+            # "New documents since last review" — nudges a re-sync. Uses the
+            # ingest timestamp vs the last update time; the per-doc map caches by
+            # content hash, so re-syncing only re-reads the changed files.
+            new_docs = 0
+            if upd and upd.get("created_at"):
+                new_docs = conn.execute(
+                    "SELECT COUNT(*) AS n FROM pr_documents WHERE company_id=? AND fetched_at > ?",
+                    (cid, upd["created_at"])).fetchone()["n"]
+            if new_docs:
+                flags.insert(0, {"kind": "newdocs", "level": "info",
+                                 "label": f"{new_docs} new document{'s' if new_docs != 1 else ''} since last review"})
             for f in flags:
                 attention.append({**f, "company_id": cid, "company_name": cd["name"]})
 
@@ -1267,7 +1278,7 @@ def api_pr_overview(user: CurrentUser = Depends(get_current_user)):
                 "fundraising_status": tr.get("fundraising_status"),
                 "derisk_quartile": der.get("quartile"), "derisk_total": der.get("total_score"),
                 "headline": upd.get("headline"), "last_update_at": upd.get("created_at"),
-                "reviewed": bool(upd), "n_docs": ndocs,
+                "reviewed": bool(upd), "n_docs": ndocs, "new_docs": new_docs,
                 "multiple": ret.get("multiple"), "fmv": ret.get("fmv"),
                 "n_flags": len(flags), "top_flag_level": (flags[0]["level"] if flags else None),
             })

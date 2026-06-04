@@ -433,6 +433,13 @@ def apply_schema(conn) -> None:
         # alongside the scores. The UI reads this to show the audit trail
         # under each "Why?" expand.
         "ALTER TABLE pr_derisking_scores ADD COLUMN manifest_json    TEXT NOT NULL DEFAULT ''",
+        # Per-document signal extraction ("map" step), cached on the document and
+        # keyed by content hash so a re-sync only re-reads new/changed files. The
+        # reduce step synthesizes these into the company update.
+        "ALTER TABLE pr_documents ADD COLUMN extract_json   TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_documents ADD COLUMN extracted_hash TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_documents ADD COLUMN extract_model  TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE pr_documents ADD COLUMN extracted_at   TEXT",
     ]
     for stmt in _MIGRATIONS:
         try:

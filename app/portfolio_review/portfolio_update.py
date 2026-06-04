@@ -1,22 +1,22 @@
 """
-Two-pass agentic company update.
+Per-document extraction -> company synthesis (MAP then REDUCE).
 
-Reads a company's documents from pr_documents (Drive files + Granola notes,
-ingested by `ingest.py`) and produces a structured update that mirrors the
-firm's existing portfolio-review format:
-  • Traction  — commercial status, revenue, runway, milestones, what changed
-  • Derisking — the 7 dimensions scored +1 / 0 / −1, with reasoning + evidence
+Rationale: so nothing important is missed, every file and every note is read ON
+ITS OWN (the "map" step) and turned into a compact structured "signal sheet" —
+the metrics it reports, risks it flags, milestones, status, and per-dimension
+derisking signals, each with a verbatim quote + date. Those per-document signals
+are cached on the document (keyed by its content hash), so a re-sync only
+re-reads files that are NEW or CHANGED — which is also the basis for the
+"new since last review" flag.
 
-Pass 1 (recon)   sees only document METADATA (title, type, date, snippet) and
-                 picks the handful of documents worth reading in full, and flags
-                 evidence gaps. Cheap.
-Pass 2 (extract) reads the selected documents' full text and emits the
-                 structured update, with every derisking score citing the
-                 document ids that justify it.
+The "reduce" step then synthesizes ALL of a company's signal sheets (compact, so
+nothing is dropped to a token budget) into the company update: the latest
+traction metrics, the 7 derisking dimension scores with evidence, a headline,
+and a narrative. Because the reduce sees a digest of EVERY document, a number
+that changed or a risk flagged in any single file flows through mechanically.
 
-Persists: pr_company_updates (the run + audit trail), pr_traction_snapshots,
-and pr_derisking_scores (evaluator='llm'). The score itself is relative to the
-firm's thesis, not absolute.
+Models: a cheap/fast model maps each document; a stronger model does the
+synthesis. Override via PORTFOLIO_MAP_MODEL / PORTFOLIO_REDUCE_MODEL.
 """
 
 from __future__ import annotations
@@ -25,19 +25,22 @@ import json
 import logging
 import os
 import re
-from typing import Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from .derisking import DIMENSIONS, DIMENSION_KEYS, score_company
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+MAP_MODEL = os.environ.get("PORTFOLIO_MAP_MODEL", "claude-haiku-4-5-20251001")
+REDUCE_MODEL = os.environ.get("PORTFOLIO_REDUCE_MODEL", "claude-sonnet-4-6")
+FALLBACK_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = REDUCE_MODEL  # back-compat: the route passes `model=` for reduce
 
-MAX_INVENTORY = 80          # docs shown to the recon pass
-MAX_SELECTED = 14           # docs read in full by pass 2
-MAX_CHARS_PER_DOC = 18_000
-MAX_PASS2_CHARS = 160_000
-SNIPPET_CHARS = 320
+MAX_DOCS = 150               # safety cap on docs processed per run
+MAX_CHARS_PER_DOC = 24_000   # per-document text fed to the map step
+MAX_MAP_WORKERS = 6          # parallel map calls
+MAX_SIGNAL_CHARS = 240_000   # safety cap on the reduce input
 
 
 # ── LLM plumbing ──────────────────────────────────────────────────────────────
@@ -52,12 +55,23 @@ def _client():
 def _call(client, model: str, prompt: str, max_tokens: int) -> str:
     msg = client.messages.create(
         model=model, max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+        messages=[{"role": "user", "content": prompt}])
     return "".join(b.text for b in msg.content if hasattr(b, "text"))
 
 
-def _parse_json(raw: str) -> dict:
+def _call_fb(client, model: str, prompt: str, max_tokens: int) -> str:
+    """Call `model`; on any error (e.g. model id unavailable) retry once with
+    the known-good fallback model."""
+    try:
+        return _call(client, model, prompt, max_tokens)
+    except Exception as e:
+        if model != FALLBACK_MODEL:
+            logger.warning("model %s failed (%s); falling back to %s", model, e, FALLBACK_MODEL)
+            return _call(client, FALLBACK_MODEL, prompt, max_tokens)
+        raise
+
+
+def _parse_json(raw: str) -> Any:
     s = (raw or "").strip()
     if s.startswith("```"):
         s = re.sub(r"^```(?:json)?\s*", "", s)
@@ -65,102 +79,133 @@ def _parse_json(raw: str) -> dict:
     try:
         return json.loads(s)
     except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", s, re.DOTALL)
+        m = re.search(r"[\{\[].*[\}\]]", s, re.DOTALL)
         if m:
             return json.loads(m.group())
-        raise ValueError(f"LLM did not return JSON: {s[:300]}")
+        raise ValueError(f"LLM did not return JSON: {s[:200]}")
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
-_RECON_PROMPT = """You are triaging documents for a venture firm's portfolio review of {company}.
-Below is an INVENTORY of the documents we hold (metadata + a short snippet only).
+_DIM_KEYS = ", ".join(DIMENSION_KEYS)
 
-Pick the documents most worth reading in full to assess (a) current traction
-(revenue, customers, runway, milestones) and (b) the 7 derisking dimensions:
-{dims}.
-
-Prefer the most recent board decks, investor updates, financial models, and
-meeting notes. Return ONLY JSON:
+_MAP_PROMPT = """Extract structured signals from ONE document for {company}'s portfolio review.
+Capture every concrete fact a VC would track. Do NOT infer beyond the text. Use null / [] when absent.
+Return ONLY JSON:
 {{
-  "selected_doc_ids": [<up to {max_selected} integer ids, most useful first>],
-  "rationale": {{ "<doc_id>": "<why, one short phrase>" }},
-  "evidence_gaps": ["<dimensions or metrics with weak/no evidence>"]
+  "doc_date": "<the date this doc reflects (YYYY-MM or YYYY-MM-DD) or null>",
+  "summary": "<1-2 sentences>",
+  "metrics": [{{"name":"revenue|arr|runway_months|cash|customers|burn|growth_pct|headcount|other","label":"<as written>","value":<number or null>,"unit":"USD|months|count|pct|other","period":"<e.g. FY2025>","quote":"<verbatim>"}}],
+  "status": {{"commercial_status":"Pre-Rev|Pilot|Commercial|Hyperscale or null","fundraising":"<e.g. 'Raising Series B' or null>"}},
+  "milestones": [{{"text":"<what happened>","quote":"<verbatim>"}}],
+  "risks": [{{"text":"<the risk>","severity":"low|medium|high","dimension":"<one of: {dims} or null>","quote":"<verbatim>"}}],
+  "derisking_signals": [{{"dimension":"<one of: {dims}>","direction":"up|down|flat","reason":"<one phrase>","quote":"<verbatim>"}}]
 }}
 
-INVENTORY:
-{inventory}
+DOCUMENT [{doc_id}] "{title}" ({doc_type} - {source} - {date}):
+{text}
 """
 
-_EXTRACT_PROMPT = """You are writing the portfolio-review update for {company} for a venture firm.
-Use ONLY the documents below; each is tagged with [id]. Cite ids as evidence.
-
-Return ONLY JSON with this exact shape:
+_REDUCE_PROMPT = """Write {company}'s portfolio-review update from the per-document signal sheets below.
+Every file and note has ALREADY been read individually — the JSON is their digest, nothing was skipped.
+Synthesize. Use the MOST RECENT value for each metric. Cite the [doc ids] that justify each derisking score.
+Return ONLY JSON:
 {{
   "headline": "<=12 words: the single most important change since last review",
-  "summary": "<2-4 sentences on overall traction and trajectory>",
+  "summary": "<2-4 sentences on traction + trajectory>",
   "traction": {{
-    "commercial_status": "Pre-Rev" | "Pilot" | "Commercial" | "Hyperscale",
-    "revenue_current": <USD number or null>,
-    "revenue_prior": <USD number or null>,
-    "revenue_period": "<e.g. 'FY2025 vs FY2024'>",
-    "revenue_growth_pct": <decimal, 0.40 = 40%, or null>,
-    "arr_current": <USD or null>,
-    "customer_count": <int or null>,
-    "runway_months": <number or null>,
-    "fundraising_status": "<e.g. 'Raising Series B' or '' if none>",
-    "notable_milestones": "<1-3 sentences>",
-    "change_vs_baseline": "<1-2 sentences on what changed since investment>",
-    "confidence": "low" | "medium" | "high"
+    "commercial_status": "Pre-Rev|Pilot|Commercial|Hyperscale",
+    "revenue_current": <USD or null>, "revenue_prior": <USD or null>,
+    "revenue_period": "<e.g. 'FY2025 vs FY2024'>", "revenue_growth_pct": <decimal, 0.4 = 40%, or null>,
+    "arr_current": <USD or null>, "customer_count": <int or null>, "runway_months": <number or null>,
+    "fundraising_status": "<e.g. 'Raising Series B' or ''>",
+    "notable_milestones": "<1-3 sentences>", "change_vs_baseline": "<1-2 sentences vs investment>",
+    "confidence": "low|medium|high"
   }},
-  "derisking": {{
-    "<dimension_key>": {{ "score": -1 | 0 | 1, "reasoning": "<one sentence>", "evidence": [<doc ids>] }}
-  }}
+  "derisking": {{ "<dimension_key>": {{"score": -1|0|1, "reasoning": "<one sentence>", "evidence": [<doc ids>]}} }},
+  "evidence_gaps": ["<dimensions/metrics with weak or no evidence>"]
 }}
 
-Derisking dimensions (use these exact keys), score +1 = substantially derisked
-for the company's stage, -1 = remains a major risk, 0 = neutral/partial:
+Derisking dimensions (use these exact keys; +1 = substantially derisked for the company's stage, -1 = remains a major risk):
 {dims_detail}
 
-DOCUMENTS:
-{documents}
+SIGNAL SHEETS (one per document):
+{sheets}
 """
 
 
-# ── Data loading ──────────────────────────────────────────────────────────────
-def _load_docs(conn, company_id: int) -> list[dict]:
+# ── MAP: per-document signal extraction (cached on the document) ──────────────
+def _map_one(client, company_name: str, doc: dict) -> dict:
+    text = (doc.get("body_text") or "")[:MAX_CHARS_PER_DOC]
+    prompt = _MAP_PROMPT.format(
+        company=company_name, dims=_DIM_KEYS, doc_id=doc["id"],
+        title=doc.get("title") or "Untitled", doc_type=doc.get("doc_type") or "other",
+        source=doc.get("source") or "drive", date=doc.get("occurred_at") or "n.d.", text=text)
+    try:
+        out = _parse_json(_call_fb(client, MAP_MODEL, prompt, 1500))
+        return out if isinstance(out, dict) else {}
+    except Exception as e:
+        logger.warning("map failed for doc %s: %s", doc.get("id"), e)
+        return {"summary": "", "metrics": [], "risks": [], "milestones": [],
+                "derisking_signals": [], "status": {}, "_error": str(e)}
+
+
+def ensure_extractions(conn, client, company_id: int, company_name: str) -> tuple[list[dict], int]:
+    """Map every document that hasn't been mapped at its current content hash.
+    Caches the result on pr_documents.extract_json. Returns (docs_with_extraction,
+    n_newly_mapped). LLM calls run in parallel; DB writes stay on this thread."""
     rows = conn.execute(
-        "SELECT id, source, title, doc_type, occurred_at, body_text "
-        "FROM pr_documents WHERE company_id=? ORDER BY COALESCE(occurred_at,'') DESC, id DESC",
-        (company_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
+        "SELECT id, source, title, doc_type, occurred_at, body_text, content_hash, "
+        "extract_json, extracted_hash FROM pr_documents WHERE company_id=? "
+        "ORDER BY COALESCE(occurred_at,'') DESC, id DESC LIMIT ?",
+        (company_id, MAX_DOCS)).fetchall()
+    docs = [dict(r) for r in rows]
+
+    todo = [d for d in docs if not d.get("extract_json")
+            or (d.get("extracted_hash") or "") != (d.get("content_hash") or "")]
+
+    mapped: dict[int, dict] = {}
+    if todo:
+        workers = min(MAX_MAP_WORKERS, len(todo))
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            results = list(ex.map(lambda dd: _map_one(client, company_name, dd), todo))
+        for d, res in zip(todo, results):
+            mapped[d["id"]] = res
+            conn.execute(
+                "UPDATE pr_documents SET extract_json=?, extracted_hash=?, extract_model=?, "
+                "extracted_at=datetime('now') WHERE id=?",
+                (json.dumps(res), d.get("content_hash") or "", MAP_MODEL, d["id"]))
+        conn.commit()
+
+    out = []
+    for d in docs:
+        if d["id"] in mapped:
+            ext = mapped[d["id"]]
+        else:
+            try:
+                ext = json.loads(d.get("extract_json") or "{}")
+            except Exception:
+                ext = {}
+        out.append({"id": d["id"], "title": d.get("title"), "doc_type": d.get("doc_type"),
+                    "source": d.get("source"), "date": d.get("occurred_at"), "extraction": ext})
+    return out, len(todo)
 
 
-def _inventory_block(docs: list[dict]) -> str:
-    lines = []
-    for d in docs[:MAX_INVENTORY]:
-        snippet = re.sub(r"\s+", " ", (d.get("body_text") or "")[:SNIPPET_CHARS]).strip()
-        lines.append(
-            f"[{d['id']}] ({d.get('doc_type') or 'other'} · {d.get('source')} · "
-            f"{d.get('occurred_at') or 'n.d.'}) {d.get('title') or 'Untitled'} — {snippet}")
-    return "\n".join(lines)
-
-
-def _documents_block(docs_by_id: dict[int, dict], selected: list[int]) -> tuple[str, list[int]]:
-    blocks, used, total = [], [], 0
-    for did in selected:
-        d = docs_by_id.get(did)
-        if not d:
-            continue
-        text = (d.get("body_text") or "")[:MAX_CHARS_PER_DOC]
-        if total + len(text) > MAX_PASS2_CHARS:
+# ── REDUCE: synthesize all signal sheets into the company update ──────────────
+def reduce_company(client, company_name: str, docs_ext: list[dict], model: str) -> dict:
+    sheets, total = [], 0
+    for d in docs_ext:
+        sheet = {"doc_id": d["id"], "title": d["title"], "date": d["date"],
+                 "type": d["doc_type"], "source": d["source"], **(d["extraction"] or {})}
+        blob = json.dumps(sheet, default=str)
+        if total + len(blob) > MAX_SIGNAL_CHARS:
             break
-        blocks.append(
-            f"--- [{did}] {d.get('title') or 'Untitled'} "
-            f"({d.get('doc_type') or 'other'} · {d.get('occurred_at') or 'n.d.'}) ---\n{text}")
-        used.append(did)
-        total += len(text)
-    return "\n\n".join(blocks), used
+        sheets.append(blob)
+        total += len(blob)
+    dims_detail = "\n".join(f"  - {k}: {lbl}" for k, lbl in DIMENSIONS)
+    prompt = _REDUCE_PROMPT.format(
+        company=company_name, dims_detail=dims_detail, sheets="[\n" + ",\n".join(sheets) + "\n]")
+    out = _parse_json(_call_fb(client, model, prompt, 3000))
+    return out if isinstance(out, dict) else {}
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
@@ -172,42 +217,24 @@ def generate_update(conn, company_id: int, *, period: str = "2026 LLM",
         raise ValueError(f"company {company_id} not found")
     cname, cfund = company["name"], (company["fund"] or "Fund I")
 
-    docs = _load_docs(conn, company_id)
-    if not docs:
-        raise ValueError(f"No documents ingested for {cname}. Run ingestion first.")
-    docs_by_id = {d["id"]: d for d in docs}
+    n_docs = conn.execute("SELECT COUNT(*) AS n FROM pr_documents WHERE company_id=?",
+                          (company_id,)).fetchone()["n"]
+    if not n_docs:
+        raise ValueError(f"No documents synced for {cname}. Click 'Sync & update' to pull its Drive folder first.")
 
     client = _client()
-    dims_simple = ", ".join(lbl for _, lbl in DIMENSIONS)
-    dims_detail = "\n".join(f"  - {k}: {lbl}" for k, lbl in DIMENSIONS)
-
-    # Pass 1 — recon
-    recon_raw = _call(client, model, _RECON_PROMPT.format(
-        company=cname, dims=dims_simple, max_selected=MAX_SELECTED,
-        inventory=_inventory_block(docs)), max_tokens=1200)
-    try:
-        recon = _parse_json(recon_raw)
-    except Exception:
-        recon = {}
-    selected = [int(x) for x in (recon.get("selected_doc_ids") or []) if str(x).isdigit()]
-    if len(selected) < 3:                       # recon failed/too sparse → use newest docs
-        selected = [d["id"] for d in docs[:MAX_SELECTED]]
-
-    # Pass 2 — extract
-    doc_block, used_ids = _documents_block(docs_by_id, selected[:MAX_SELECTED])
-    extract_raw = _call(client, model, _EXTRACT_PROMPT.format(
-        company=cname, dims_detail=dims_detail, documents=doc_block), max_tokens=3000)
-    data = _parse_json(extract_raw)
+    docs_ext, n_new = ensure_extractions(conn, client, company_id, cname)   # MAP
+    data = reduce_company(client, cname, docs_ext, model)                    # REDUCE
 
     traction = data.get("traction", {}) or {}
     derisk = data.get("derisking", {}) or {}
     scores = {k: (derisk.get(k, {}) or {}).get("score") for k in DIMENSION_KEYS}
     res = score_company({k: (0 if v is None else v) for k, v in scores.items()})
+    used_ids = [d["id"] for d in docs_ext]
+    extract_raw = json.dumps(data)[:50_000]
 
-    # ── Persist ──────────────────────────────────────────────────────────────
-    # traction snapshot
-    src_files = [{"id": did, "title": docs_by_id[did]["title"],
-                  "source": docs_by_id[did]["source"]} for did in used_ids if did in docs_by_id]
+    # ── Persist: traction snapshot ───────────────────────────────────────────
+    src_files = [{"id": d["id"], "title": d["title"], "source": d["source"]} for d in docs_ext]
     conn.execute(
         """INSERT INTO pr_traction_snapshots
         (company_id, commercial_status, revenue_current, revenue_prior, revenue_period,
@@ -223,13 +250,16 @@ def generate_update(conn, company_id: int, *, period: str = "2026 LLM",
          traction.get("change_vs_baseline") or "", traction.get("fundraising_status") or "",
          json.dumps(src_files), model, traction.get("confidence") or "medium", extract_raw))
 
-    # derisking score (replace prior LLM row for this period)
+    # ── Persist: derisking score (replace prior LLM row for this period) ──────
     reasoning = {k: {"score": (derisk.get(k, {}) or {}).get("score"),
                      "reasoning": (derisk.get(k, {}) or {}).get("reasoning", ""),
                      "evidence": (derisk.get(k, {}) or {}).get("evidence", [])}
                  for k in DIMENSION_KEYS}
     evidence_summary = "; ".join(
         f"{lbl}: {reasoning[k]['reasoning']}" for k, lbl in DIMENSIONS if reasoning[k]["reasoning"])
+    manifest = {"evidence_gaps": data.get("evidence_gaps", []),
+                "n_docs": len(docs_ext), "n_newly_mapped": n_new,
+                "map_model": MAP_MODEL, "reduce_model": model}
     conn.execute("DELETE FROM pr_derisking_scores WHERE company_id=? AND period=?",
                  (company_id, period))
     conn.execute(
@@ -240,25 +270,25 @@ def generate_update(conn, company_id: int, *, period: str = "2026 LLM",
         (company_id, period, cfund,
          *[(0 if scores[k] is None else scores[k]) for k in DIMENSION_KEYS],
          0, res["total_score"], res["quartile"], "llm", model,
-         json.dumps(reasoning), evidence_summary[:2000], json.dumps(recon)))
+         json.dumps(reasoning), evidence_summary[:2000], json.dumps(manifest)))
 
-    # the update wrapper (audit trail)
+    # ── Persist: the update wrapper (audit trail) ────────────────────────────
     cur = conn.execute(
         """INSERT INTO pr_company_updates
         (company_id, period, status, headline, summary, model_used, n_docs_seen,
          n_docs_used, manifest_json, evidence_json)
         VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (company_id, period, "success", data.get("headline", ""), data.get("summary", ""),
-         model, len(docs), len(used_ids), json.dumps(recon),
+         f"{MAP_MODEL} -> {model}", len(docs_ext), len(used_ids), json.dumps(manifest),
          json.dumps({k: reasoning[k]["evidence"] for k in DIMENSION_KEYS})))
     conn.commit()
 
     return {
         "update_id": cur.lastrowid, "company_id": company_id, "company_name": cname,
         "headline": data.get("headline", ""), "summary": data.get("summary", ""),
-        "n_docs_seen": len(docs), "n_docs_used": len(used_ids),
-        "evidence_gaps": recon.get("evidence_gaps", []),
+        "n_docs": len(docs_ext), "n_newly_mapped": n_new,
+        "evidence_gaps": data.get("evidence_gaps", []),
         "derisking_total": res["total_score"], "quartile": res["quartile"],
         "commercial_status": traction.get("commercial_status"),
-        "model": model,
+        "map_model": MAP_MODEL, "reduce_model": model,
     }
