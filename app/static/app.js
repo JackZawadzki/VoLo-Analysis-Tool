@@ -13235,22 +13235,45 @@ function tddrClearFiles(e) {
 }
 
 function tddrRun() {
-    if (!_tddrSelectedFiles.length) { showToast('Add at least one PDF (a paper or deck).'); return; }
-    const fd = new FormData();
-    _tddrSelectedFiles.forEach(f => fd.append('files', f));
-    const hint = (document.getElementById('tddr-hint')?.value || '').trim();
-    fd.append('innovation_hint', hint);
-
-    const headers = {};
-    if (_rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
-
+    console.log('[TechDDR] tddrRun() called; files=', _tddrSelectedFiles.length);
     const btn = document.getElementById('tddr-run-btn');
     const reset = () => { if (btn) { btn.disabled = false; btn.textContent = 'Generate Technical DDR'; } };
+    const fail = (msg) => {
+        console.error('[TechDDR] ' + msg);
+        showToast(msg);
+        try { tddrShowError(msg); } catch (e) {}
+        reset();
+    };
+
+    let fd, headers;
+    try {
+        if (!_tddrSelectedFiles.length) { showToast('Add at least one PDF (a paper or deck).'); return; }
+        fd = new FormData();
+        _tddrSelectedFiles.forEach(f => fd.append('files', f));
+        const hint = (document.getElementById('tddr-hint')?.value || '').trim();
+        fd.append('innovation_hint', hint);
+        headers = {};
+        if (typeof _rvmToken !== 'undefined' && _rvmToken) headers['Authorization'] = 'Bearer ' + _rvmToken;
+    } catch (e) {
+        fail('Tech DDR could not start (setup error): ' + (e && e.message ? e.message : e));
+        return;
+    }
+
     if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
 
-    fetch('/api/tech-ddr/start', { method: 'POST', headers, body: fd })
+    // Hard client-side timeout so a hung/unreachable server can never stick on
+    // "Starting..." forever — it aborts and surfaces a clear error instead.
+    const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = setTimeout(() => { if (ctrl) ctrl.abort(); }, 45000);
+
+    console.log('[TechDDR] sending POST /api/tech-ddr/start ...');
+    fetch('/api/tech-ddr/start', { method: 'POST', headers, body: fd, signal: ctrl ? ctrl.signal : undefined })
         .then(async r => {
-            const d = await r.json();
+            clearTimeout(timer);
+            console.log('[TechDDR] /start responded:', r.status);
+            let d = {};
+            try { d = await r.json(); }
+            catch (e) { fail('Tech DDR: server returned a non-JSON response (HTTP ' + r.status + ').'); return; }
             if (r.status === 429) { showToast(d.detail || 'Please wait before another run.'); reset(); return; }
             if (d.job_id) {
                 _tddrCurrentJobId = d.job_id;
@@ -13259,11 +13282,17 @@ function tddrRun() {
                 showToast('Technical DDR started');
                 reset();
             } else {
-                showToast(d.detail || 'Tech DDR start failed');
-                reset();
+                fail('Tech DDR start failed: ' + (d.detail || ('HTTP ' + r.status)));
             }
         })
-        .catch(err => { showToast('Tech DDR error: ' + err.message); reset(); });
+        .catch(err => {
+            clearTimeout(timer);
+            if (err && err.name === 'AbortError') {
+                fail('Tech DDR timed out — no response from the server after 45s. The server may be down, restarting, or blocking the request.');
+            } else {
+                fail('Tech DDR network error: ' + (err && err.message ? err.message : err));
+            }
+        });
 }
 
 function tddrShowActive(filename) {

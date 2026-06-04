@@ -206,6 +206,11 @@ async def tech_ddr_start(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Start a Technical DDR job. Accepts 1–8 PDF files + an optional hypothesis."""
+    # Diagnostic: prints the instant the request reaches the handler (after auth +
+    # multipart parse). If you click Generate and DON'T see this line in the logs,
+    # the request never reached the handler (client-side throw, or blocked before routing).
+    print(f"[TechDDR] /start HIT — user={getattr(user, 'username', '?')} "
+          f"files={len(files) if files else 0}", flush=True)
     if not files:
         raise HTTPException(400, "No files provided")
     if len(files) > _MAX_FILES:
