@@ -116,6 +116,8 @@
       const list = document.getElementById('pf-hidden-list');
       if (list) list.classList.toggle('pf-hidden');
     });
+    const _purge = document.getElementById('pf-purge');
+    if (_purge) _purge.addEventListener('click', (e) => { e.stopPropagation(); purgeHidden(); });
   }
 
   // Folders the AI judged not to be portfolio companies — hidden, restorable.
@@ -126,13 +128,24 @@
         <button class="pf-btn pf-btn-ghost pf-btn-xs" data-restore="${h.id}">Restore as company</button></div>`).join('');
     return `<div class="pf-card">
       <div class="pf-card-title"><button class="pf-linklike" id="pf-hidden-toggle">${hidden.length} hidden folder${hidden.length === 1 ? '' : 's'} — judged not companies (click to review) &#9662;</button></div>
-      <div id="pf-hidden-list" class="pf-hidden">${items}</div>
+      <div id="pf-hidden-list" class="pf-hidden">${items}
+        <div class="pf-hidden-foot">
+          <button class="pf-btn pf-btn-ghost pf-btn-xs" id="pf-purge">Remove all ${hidden.length} permanently</button>
+          <span class="pf-tiny pf-dim">Deletes these non-company folders + any files pulled from them. Real companies are untouched. Can't be undone.</span>
+        </div>
+      </div>
     </div>`;
   }
 
   async function restoreCompany(id) {
     try { await postJSON(`${API}/company/${id}/exclude?excluded=false`); renderDashboard(); }
     catch (e) { alert('Restore failed: ' + e.message); }
+  }
+
+  async function purgeHidden() {
+    if (!confirm('Permanently remove ALL hidden (non-company) folders and any files pulled from them? Real portfolio companies are NOT affected. This cannot be undone.')) return;
+    try { await postJSON(`${API}/companies/purge-hidden`); renderDashboard(); }
+    catch (e) { alert('Remove failed: ' + e.message); }
   }
 
   // ── admin ingestion controls ──────────────────────────────────────────────

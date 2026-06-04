@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=225">
+    <link rel="stylesheet" href="/static/styles.css?v=227">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1436,7 +1436,7 @@
             <h3 class="dd-section-title">Core Assumptions</h3>
             <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
                 <p><strong>What it shows.</strong> Your three working hypotheses for the deal — the Conservative, Base and Best version of every assumption that drives the return — in one editable place, so you can see exactly what you're betting on and change any of it.</p>
-                <p><strong>Theory.</strong> Underwriting under deep uncertainty: three explicit cases (Conservative / Base / Best) bound the range instead of pretending to a single point estimate. The Base case is seeded from the deal report where available (founder revenue, comps exit multiple); Conservative &amp; Best are your downside and upside around it. Anything you don't want to model can be marked <strong>N/A</strong> and is dropped from the math entirely — never silently assumed. The outputs are only as good as these inputs; there's no hidden oracle.</p>
+                <p><strong>Theory.</strong> Underwriting under deep uncertainty: three explicit cases (Conservative / Base / Best) bound the range instead of pretending to a single point estimate. The Base case is seeded from the deal report where available (founder revenue, comps exit multiple); Conservative &amp; Best are your downside and upside around it. Every assumption is an explicit value you set for all three cases — the model is load-bearing on all of them, so there are no hidden defaults and nothing is silently assumed. The outputs are only as good as these inputs; there's no hidden oracle.</p>
                 <p><strong>Math.</strong> Revenue starts at Year-1 and grows at the CAGR, tapering toward terminal growth. Operating spend is an absolute $/yr plan (ramping ~15%/yr), independent of revenue. Exit EV = exit-revenue × multiple (EV/Revenue basis) or exit-EBITDA × multiple (EV/EBITDA basis). Ownership = entry × (1 − dilution)^rounds. MOIC = EV × ownership ÷ check. Expected MOIC = POS × MOIC + (1 − POS) × recovery.</p>
             </div></details>
             <div class="dd-setup-row">
@@ -1463,7 +1463,7 @@
                 <span id="dd-trl-note" class="dd-help"></span>
             </div>
             <p id="dd-seed-note" class="dd-field-hint" style="display:none;"></p>
-            <p class="dd-field-hint">Set each case. Tick <strong>N/A</strong> for any metric that's unknown or you don't want to model — it's dropped from the run and the sensitivity decomposition. <strong>Sensitivity</strong> and <strong>Impact</strong> populate after you run.</p>
+            <p class="dd-field-hint">Set a value for every assumption in all three cases. A driver appears in the <strong>Sensitivity</strong> ranking when its Conservative and Best values differ; Sensitivity and Impact populate after you run. (Exit Year may be left blank = exit at the end of the horizon.)</p>
             <div class="dd-table-scroll">
                 <table id="dd-assump-table" class="dd-assump-table"></table>
             </div>
@@ -2375,10 +2375,10 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=224"></script>
+    <script src="/static/app.js?v=226"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
-    <script src="/static/portfolio.js?v=7"></script>
+    <script src="/static/portfolio.js?v=8"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

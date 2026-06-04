@@ -1468,6 +1468,36 @@ def api_pr_exclude_company(company_id: int,
         conn.close()
 
 
+@api.post("/companies/purge-hidden")
+def api_pr_purge_hidden(user: CurrentUser = Depends(get_current_user)):
+    """One-time cleanup: PERMANENTLY delete every hidden (excluded=1) folder and
+    any rows pulled from it (documents, notes, etc.). Real portfolio companies
+    (excluded=0) are never touched. Child rows are deleted explicitly so it works
+    regardless of SQLite FK-cascade settings."""
+    if user.role != "admin":
+        raise HTTPException(403, "Only admins can purge the roster")
+    conn = get_db()
+    try:
+        ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM pr_companies WHERE excluded=1").fetchall()]
+        if not ids:
+            return {"deleted": 0}
+        qmarks = ",".join("?" * len(ids))
+        for tbl in ("pr_documents", "pr_company_folders", "pr_investments", "pr_returns",
+                    "pr_derisking_scores", "pr_traction_snapshots", "pr_company_updates",
+                    "pr_granola_notes", "pr_financial_snapshots", "pr_financials",
+                    "pr_valuations", "pr_follow_ons", "pr_board_seats", "pr_comments"):
+            try:
+                conn.execute(f"DELETE FROM {tbl} WHERE company_id IN ({qmarks})", ids)
+            except Exception:
+                pass  # table may not exist on older schemas
+        conn.execute(f"DELETE FROM pr_companies WHERE id IN ({qmarks})", ids)
+        conn.commit()
+        return {"deleted": len(ids)}
+    finally:
+        conn.close()
+
+
 @api.post("/sync-all")
 def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
                     user: CurrentUser = Depends(get_current_user)):

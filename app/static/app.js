@@ -11754,8 +11754,6 @@ function _ddApplyTRL() {
         if (data.status !== 'ok') return;
         const p = data.profile;
         const seed = (key, vals) => {
-            const na = document.getElementById('dd-na-' + key);
-            if (na && na.checked) { na.checked = false; ddToggleNA(key); }
             DD_CASES.forEach(cs => {
                 const el = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], key));
                 if (el && vals[cs] != null) el.value = vals[cs];
@@ -11987,7 +11985,6 @@ function ddBuildTable(preset) {
                 <select id="dd-metric" onchange="_ddMetricChanged()">${metricOpts}</select>
             </label>
         </th>
-        <th class="dd-a-gh-blank"></th>
     </tr>
     <tr>
         <th class="dd-a-th-label">Assumption</th>
@@ -11997,11 +11994,10 @@ function ddBuildTable(preset) {
         <th class="dd-a-th-case">Best</th>
         <th>Sensitivity</th>
         <th>Impact</th>
-        <th>N/A</th>
     </tr></thead><tbody>`;
 
     for (const f of DD_FIELDS) {
-        if (f.group) { html += `<tr class="dd-a-group"><td colspan="8">${f.group}</td></tr>`; continue; }
+        if (f.group) { html += `<tr class="dd-a-group"><td colspan="7">${f.group}</td></tr>`; continue; }
         const cur = _ddCurrentValue(f.key);
         const vals = (preset && preset[f.key]) || f.dft;
         const inputs = DD_CASES.map((cs, i) => {
@@ -12014,26 +12010,30 @@ function ddBuildTable(preset) {
             ${inputs}
             <td class="dd-a-sens" id="dd-sens-${f.key}"><span class="dd-muted">—</span></td>
             <td class="dd-a-impact" id="dd-impact-${f.key}"><span class="dd-muted">—</span></td>
-            <td class="dd-a-na"><input type="checkbox" id="dd-na-${f.key}" onchange="ddToggleNA('${f.key}')" ${f.driver === false ? '' : ''}></td>
         </tr>`;
     }
     html += '</tbody>';
     tbl.innerHTML = html;
 }
 
-function ddToggleNA(key) {
-    const on = document.getElementById('dd-na-' + key).checked;
-    DD_CASES.forEach(cs => {
-        const inp = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], key));
-        if (inp) { inp.disabled = on; inp.classList.toggle('dd-input-na', on); }
-    });
-    const row = document.querySelector(`#dd-assump-table tr[data-key="${key}"]`);
-    if (row) row.classList.toggle('dd-row-na', on);
-}
-
 function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; }
 
 function _ddOnEdit() { /* live-edit hook (kept light; results refresh on Run) */ }
+
+// Required-field guard: with N/A removed, every assumption must be a real number.
+// Exit Year is the one exception (blank = exit at the end of the horizon).
+function _ddBlankRequiredFields() {
+    const out = [];
+    for (const f of DD_FIELDS) {
+        if (f.group || f.key === 'exit_year') continue;
+        const blank = DD_CASES.some(cs => {
+            const inp = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], f.key));
+            return !inp || inp.value === '' || isNaN(parseFloat(inp.value));
+        });
+        if (blank) out.push(f.label);
+    }
+    return out;
+}
 
 // ── Read the table into scenario dicts ────────────────────────────
 function _ddReadScenarios() {
@@ -12043,8 +12043,6 @@ function _ddReadScenarios() {
         const a = { exit_multiple_type: exitType };
         for (const f of DD_FIELDS) {
             if (f.group) continue;
-            const naEl = document.getElementById('dd-na-' + f.key);
-            if (naEl && naEl.checked) { a[f.key] = null; continue; }
             const inp = document.getElementById(_ddCellId(DD_CASE_PREFIX[cs], f.key));
             if (!inp || inp.value === '') { a[f.key] = null; continue; }
             const v = parseFloat(inp.value);
@@ -12058,6 +12056,13 @@ function _ddReadScenarios() {
 // ── Run ───────────────────────────────────────────────────────────
 function ddRun() {
     if (!_dd.reportId) return;
+    // Every assumption is an explicit input now (no N/A). Block blanks so nothing
+    // silently falls back to a model default. Exit Year may be blank = end of horizon.
+    const blanks = _ddBlankRequiredFields();
+    if (blanks.length) {
+        alert('Fill in every assumption for all three cases before running — blank cells are no longer allowed (they would fall back to model defaults):\n\n• ' + blanks.join('\n• '));
+        return;
+    }
     const metric = (document.getElementById('dd-metric') || {}).value || 'expected_moic';
     const recovery = parseFloat((document.getElementById('dd-recovery') || {}).value) || 0;
     const payload = {
@@ -12108,7 +12113,7 @@ function _ddRenderHero() {
             <div class="dd-hero-sub">${_ddFmt(b.moic)}x if it reaches exit · ${_ddFmt(b.prob_success_pct, 0)}% chance of exit</div>
         </div>
         <div class="dd-hero-card"><div class="dd-hero-label">Expected IRR</div><div class="dd-hero-value">${_ddFmt(b.expected_irr_pct, 1)}%</div><div class="dd-hero-sub">${_ddFmt(b.irr_pct, 1)}% if it reaches exit</div></div>
-        <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(b.exit_ev_m)}M</div><div class="dd-hero-sub">${b.exit_multiple_na ? 'DCF-implied (no multiple)' : 'EV × exit multiple'}</div></div>
+        <div class="dd-hero-card"><div class="dd-hero-label">Exit EV</div><div class="dd-hero-value">$${_ddFmt(b.exit_ev_m)}M</div><div class="dd-hero-sub">EV × exit multiple</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">Cash to Breakeven</div><div class="dd-hero-value">$${_ddFmt(b.peak_cumulative_burn_m)}M</div><div class="dd-hero-sub">${b.fcf_breakeven_year ? 'FCF+ in Yr ' + b.fcf_breakeven_year : 'no FCF breakeven in horizon'}</div></div>
         <div class="dd-hero-card"><div class="dd-hero-label">Entry → Exit Ownership</div><div class="dd-hero-value">${_ddFmt(b.entry_ownership_pct, 1)}%</div><div class="dd-hero-sub">→ ${_ddFmt(b.exit_ownership_pct, 1)}% at exit</div></div>`;
 }

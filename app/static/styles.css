@@ -5153,9 +5153,6 @@ h2 .info-tip-body {
 .dd-a-current { color:#6B7280; }
 .dd-a-input { width:78px; text-align:right; font:inherit; padding:4px 6px; border:1px solid #d1d5db; border-radius:5px; }
 .dd-a-input:focus { outline:none; border-color:#5B7744; box-shadow:0 0 0 2px rgba(91,119,68,.15); }
-.dd-input-na { background:#f3f4f6; color:#9ca3af; }
-.dd-row-na .dd-a-label, .dd-row-na .dd-a-current { opacity:.45; }
-.dd-a-na { text-align:center; }
 .dd-muted { color:#c0c4bd; }
 .dd-sens-val.pos { color:#16a34a; font-weight:600; } .dd-sens-val.neg { color:#dc2626; font-weight:600; }
 .dd-a-impact { position:relative; min-width:70px; }
@@ -5480,6 +5477,9 @@ h2 .info-tip-body {
 .pf-linklike:hover { text-decoration: underline; }
 .pf-hidden-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 2px; border-bottom: 1px solid var(--border-light); font-size: 0.85rem; color: var(--text-secondary); }
 .pf-hidden-row:last-child { border-bottom: none; }
+.pf-hidden-foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pf-hidden-foot .pf-btn-xs { border-color: var(--danger); color: var(--danger); }
+.pf-hidden-foot .pf-btn-xs:hover { background: var(--danger); color: #fff; }
 
 /* ── DD: Sensitivity-Grid axis pickers ── */
 .dd-grid-axes { display:flex; flex-wrap:wrap; gap:16px; margin:0 0 10px; }
