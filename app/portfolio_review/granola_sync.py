@@ -192,13 +192,15 @@ def _match_companies(
     attendees: list,
     attendee_emails: list,
     lookup: dict,
+    body: str = "",
 ) -> list[tuple[int, str, str]]:
     """Return [(company_id, match_method, confidence), ...] for one note.
 
-    A note can match multiple companies. Order: attendee-email matches
-    first (high confidence), then title matches (medium). Dedupes on
-    company_id — if the same company matches both ways, we keep the
-    higher-confidence record."""
+    A note can match multiple companies. Precedence (highest first):
+      1. attendee_email — an attendee's email is a company CEO/CFO (high)
+      2. title_match    — company name (whole word) is in the note title (high)
+      3. mention        — company name is discussed in the note BODY (medium)
+    Dedupes on company_id, keeping the highest-precedence method."""
     matched: dict[int, tuple[str, str]] = {}
 
     # Pass 1 — attendee emails (high confidence)
@@ -207,7 +209,7 @@ def _match_companies(
         if em and em in lookup["by_email"]:
             matched[lookup["by_email"][em]] = ("attendee_email", "high")
 
-    # Pass 2 — name in title (medium confidence)
+    # Pass 2 — name in title (high — titles are short, low false-positive risk)
     title_norm = (title or "").lower()
     if title_norm:
         for cid, name_lc, _orig in lookup["by_name"]:
@@ -215,7 +217,18 @@ def _match_companies(
                 continue
             # Whole-word substring — guards against e.g. "Aria" matching "Pariah"
             if re.search(rf"\b{re.escape(name_lc)}\b", title_norm):
-                matched[cid] = ("title_match", "medium")
+                matched[cid] = ("title_match", "high")
+
+    # Pass 3 — name discussed anywhere in the note body (medium). Matched
+    # CASE-SENSITIVELY against the original (capitalized) name, so a company
+    # called "Zero" matches "Zero" the company but not "zero" the number —
+    # the main false-positive risk for common-word company names.
+    if body:
+        for cid, _name_lc, orig in lookup["by_name"]:
+            if cid in matched or len(orig) < 3:
+                continue
+            if re.search(rf"\b{re.escape(orig)}\b", body):
+                matched[cid] = ("mention", "medium")
 
     return [(cid, m, c) for cid, (m, c) in matched.items()]
 
@@ -440,6 +453,7 @@ def run_granola_sync(
                 attendees=raw.attendees or [],
                 attendee_emails=attendee_emails,
                 lookup=lookup,
+                body=getattr(raw, "body_text", "") or "",
             )
             if not matches:
                 associations_unmatched += 1
