@@ -192,10 +192,11 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
 
 
 # ── Document ingestion for one company ────────────────────────────────────────
-# Per-company file cap (override via PORTFOLIO_MAX_FILES_PER_COMPANY). Each
-# company's folder is walked RECURSIVELY; only text-extractable files (PDF/DOCX/
-# PPTX/XLSX/TXT/…) are pulled — images/videos with no text are skipped.
-_MAX_FILES_PER_COMPANY = int(os.environ.get("PORTFOLIO_MAX_FILES_PER_COMPANY", "200") or 200)
+# Per-company file cap. Default 0 = NO CAP — sync every file in the folder. Set
+# PORTFOLIO_MAX_FILES_PER_COMPANY to impose a limit. The folder is walked
+# RECURSIVELY; only text-extractable files (PDF/DOCX/PPTX/XLSX/TXT/…) are pulled
+# — images/videos with no readable text are skipped.
+_MAX_FILES_PER_COMPANY = int(os.environ.get("PORTFOLIO_MAX_FILES_PER_COMPANY", "0") or 0)
 
 
 def ingest_company(conn, service, company_id: int, max_files: int = _MAX_FILES_PER_COMPANY) -> dict:
@@ -212,7 +213,7 @@ def ingest_company(conn, service, company_id: int, max_files: int = _MAX_FILES_P
         except Exception as e:
             logger.warning("List failed for folder %s: %s", fol["drive_folder_name"], e)
             continue
-        for fmeta in files[:max_files]:
+        for fmeta in (files if not max_files else files[:max_files]):
             seen += 1
             # Skip files already pulled at this Drive modifiedTime — makes
             # re-sync cheap and lets a timed-out ingest resume where it left off.

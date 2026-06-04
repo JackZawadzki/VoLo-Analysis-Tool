@@ -1532,9 +1532,12 @@ def api_pr_reset(confirm: str = Query("", description="Must equal 'DELETE' to pr
 def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
                     user: CurrentUser = Depends(get_current_user)):
     """Build/refresh the portfolio roster from the Drive folder (one subfolder =
-    one company, skipping the team's "_"-prefixed admin folders) and pull Granola
-    notes. Document extraction is PER-COMPANY and on-demand (open a company →
-    "Sync & update"), so this stays fast and never times out on large drives."""
+    one company; an LLM classifies which folders are real companies). Document
+    extraction is PER-COMPANY and on-demand (open a company → "Sync & update").
+
+    Granola is DEFERRED for now — per-note attribution is messy and a future
+    "scan recent notes for mentions of company X" model fits better. Set
+    PORTFOLIO_GRANOLA_ENABLED=true to re-enable the per-company note pull here."""
     if user.role != "admin":
         raise HTTPException(403, "Only admins can sync")
     from ..routes.drive import _get_drive_service
@@ -1546,15 +1549,14 @@ def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
     try:
         service = _get_drive_service(user.id)
         discover = discover_companies(conn, service, folder)
-
-        granola = {"status": "skipped"}
-        try:
-            from .granola_sync import run_granola_sync
-            granola = run_granola_sync(conn, user_id=user.id)
-        except Exception as e:
-            granola = {"status": "failed", "error": str(e)}
-
-        return {"discover": discover, "granola": granola}
+        result = {"discover": discover}
+        if os.environ.get("PORTFOLIO_GRANOLA_ENABLED", "").strip().lower() in ("1", "true", "yes"):
+            try:
+                from .granola_sync import run_granola_sync
+                result["granola"] = run_granola_sync(conn, user_id=user.id)
+            except Exception as e:
+                result["granola"] = {"status": "failed", "error": str(e)}
+        return result
     except HTTPException:
         raise
     except Exception as e:
