@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=228">
+    <link rel="stylesheet" href="/static/styles.css?v=230">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1532,6 +1532,65 @@
                 </div>
             </div>
         </div>
+
+        <!-- ═══════════ CALCULATION METHODOLOGY (in-depth) ═══════════ -->
+        <details class="dd-method dd-calc">
+            <summary>Calculation methodology — the full model, step by step</summary>
+            <div class="dd-method-body dd-calc-body">
+                <p class="dd-calc-lede">Everything below is deterministic and fully traceable — there's no hidden model. The same engine runs three times (Conservative / Base / Best) on the shared assumptions above; this is the exact chain of arithmetic from your inputs to MOIC, all in one all-equity framework.</p>
+
+                <ol class="dd-calc-steps">
+                    <li class="dd-calc-step">
+                        <h4>Revenue trajectory</h4>
+                        <p>Revenue starts at the Year-1 value and compounds at the CAGR, but the growth rate <em>decays</em> toward terminal growth as the company matures (hyper-growth doesn't last forever). Any pre-launch years (Time to Commercial Launch) are zero-revenue burn years tacked on the front.</p>
+                        <div class="dd-calc-formula">growth<sub>t</sub> = terminal_growth + (CAGR − terminal_growth) × (1 − t / N)<br>revenue<sub>t</sub> = revenue<sub>t−1</sub> × (1 + growth<sub>t</sub>)</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>Margins &amp; the operating plan</h4>
+                        <p>Gross margin ramps linearly from its start value to its mature value over the horizon. Operating spend is an <strong>absolute $/yr plan</strong> (the commercial figure escalating modestly each year, plus a fixed pre-launch burn) — <em>independent of revenue</em>. That's deliberate: it stops a weaker case from looking artificially cheaper just because it sells less, so cash-to-breakeven stays directionally honest.</p>
+                        <div class="dd-calc-formula">gross profit = revenue × gross margin<sub>t</sub><br>EBITDA = gross profit − operating spend</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>Free cash flow &amp; cash to breakeven</h4>
+                        <p>Free cash flow is EBITDA less the cash items. <strong>Cash to Breakeven</strong> is the deepest point the cumulative cash balance reaches — the peak capital the company consumes before it turns cash-positive.</p>
+                        <div class="dd-calc-formula">FCF = net income + D&amp;A − capex − Δ net working capital<br>Cash to Breakeven = | minimum of cumulative FCF |</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>Exit valuation — two bases, one identity</h4>
+                        <p>By default the company is valued on a <strong>revenue multiple</strong> (appropriate for pre-profit growth companies — it's always positive, so it works in every case). EBITDA is available for genuinely profitable companies. The two are linked <em>exactly</em>, so toggling never changes the valuation — it just re-expresses it:</p>
+                        <div class="dd-calc-formula">Exit EV = exit revenue × revenue multiple&nbsp;&nbsp;<span class="dd-calc-or">— or —</span>&nbsp;&nbsp;exit EBITDA × EBITDA multiple<br>revenue multiple = EBITDA multiple × exit EBITDA margin</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>Financing &amp; dilution — derived from the burn</h4>
+                        <p>This is the link that makes the operating assumptions matter. The company must raise enough to fund its burn; whatever the current round doesn't cover is raised in future rounds, each priced at the company's projected value that year. Every raise dilutes you. So a cash-hungrier plan (worse margins, heavier spend, slower launch) raises more, dilutes more, and lowers your return — automatically.</p>
+                        <div class="dd-calc-formula">funding need = Cash to Breakeven − current round size<br>round dilution = round raise ÷ (round pre-money + round raise)<br>exit ownership = entry ownership × ∏ (1 − round dilution<sub>i</sub>)</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>The return to us</h4>
+                        <p>Entry ownership is our check over the post-money. MOIC is our diluted slice of the exit value over what we put in; IRR annualizes it over the hold. The <strong>Expected</strong> figures probability-weight the win against a failure worth the recovery multiple.</p>
+                        <div class="dd-calc-formula">entry ownership = check ÷ (pre-money + round)<br>MOIC = Exit EV × exit ownership ÷ check&nbsp;&nbsp;·&nbsp;&nbsp;IRR = MOIC<sup>(1/hold)</sup> − 1<br>Expected MOIC = POS × MOIC + (1 − POS) × recovery</div>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>What moves the outcome (sensitivity)</h4>
+                        <p>Each assumption is flexed alone across its Conservative→Best range with everything else held at Base; the resulting swing is its leverage. Two views: <strong>One-at-a-time</strong> (bars don't sum to the total because effects compound — the remainder is shown as Interactions) and <strong>Shapley</strong> (the fair-share attribution that splits the compounding so the bars sum exactly to the total move, no leftover).</p>
+                    </li>
+                    <li class="dd-calc-step">
+                        <h4>Sensitivity grid</h4>
+                        <p>The model is re-run across a 5×5 grid of the two levers that matter most for the chosen metric (the axes are metric-aware — only levers that actually move that metric are offered), so you can see how they interact, not just one at a time.</p>
+                    </li>
+                </ol>
+
+                <div class="dd-calc-limits">
+                    <h4>Honest limitations — read these</h4>
+                    <ul>
+                        <li><strong>Deterministic, not probabilistic.</strong> Three cases bound the range; they're not a probability distribution. For a full simulated distribution, that's the deal report's Monte Carlo — this is its transparent, hand-driven complement.</li>
+                        <li><strong>All-equity.</strong> No debt, liquidation preferences, or option-pool mechanics are modeled.</li>
+                        <li><strong>MOIC reflects the exit snapshot.</strong> The headline return is set by the exit-year picture; operating detail reaches it through the financing (burn → dilution) channel, not by re-pricing the exit directly.</li>
+                        <li><strong>The seeded revenue multiple is a starting estimate.</strong> It's converted from the EV/EBITDA comp at an assumed mature margin — edit it to your view; the basis toggle then reconciles it exactly against each case's projected margin.</li>
+                    </ul>
+                </div>
+            </div>
+        </details>
     </div>
 </div>
 

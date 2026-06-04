@@ -5236,6 +5236,28 @@ h2 .info-tip-body {
 .dd-method-body p:last-child { margin-bottom:0; }
 .dd-method-body em { color:#3a5228; font-style:italic; }
 
+/* ── DD: in-depth Calculation methodology section ── */
+.dd-calc { margin-top:26px; border:1px solid #d8e0cd; background:#fcfdfb; box-shadow:0 1px 3px rgba(58,82,40,.05); }
+.dd-calc > summary { font-size:13.5px; font-weight:700; color:#3a5228; padding:13px 16px; background:linear-gradient(180deg,#f3f7ec,#fbfcf9); border-radius:8px 8px 0 0; }
+.dd-calc[open] > summary { border-bottom:1px solid #e3e8da; }
+.dd-calc-body { padding:16px 20px 20px; }
+.dd-calc-lede { font-size:13px; line-height:1.6; color:#4a5240; background:#f3f7ec; border-left:3px solid #5B7744; border-radius:0 6px 6px 0; padding:11px 14px; margin:0 0 20px; }
+.dd-calc-steps { list-style:none; counter-reset:dcalc; margin:0; padding:0; }
+.dd-calc-step { position:relative; padding:0 0 18px 44px; margin:0 0 18px; border-bottom:1px dashed #e7ebe0; counter-increment:dcalc; }
+.dd-calc-step:last-child { border-bottom:none; padding-bottom:4px; margin-bottom:0; }
+.dd-calc-step::before { content:counter(dcalc); position:absolute; left:0; top:0; width:28px; height:28px; border-radius:50%; background:#5B7744; color:#fff; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center; }
+.dd-calc-step h4 { margin:3px 0 6px; font-size:14px; font-weight:700; color:#1f2937; }
+.dd-calc-step p { margin:0 0 10px; font-size:12.7px; line-height:1.6; color:#4a5240; }
+.dd-calc-step p:last-child { margin-bottom:0; }
+.dd-calc-formula { font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; font-size:12.3px; line-height:1.9; color:#2e3a22; background:#f5f8ef; border:1px solid #e0e8d3; border-left:3px solid #8a9a78; border-radius:0 6px 6px 0; padding:10px 14px; }
+.dd-calc-formula sub { font-size:9px; } .dd-calc-formula sup { font-size:9px; }
+.dd-calc-or { font-family:inherit; color:#9aa28c; font-style:italic; font-size:11.5px; }
+.dd-calc-limits { margin-top:20px; background:#fbf6ec; border:1px solid #ecdfc6; border-radius:8px; padding:13px 16px 13px; }
+.dd-calc-limits h4 { margin:0 0 8px; font-size:12.5px; font-weight:700; color:#8a6d2f; text-transform:uppercase; letter-spacing:.03em; }
+.dd-calc-limits ul { margin:0; padding-left:18px; }
+.dd-calc-limits li { font-size:12.5px; line-height:1.6; color:#5a5238; margin-bottom:6px; }
+.dd-calc-limits li:last-child { margin-bottom:0; }
+
 /* ── DD bridge: column headers + residual row ── */
 .dd-wf-colhead { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:#9aa28c; border-bottom:1px solid #eef1ea; margin-bottom:2px; }
 .dd-wf-colhead .dd-wf-delta, .dd-wf-colhead .dd-wf-run { font-weight:600; }
