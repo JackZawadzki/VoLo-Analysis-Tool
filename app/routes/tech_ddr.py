@@ -211,47 +211,57 @@ async def tech_ddr_start(
     # the request never reached the handler (client-side throw, or blocked before routing).
     print(f"[TechDDR] /start HIT — user={getattr(user, 'username', '?')} "
           f"files={len(files) if files else 0}", flush=True)
-    if not files:
-        raise HTTPException(400, "No files provided")
-    if len(files) > _MAX_FILES:
-        raise HTTPException(400, f"Too many files (max {_MAX_FILES}).")
-
     try:
-        _get_api_key()
-    except ValueError as e:
-        raise HTTPException(500, str(e))
+        if not files:
+            raise HTTPException(400, "No files provided")
+        if len(files) > _MAX_FILES:
+            raise HTTPException(400, f"Too many files (max {_MAX_FILES}).")
 
-    collected: list[tuple[str, bytes]] = []
-    for f in files:
-        if not f.filename:
-            continue
-        ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
-        if ext != "pdf":
-            raise HTTPException(400, f"'{f.filename}' is not a PDF. Technical DDR accepts PDF papers/decks.")
-        data = await f.read()
-        if len(data) < 500:
-            raise HTTPException(400, f"'{f.filename}' is too small to be a valid document.")
-        collected.append((f.filename, data))
+        try:
+            _get_api_key()
+        except ValueError as e:
+            raise HTTPException(500, str(e))
 
-    if not collected:
-        raise HTTPException(400, "No valid PDF files provided.")
+        collected: list[tuple[str, bytes]] = []
+        for f in files:
+            if not f.filename:
+                continue
+            ext = f.filename.rsplit(".", 1)[-1].lower() if "." in f.filename else ""
+            if ext != "pdf":
+                raise HTTPException(400, f"'{f.filename}' is not a PDF. Technical DDR accepts PDF papers/decks.")
+            data = await f.read()
+            if len(data) < 500:
+                raise HTTPException(400, f"'{f.filename}' is too small to be a valid document.")
+            collected.append((f.filename, data))
 
-    job_id = str(uuid.uuid4())[:12]
-    with _LOCK:
-        _JOBS[job_id] = {
-            "status": "queued", "progress_pct": 0,
-            "progress_msg": "Queued for processing...",
-            "company_name": None, "analysis": None, "pdf_path": None,
-            "pdf_filename": None, "error": None,
-            "started_at": datetime.now().isoformat(), "finished_at": None,
-            "filename": ", ".join(fn for fn, _ in collected),
-            "innovation_hint": innovation_hint, "user": user.username,
-        }
+        if not collected:
+            raise HTTPException(400, "No valid PDF files provided.")
 
-    threading.Thread(
-        target=_run_background, args=(job_id, collected, innovation_hint), daemon=True,
-    ).start()
-    return {"job_id": job_id, "status": "queued"}
+        job_id = str(uuid.uuid4())[:12]
+        with _LOCK:
+            _JOBS[job_id] = {
+                "status": "queued", "progress_pct": 0,
+                "progress_msg": "Queued for processing...",
+                "company_name": None, "analysis": None, "pdf_path": None,
+                "pdf_filename": None, "error": None,
+                "started_at": datetime.now().isoformat(), "finished_at": None,
+                "filename": ", ".join(fn for fn, _ in collected),
+                "innovation_hint": innovation_hint, "user": user.username,
+            }
+
+        threading.Thread(
+            target=_run_background, args=(job_id, collected, innovation_hint), daemon=True,
+        ).start()
+        return {"job_id": job_id, "status": "queued"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Surface the REAL error (in the JSON response + logs) instead of a bare
+        # 500 "Internal Server Error" that the frontend can't parse.
+        import traceback
+        traceback.print_exc()
+        print(f"[TechDDR] /start CRASHED: {type(e).__name__}: {e}", flush=True)
+        raise HTTPException(500, f"Tech DDR start crashed: {type(e).__name__}: {e}")
 
 
 @router.get("/status/{job_id}")
