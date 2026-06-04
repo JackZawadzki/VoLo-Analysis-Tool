@@ -1503,8 +1503,9 @@ def api_pr_reset(confirm: str = Query("", description="Must equal 'DELETE' to pr
                  user: CurrentUser = Depends(get_current_user)):
     """FULL WIPE of the portfolio (roster + documents + notes + updates + scores)
     so the next Sync rebuilds it from scratch. Admin only; requires confirm=DELETE.
-    Audit/cursor tables (pr_imports, pr_sync_state, pr_granola_syncs) are left
-    intact. Drive itself is never touched — only this app's mirror."""
+    Also clears the Granola sync cursor (pr_sync_state) so the next sync re-pulls
+    ALL notes; audit logs (pr_imports, pr_granola_syncs) are left intact. Drive
+    itself is never touched — only this app's mirror."""
     if user.role != "admin":
         raise HTTPException(403, "Only admins can reset the portfolio")
     if confirm != "DELETE":
@@ -1516,7 +1517,7 @@ def api_pr_reset(confirm: str = Query("", description="Must equal 'DELETE' to pr
                     "pr_derisking_scores", "pr_traction_snapshots", "pr_company_updates",
                     "pr_granola_notes", "pr_financial_snapshots", "pr_financials",
                     "pr_valuations", "pr_follow_ons", "pr_board_seats", "pr_comments",
-                    "pr_companies"):
+                    "pr_sync_state", "pr_companies"):
             try:
                 conn.execute(f"DELETE FROM {tbl}")
             except Exception:
