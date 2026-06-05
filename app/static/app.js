@@ -12178,6 +12178,14 @@ function _ddRenderSensitivity() {
         const se = document.getElementById('dd-sens-' + f.key); if (se) se.innerHTML = '<span class="dd-muted">—</span>';
         const ie = document.getElementById('dd-impact-' + f.key); if (ie) ie.innerHTML = '<span class="dd-muted">—</span>';
     }});
+    // Label the drivers we SKIPPED, with why — so a bare "—" (not a driver) is never
+    // confused with "no range" (Cons = Best) or "no effect" (tested, doesn't move this metric).
+    (s && Array.isArray(s.inactive) ? s.inactive : []).forEach(d => {
+        const se = document.getElementById('dd-sens-' + d.key);
+        if (se) se.innerHTML = d.reason === 'no_range'
+            ? `<span class="dd-muted" title="No range to test — set different Conservative and Best values for this assumption.">no range</span>`
+            : `<span class="dd-muted" title="Marked N/A in the Conservative or Best case.">n/a</span>`;
+    });
     if (!s || !s.available) {
         host.innerHTML = `<p class="dd-field-hint">${(s && s.reason) || 'Set differing Conservative and Best values, then run, to see what moves the outcome.'}</p>`;
         return;
@@ -12225,7 +12233,7 @@ function _ddRenderSensitivity() {
         </div>`;
         const se = document.getElementById('dd-sens-' + b.key);
         if (se) se.innerHTML = inert
-            ? `<span class="dd-muted" title="Does not affect ${mName} on the current basis">n/a</span>`
+            ? `<span class="dd-muted" title="Has a Conservative→Best range, but it doesn't move ${mName} on the current basis — e.g. margins/opex bite under EV/EBITDA or Cash-to-Breakeven, not a revenue-multiple MOIC.">no effect</span>`
             : `<span class="dd-sens-val ${dir}">${fmt(b.val, true)}</span>`;
         const ie = document.getElementById('dd-impact-' + b.key);
         if (ie) ie.innerHTML = inert

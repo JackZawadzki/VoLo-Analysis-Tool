@@ -914,14 +914,18 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
     total_swing = metric_best - metric_cons
 
     drivers = []
+    inactive = []    # tunable drivers we skip, WITH the reason — so the UI can label
+                     # "no range" / "n/a" distinctly from a true "no effect".
     first_order_sum = 0.0
     sum_down = 0.0   # Σ Base→Conservative contributions
     sum_up = 0.0     # Σ Base→Best contributions
     for key, label in _DD_DRIVERS:
         cv, bv = cons.get(key), best.get(key)
         if _is_na(cv) or _is_na(bv):
+            inactive.append({"key": key, "label": label, "reason": "na"})
             continue  # N/A in a bound → not a tunable driver here
         if abs(_num(cons, key, 0.0) - _num(best, key, 0.0)) < 1e-9:
+            inactive.append({"key": key, "label": label, "reason": "no_range"})
             continue  # no variation between cases
         # Hold everything at Base; move ONLY this lever to its conservative / best value.
         low_a = dict(base); low_a[key] = cv
@@ -974,6 +978,7 @@ def _dd_decompose(scenarios: dict, deal_params: dict, results: dict,
         "available": len(drivers) > 0,
         "metric": metric,
         "drivers": drivers,
+        "inactive": inactive,
         "metric_conservative": round(metric_cons, 3),
         "metric_base": round(metric_base, 3),
         "metric_best": round(metric_best, 3),
