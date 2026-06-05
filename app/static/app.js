@@ -57,6 +57,7 @@ const _GLOSSARY = {
     sim_median: "The 50th percentile (P50) of the Monte Carlo revenue distribution for each year. Half of simulated paths are above, half below. More conservative than the mean, which gets pulled up by outlier outcomes.",
     divergence: "Percentage difference between founder projections and the simulation median. Positive = founders project higher than the model. Used to assess whether management expectations are optimistic, realistic, or conservative.",
     portfolio_impact: "Simulated effect of adding this deal to the fund portfolio. Compares fund-level return metrics (TVPI, DPI, IRR) with and without this investment to measure marginal contribution.",
+    fund_distribution: "Distribution of the simulated fund's terminal TVPI across all portfolio universes (calibrated, NAV-inclusive basis). The left tail (<1x) is loss area we want small; the right tail (>3x) is the moonshot area we want long and full. Dashed lines are Carta's median, top-quartile, and top-decile so you can see where our portfolio's shape sits versus real funds.",
     carbon_impact: "Estimated CO₂ emissions avoided annually by the technology's deployment. Calculated by multiplying deployed units × production per unit × carbon intensity of the displaced resource.",
     sensitivity: "One-at-a-time perturbation analysis showing how each input variable affects the expected MOIC and P(>3x). Larger spreads indicate higher sensitivity — these are the assumptions that matter most.",
     valuation_context: "Public comparable company multiples (EV/Revenue, EV/EBITDA) from Damodaran/NYU sector data. Provides market context for the exit multiples used in the simulation.",
@@ -3721,6 +3722,11 @@ function wizRenderReport(r) {
                 </tbody>
             </table>
             ${_cartaCaption ? `<p class="rpt-narrative" style="font-size:12px;color:#6b7280;margin-top:10px;">${_cartaCaption}</p>` : ''}
+            ${pImpact.fund_dist ? `<div class="rpt-chart-wrap" style="margin-top:16px;">
+                <h4 class="rpt-chart-title">Fund Outcome Distribution vs. Carta Ladder ${infoTip('fund_distribution')}</h4>
+                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Terminal fund TVPI across ${(pImpact.fund_dist.n||2000).toLocaleString()} simulated universes. <span style="color:#b3261e;font-weight:600;">Red = loss zone (&lt;1x)</span> — we want this area small; <span style="color:#5B7744;font-weight:600;">green = moonshot zone (&ge;3x)</span> — we want this long and full. Dashed lines mark Carta's median, top-quartile, and top-decile; solid line is our fund's median. ${pImpact.fund_dist.p_below_1x != null ? `<strong>${(pImpact.fund_dist.p_below_1x*100).toFixed(0)}%</strong> of universes finish below 1x; <strong>${(pImpact.fund_dist.p_above_3x*100).toFixed(0)}%</strong> reach 3x+.` : ''}</p>
+                <canvas id="rpt-funddist-chart" height="280"></canvas>
+            </div>` : ''}
         </div>`;
     }
 
@@ -4368,6 +4374,53 @@ function _wizRenderCharts(r) {
                     responsive: true, maintainAspectRatio: false,
                     scales: {x: {stacked: true, ticks: {font: chartFont, maxRotation: 45, autoSkip: true, maxTicksLimit: 12}}, y: {stacked: true, title: {display: true, text: 'tCO2', font: chartFont}}},
                     plugins: {legend: {position: 'top', labels: {font: chartFont}}}
+                }
+            });
+        }
+    }
+
+    // Fund outcome distribution vs Carta ladder (position-sizing cockpit)
+    const pImpact = r.portfolio_impact || {};
+    const fd = pImpact.fund_dist;
+    if (fd && fd.bin_centers && fd.bin_centers.length) {
+        const ctxFD = document.getElementById('rpt-funddist-chart');
+        if (ctxFD) {
+            const cl = pImpact.carta_lines || {};
+            const barColors = fd.bin_centers.map(c =>
+                c < 1.0 ? 'rgba(220,53,69,0.55)' : (c >= 3.0 ? 'rgba(91,119,68,0.72)' : 'rgba(157,181,196,0.55)'));
+            // Map a TVPI value to a fractional category index for the vertical lines
+            const c0 = fd.bin_centers[0], bw = fd.bin_width || 1;
+            const idxOf = (v) => (v - c0) / bw;
+            const lineDefs = [];
+            const addLine = (v, label, color, dash) => { if (v != null && isFinite(v)) lineDefs.push({v, label, color, dash}); };
+            addLine(cl.p50, 'Carta median', '#9CA3AF', [3,3]);
+            addLine(cl.p75, 'Carta top-quartile', '#E0A030', [5,3]);
+            addLine(cl.p90, 'Carta top-decile', VOLO.green, [5,3]);
+            addLine(fd.median, 'Our median', VOLO.slate, []);
+            _wizReportCharts.funddist = new Chart(ctxFD, {
+                type: 'bar',
+                data: {
+                    labels: fd.bin_centers.map(c => c.toFixed(1)),
+                    datasets: [{ label: 'Universes', data: fd.counts, backgroundColor: barColors, borderWidth: 0, barPercentage: 1.0, categoryPercentage: 1.0 }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: {
+                        legend: {display: false},
+                        tooltip: {callbacks: {title: (it) => 'TVPI ≈ ' + it[0].label + 'x', label: (it) => it.formattedValue + ' universes'}},
+                        annotation: {annotations: Object.fromEntries(lineDefs.map((p, i) => ['fl'+i, {
+                            type: 'line', xMin: idxOf(p.v), xMax: idxOf(p.v),
+                            borderColor: p.color, borderWidth: 2, borderDash: p.dash,
+                            label: {display: true, content: p.label, position: (i % 2 ? 'end' : 'start'),
+                                    backgroundColor: 'rgba(255,255,255,0.82)', color: p.color, font: {size: 9}, padding: 2}
+                        }]))}
+                    },
+                    scales: {
+                        y: {display: false, beginAtZero: true},
+                        x: {title: {display: true, text: 'Fund TVPI (x)', font: chartFont},
+                            ticks: {font: chartFont, autoSkip: true, maxTicksLimit: 11,
+                                    callback: function(val) { const l = this.getLabelForValue(val); return (+l).toFixed(0) + 'x'; }}}
+                    }
                 }
             });
         }
@@ -12173,18 +12226,22 @@ function _ddRenderSensitivity() {
         const cm = (document.getElementById('dd-metric') || {}).value || 'expected_moic';
         echo.textContent = 'Showing drivers of ' + _ddMetricName(cm);
     }
-    // reset table cols
+    // A single muted "—" for every inactive cell; the *reason* lives in the native
+    // hover tooltip (browser-native title → no custom tooltip to break). cursor:help
+    // signals that the cell is hoverable.
+    const ddDash = (t) => `<span class="dd-muted" style="cursor:help" title="${(t || '').replace(/"/g, '&quot;')}">—</span>`;
+    // reset table cols (default reason = not a driver of the selected metric)
     DD_FIELDS.forEach(f => { if (f.key) {
-        const se = document.getElementById('dd-sens-' + f.key); if (se) se.innerHTML = '<span class="dd-muted">—</span>';
-        const ie = document.getElementById('dd-impact-' + f.key); if (ie) ie.innerHTML = '<span class="dd-muted">—</span>';
+        const se = document.getElementById('dd-sens-' + f.key); if (se) se.innerHTML = ddDash('Not a sensitivity driver for the selected metric.');
+        const ie = document.getElementById('dd-impact-' + f.key); if (ie) ie.innerHTML = ddDash('Not a sensitivity driver for the selected metric.');
     }});
-    // Label the drivers we SKIPPED, with why — so a bare "—" (not a driver) is never
-    // confused with "no range" (Cons = Best) or "no effect" (tested, doesn't move this metric).
+    // Skipped drivers: still a "—", but the tooltip explains WHY (same Cons/Best, or N/A).
     (s && Array.isArray(s.inactive) ? s.inactive : []).forEach(d => {
-        const se = document.getElementById('dd-sens-' + d.key);
-        if (se) se.innerHTML = d.reason === 'no_range'
-            ? `<span class="dd-muted" title="No range to test — set different Conservative and Best values for this assumption.">no range</span>`
-            : `<span class="dd-muted" title="Marked N/A in the Conservative or Best case.">n/a</span>`;
+        const t = d.reason === 'no_range'
+            ? 'Conservative and Best are set to the same value — give them different values to test this input.'
+            : 'Marked N/A in the Conservative or Best case.';
+        const se = document.getElementById('dd-sens-' + d.key); if (se) se.innerHTML = ddDash(t);
+        const ie = document.getElementById('dd-impact-' + d.key); if (ie) ie.innerHTML = ddDash(t);
     });
     if (!s || !s.available) {
         host.innerHTML = `<p class="dd-field-hint">${(s && s.reason) || 'Set differing Conservative and Best values, then run, to see what moves the outcome.'}</p>`;
@@ -12231,14 +12288,11 @@ function _ddRenderSensitivity() {
             <div class="dd-torn-track">${inert ? `<span class="dd-inert-tag">no effect on ${mName}</span>` : `<div class="dd-torn-bar ${dir}" style="width:${w}%"></div>`}</div>
             <div class="dd-torn-val">${inert ? '<span class="dd-muted">0</span>' : fmt(b.val, true) + ' <span class="dd-muted">' + b.pct + '%</span>'}</div>
         </div>`;
+        const inertTitle = `Has a Conservative→Best range, but it doesn't move ${mName} on the current basis (e.g. margins/opex bite under EV/EBITDA or Cash-to-Breakeven, not a revenue-multiple MOIC).`;
         const se = document.getElementById('dd-sens-' + b.key);
-        if (se) se.innerHTML = inert
-            ? `<span class="dd-muted" title="Has a Conservative→Best range, but it doesn't move ${mName} on the current basis — e.g. margins/opex bite under EV/EBITDA or Cash-to-Breakeven, not a revenue-multiple MOIC.">no effect</span>`
-            : `<span class="dd-sens-val ${dir}">${fmt(b.val, true)}</span>`;
+        if (se) se.innerHTML = inert ? ddDash(inertTitle) : `<span class="dd-sens-val ${dir}">${fmt(b.val, true)}</span>`;
         const ie = document.getElementById('dd-impact-' + b.key);
-        if (ie) ie.innerHTML = inert
-            ? '<span class="dd-muted">—</span>'
-            : `<span class="dd-impact-bar" style="width:${Math.max(4, b.pct)}%"></span><span class="dd-impact-num">${b.pct}%</span>`;
+        if (ie) ie.innerHTML = inert ? ddDash(inertTitle) : `<span class="dd-impact-bar" style="width:${Math.max(4, b.pct)}%"></span><span class="dd-impact-num">${b.pct}%</span>`;
     }
     if (mode === 'oat' && Math.abs(s.interaction) > 0.005) {
         const iw = Math.max(2, 100 * Math.abs(s.interaction) / maxAbs);
