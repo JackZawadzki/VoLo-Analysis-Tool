@@ -26,6 +26,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 from typing import Any
 
 from .derisking import DIMENSIONS, DIMENSION_KEYS, score_company
@@ -209,13 +210,21 @@ def reduce_company(client, company_name: str, docs_ext: list[dict], model: str) 
 
 
 # ── Public entry point ────────────────────────────────────────────────────────
-def generate_update(conn, company_id: int, *, period: str = "2026 LLM",
+def _current_quarter() -> str:
+    """Period label for a review run, e.g. 'Q2 2026'. Same-quarter re-runs
+    overwrite; a new quarter adds a column so derisking trends accumulate."""
+    d = date.today()
+    return f"Q{(d.month - 1) // 3 + 1} {d.year}"
+
+
+def generate_update(conn, company_id: int, *, period: str = None,
                     model: str = DEFAULT_MODEL) -> dict:
     company = conn.execute("SELECT id, name, fund FROM pr_companies WHERE id=?",
                            (company_id,)).fetchone()
     if not company:
         raise ValueError(f"company {company_id} not found")
     cname, cfund = company["name"], (company["fund"] or "Fund I")
+    period = period or _current_quarter()
 
     n_docs = conn.execute("SELECT COUNT(*) AS n FROM pr_documents WHERE company_id=?",
                           (company_id,)).fetchone()["n"]

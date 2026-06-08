@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=230">
+    <link rel="stylesheet" href="/static/styles.css?v=238">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1472,6 +1472,10 @@
         <div id="dd-outputs" style="display:none;">
             <div id="dd-hero" class="dd-hero"></div>
 
+            <div id="dd-decision" class="dd-decision"></div>
+            <div id="dd-financing" class="dd-decision"></div>
+            <div id="dd-monitoring" class="dd-decision"></div>
+
             <div class="dd-pnl-container">
                 <h3 class="dd-section-title">Scenario Comparison</h3>
                 <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
@@ -2434,10 +2438,10 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=234"></script>
+    <script src="/static/app.js?v=239"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
-    <script src="/static/portfolio.js?v=11"></script>
+    <script src="/static/portfolio.js?v=12"></script>
     <script>
     // Inject info-tip icons into form labels based on associated input IDs
     document.addEventListener('DOMContentLoaded', function() {

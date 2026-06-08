@@ -1379,7 +1379,7 @@ def api_pr_company_full(company_id: int, user: CurrentUser = Depends(get_current
 
 @api.post("/company/{company_id}/generate-update")
 def api_pr_generate_update(company_id: int,
-                           period: str = Query("2026 LLM"),
+                           period: Optional[str] = Query(None),
                            model: Optional[str] = Query(None),
                            user: CurrentUser = Depends(get_current_user)):
     """Run the two-pass LLM over a company's ingested documents and persist a
@@ -1567,7 +1567,7 @@ def api_pr_sync_all(parent_folder_id: Optional[str] = Query(None),
 
 
 @api.post("/generate-all")
-def api_pr_generate_all(period: str = Query("2026 LLM"),
+def api_pr_generate_all(period: Optional[str] = Query(None),
                         model: Optional[str] = Query(None),
                         user: CurrentUser = Depends(get_current_user)):
     """Generate the AI update for every company that has documents. Sequential

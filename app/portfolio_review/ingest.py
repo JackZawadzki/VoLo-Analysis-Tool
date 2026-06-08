@@ -199,53 +199,77 @@ def discover_companies(conn, service, root_folder_id: str, default_fund: str = "
 _MAX_FILES_PER_COMPANY = int(os.environ.get("PORTFOLIO_MAX_FILES_PER_COMPANY", "0") or 0)
 
 
-def ingest_company(conn, service, company_id: int, max_files: int = _MAX_FILES_PER_COMPANY) -> dict:
-    """Walk every linked Drive folder for one company (recursively), extract text
-    from each supported file, and upsert into pr_documents. Also mirrors Granola
-    notes. Skips files already pulled at the same Drive modifiedTime, so it's
-    resumable + cheap on re-sync. Idempotent (content-hash)."""
+# Per-request wall-clock budget. ingest_company downloads new files until this
+# many seconds elapse, then returns remaining/done so the caller loops — so no
+# single HTTP request can time out, regardless of how many/large the files are.
+_INGEST_TIME_BUDGET_S = int(os.environ.get("PORTFOLIO_INGEST_TIME_BUDGET_S", "40") or 40)
+
+
+def ingest_company(conn, service, company_id: int, max_files: int = _MAX_FILES_PER_COMPANY,
+                   time_budget_s: int = _INGEST_TIME_BUDGET_S) -> dict:
+    """Walk a company's linked Drive folder(s) recursively and pull each supported
+    file into pr_documents. Skips files already pulled at the same Drive
+    modifiedTime (resumable + cheap re-sync). Downloads new files only until
+    `time_budget_s` elapses, then returns {remaining, done} so the caller can
+    loop without any single request timing out. Mirrors Granola notes once done."""
+    import time
+    start = time.monotonic()
     folders = conn.execute(
         "SELECT * FROM pr_company_folders WHERE company_id=?", (company_id,)).fetchall()
-    seen, inserted, changed, skipped = 0, 0, 0, 0
+
+    # 1. List every file across the company's folders.
+    all_files = []
     for fol in folders:
+        fname = fol["drive_folder_name"]
         try:
             files = _list_files_recursive(service, fol["drive_folder_id"])
         except Exception as e:
-            logger.warning("List failed for folder %s: %s", fol["drive_folder_name"], e)
+            logger.warning("List failed for folder %s: %s", fname, e)
             continue
         for fmeta in (files if not max_files else files[:max_files]):
-            seen += 1
-            # Skip files already pulled at this Drive modifiedTime — makes
-            # re-sync cheap and lets a timed-out ingest resume where it left off.
-            prev = conn.execute(
-                "SELECT source_modified FROM pr_documents "
-                "WHERE company_id=? AND source='drive' AND source_doc_id=?",
-                (company_id, fmeta["id"])).fetchone()
-            if prev and prev["source_modified"] and prev["source_modified"] == fmeta.get("modifiedTime"):
-                skipped += 1
-                continue
-            text = _download_and_extract_text(service, fmeta)
-            if not text:
-                skipped += 1
-                continue
-            _, was_changed = _upsert_document(
-                conn, company_id,
-                source="drive", source_doc_id=fmeta["id"],
-                title=fmeta.get("name", ""),
-                doc_type=_classify_file(fmeta) or "other",
-                mime_type=fmeta.get("mimeType", ""),
-                source_url=fmeta.get("webViewLink", ""),
-                folder_path=fol.get("drive_folder_name", ""),
-                body_text=text,
-                occurred_at=(fmeta.get("modifiedTime") or "")[:10] or None,
-                source_modified=fmeta.get("modifiedTime"),
-            )
-            inserted += 1
-            changed += 1 if was_changed else 0
-    granola = mirror_granola_to_documents(conn, company_id)
+            all_files.append((fmeta, fname))
+
+    # 2. Keep only files that are new or changed since the last pull.
+    todo = []
+    for fmeta, fname in all_files:
+        prev = conn.execute(
+            "SELECT source_modified FROM pr_documents "
+            "WHERE company_id=? AND source='drive' AND source_doc_id=?",
+            (company_id, fmeta["id"])).fetchone()
+        if prev and prev["source_modified"] and prev["source_modified"] == fmeta.get("modifiedTime"):
+            continue
+        todo.append((fmeta, fname))
+
+    # 3. Download + extract until the time budget is hit (always at least one).
+    inserted, skipped_no_text, processed = 0, 0, 0
+    for fmeta, fname in todo:
+        if processed and (time.monotonic() - start) > time_budget_s:
+            break
+        text = _download_and_extract_text(service, fmeta)
+        processed += 1
+        if not text:
+            skipped_no_text += 1
+            continue
+        _upsert_document(
+            conn, company_id,
+            source="drive", source_doc_id=fmeta["id"],
+            title=fmeta.get("name", ""),
+            doc_type=_classify_file(fmeta) or "other",
+            mime_type=fmeta.get("mimeType", ""),
+            source_url=fmeta.get("webViewLink", ""),
+            folder_path=fname,
+            body_text=text,
+            occurred_at=(fmeta.get("modifiedTime") or "")[:10] or None,
+            source_modified=fmeta.get("modifiedTime"))
+        inserted += 1
     conn.commit()
-    return {"files_seen": seen, "documents_upserted": inserted,
-            "documents_changed": changed, "skipped": skipped, "granola": granola}
+
+    remaining = len(todo) - processed
+    granola = mirror_granola_to_documents(conn, company_id) if remaining == 0 else 0
+    conn.commit()
+    return {"files_total": len(all_files), "needed": len(todo),
+            "documents_upserted": inserted, "skipped_no_text": skipped_no_text,
+            "remaining": remaining, "done": remaining == 0, "granola": granola}
 
 
 def mirror_granola_to_documents(conn, company_id: int) -> int:

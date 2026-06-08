@@ -162,6 +162,8 @@
           <a class="pf-btn pf-btn-ghost pf-hidden" id="pf-connect" target="_blank" rel="noopener">Connect Drive</a>
           <button class="pf-btn" id="pf-sync">Sync from Drive</button>
           <button class="pf-btn pf-btn-ghost" id="pf-genall">Process all (sync + update)</button>
+          <label class="pf-btn pf-btn-ghost" for="pf-xlsx" title="Import the portfolio working-doc spreadsheet (returns, IRR, ownership, board) — matched to companies by name">Import Excel</label>
+          <input id="pf-xlsx" type="file" accept=".xlsx,.xlsm" class="pf-hidden">
           <button class="pf-btn pf-btn-ghost pf-btn-xs pf-danger-btn" id="pf-reset" title="Delete the entire portfolio roster + documents and start over">Reset…</button>
         </div>
       </div>
@@ -192,6 +194,34 @@
     if (genall) genall.addEventListener('click', adminGenAll);
     const reset = document.getElementById('pf-reset');
     if (reset) reset.addEventListener('click', adminReset);
+    const xlsx = document.getElementById('pf-xlsx');
+    if (xlsx) xlsx.addEventListener('change', () => { if (xlsx.files && xlsx.files[0]) uploadExcel(xlsx.files[0]); });
+  }
+
+  // Import the portfolio working-doc spreadsheet (returns, IRR, ownership, board,
+  // financials). The loader matches rows to companies by name, so it enriches the
+  // Drive-sourced roster rather than creating duplicates.
+  async function uploadExcel(file) {
+    const msg = document.getElementById('pf-admin-msg');
+    msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> Importing ${esc(file.name)}…</div>`;
+    const fd = new FormData(); fd.append('file', file);
+    const token = localStorage.getItem('rvm_token') || '';
+    try {
+      const r = await fetch(`${API}/import-upload`, {
+        method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {}, body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+      const c = d.counts || {};
+      const total = Object.values(c).reduce((a, b) => a + (b || 0), 0);
+      if (!total) {
+        msg.innerHTML = `<div class="pf-gen-err">Imported 0 rows — no recognized sheets. The loader expects tabs like "PortCo Data - Fund I", "IRR", "Financials Basic". Send me your workbook's tab names + layout and I'll map them.</div>`;
+      } else {
+        msg.innerHTML = `<div class="pf-ok pf-tiny">Imported (${esc(d.status || 'ok')}): ${c.companies || 0} companies · ${c.returns || 0} returns/IRR · ${c.investments || 0} investments · ${c.board_seats || 0} board seats · ${c.financials || 0} financials.${(d.errors && d.errors.length) ? ` Issues: ${esc(d.errors.slice(0, 2).join('; '))}` : ''}</div>`;
+      }
+      setTimeout(renderDashboard, 1800);
+    } catch (e) {
+      msg.innerHTML = `<div class="pf-gen-err">Import failed: ${esc(e.message)}</div>`;
+    }
   }
 
   async function adminReset() {
@@ -243,8 +273,11 @@
       btn.textContent = `Processing ${done + 1}/${cos.length}…`;
       msg.innerHTML = `<div class="pf-gen-busy"><span class="pf-spin"></span> ${done + 1}/${cos.length} — ${esc(co.name)}: pulling documents + writing update…</div>`;
       try {
-        const ing = await postJSON(`${API}/company/${co.id}/ingest`).catch(() => ({}));
-        docs += (ing && ing.documents_upserted) || 0;
+        let ing = null, guard = 0;
+        do {
+          ing = await postJSON(`${API}/company/${co.id}/ingest`).catch(() => ({ done: true }));
+          docs += (ing && ing.documents_upserted) || 0;
+        } while (ing && !ing.done && ++guard < 300);
         await postJSON(`${API}/company/${co.id}/generate-update`);
       } catch (e) { failed.push(co.name); }
       done++;
@@ -370,11 +403,15 @@
     const label = btn.textContent; btn.textContent = 'Syncing…';
     msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Pulling this company's documents from its Drive folder…</div>`;
     try {
-      let ing = null;
-      try { ing = await postJSON(`${API}/company/${id}/ingest`); }
-      catch (e) { ing = { _err: e.message }; }
-      const n = (ing && ing.documents_upserted) || 0;
-      msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Synced ${n} document${n === 1 ? '' : 's'}. Reading them + notes and writing the update… (~20–60s)</div>`;
+      let total = 0, ing = null, guard = 0;
+      do {
+        ing = await postJSON(`${API}/company/${id}/ingest`).catch(e => ({ done: true, _err: e.message }));
+        total += (ing && ing.documents_upserted) || 0;
+        if (ing && !ing.done) {
+          msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Pulling documents… ${total} synced, ${ing.remaining} to go.</div>`;
+        }
+      } while (ing && !ing.done && ++guard < 300);
+      msg.innerHTML = `<div class="pf-card pf-gen-busy"><span class="pf-spin"></span> Synced ${total} document${total === 1 ? '' : 's'}. Reading them + writing the update… (~20–60s)</div>`;
       await postJSON(`${API}/company/${id}/generate-update`);
       await renderCompany(id);
     } catch (e) {
