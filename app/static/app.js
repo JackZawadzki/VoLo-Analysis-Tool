@@ -11895,6 +11895,7 @@ function ddReportChanged() {
             document.getElementById('dd-empty').style.display = 'none';
             document.getElementById('dd-workspace').style.display = '';
             document.getElementById('dd-outputs').style.display = 'none';
+            document.getElementById('dd-dsupport').style.display = 'none';
             _ddSetButtons(true);
         })
         .catch(e => alert('Could not load report: ' + e.message));
@@ -12077,7 +12078,7 @@ function ddBuildTable(preset) {
     tbl.innerHTML = html;
 }
 
-function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; }
+function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; document.getElementById('dd-dsupport').style.display = 'none'; }
 
 function _ddOnEdit() { /* live-edit hook (kept light; results refresh on Run) */ }
 
@@ -12149,17 +12150,157 @@ function ddRun() {
         _dd.detailScenario = 'base';
         _ddRenderAll();
         document.getElementById('dd-outputs').style.display = '';
+        document.getElementById('dd-dsupport').style.display = '';   // decision support sits last, after the methodology
     }).catch(e => alert('Run error: ' + e.message))
       .finally(() => { if (btn) { btn.disabled = false; btn.textContent = 'Run Simulation'; } });
 }
 
 function _ddRenderAll() {
     _ddRenderHero();
+    _ddRenderFinancing();   // Decide — financing, dilution, follow-on, runway, timing
+    _ddRenderMonitoring();  // Monitor — what to watch & when (Q5)
     _ddRenderComparison();
     _ddRenderSensitivity();
     _ddRenderTwoWay();
     _ddRenderDetailPills();
     _ddRenderDetail(_dd.detailScenario);
+}
+
+const _ddM = v => (v == null || isNaN(v) ? '—' : '$' + _ddFmt(v) + 'M');
+
+// ── Decide §2: The next round, per scenario — the financing wall (Q2) ─
+// Prices the NEXT raise honestly at what the company is worth then (forward revenue × the
+// deal's multiple), not an assumed up-round step-up. Exposes the real early downside: in the
+// weak case the company needs to raise more than it's worth — a cram-down it may not get.
+function _ddRenderFinancing() {
+    const el = document.getElementById('dd-financing'); if (!el) return;
+    const r = _dd.result, nr = r && r.next_round, cmp = r && r.comparison;
+    if (!nr || !nr.available || !cmp) { el.innerHTML = ''; return; }
+    const moic = cmp.moic || {}, ev = cmp.exit_ev_m || {};
+    const rnd = nr.current_round_m || 0;
+    const check = (_dd.deal && _dd.deal.check_size_m) || (r.pricing && r.pricing.check_size_m) || 0;
+    const STAT = {
+        wall: { cls: 'dd-nr-wall', tag: 'Financing wall' },
+        dilutive: { cls: 'dd-nr-dil', tag: 'Mild dilution' },
+        self_funded: { cls: 'dd-nr-safe', tag: 'Self-funded' },
+    };
+    const cards = DD_CASES.map(k => {
+        const c = nr.cases[k]; if (!c) return '';
+        const s = STAT[c.status] || STAT.dilutive;
+        let body;
+        if (c.status === 'self_funded') {
+            body = `<div class="dd-nr-line">The ${_ddM(nr.current_round_m)} round funds it to exit.</div>
+                    <div class="dd-nr-own">No further raise — your <b>${_ddFmt(c.entry_ownership_pct, 1)}%</b> holds.</div>`;
+        } else {
+            const down = c.down_round ? ` <span class="dd-nr-down">down round</span>` : '';
+            body = `<div class="dd-nr-line">Runs out of cash ~<b>Yr ${c.cash_out_year}</b></div>
+                    <div class="dd-nr-line">Needs <b>${_ddM(c.raise_need_m)}</b> · worth <b>${_ddM(c.next_pre_money_m)}</b> then${down}</div>
+                    <div class="dd-nr-fine">rev ${_ddM(c.revenue_at_m)} × ${_ddFmt(c.rev_multiple, 1)} · ${_ddFmt(c.dilution_pct, 0)}% dil</div>
+                    <div class="dd-nr-own">${_ddFmt(c.entry_ownership_pct, 1)}% → <b>${_ddFmt(c.ownership_after_pct, 1)}%</b></div>`;
+        }
+        return `<div class="dd-nr-card ${s.cls}"><div class="dd-nr-case">${DD_CASE_LABEL[k]}</div><div class="dd-nr-tag">${s.tag}</div>${body}</div>`;
+    }).join('');
+    const colData = (k) => {
+        const c = nr.cases[k] || {};
+        const self = c.status === 'self_funded';
+        const raise = self ? 0 : (c.raise_need_m || 0);
+        const own = c.entry_ownership_pct;
+        const nextPost = self ? 0 : ((c.next_pre_money_m || 0) + raise);
+        const waitMoic = (!self && nextPost > 0 && ev[k] != null) ? ev[k] / nextPost : null;
+        return {
+            followon: self ? '—' : _ddM((own / 100) * raise),
+            capital: _ddM(rnd + raise),
+            nowMoic: moic[k] != null ? _ddFmt(moic[k], 1) + '×' : '—',
+            waitMoic: self ? '—' : (waitMoic != null ? _ddFmt(waitMoic, 1) + '×' : '—'),
+        };
+    };
+    const C = colData('conservative'), B = colData('base'), X = colData('best_case');
+    const row = (label, hint, key) => `<tr><td class="dd-fo-lbl">${label}<span class="dd-fo-hint">${hint}</span></td><td>${C[key]}</td><td>${B[key]}</td><td>${X[key]}</td></tr>`;
+    el.innerHTML = `
+      <div class="dd-dsec-head"><h3 class="dd-section-title">Financing, dilution &amp; follow-on</h3></div>
+      <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+        <p><strong>What it shows:</strong> for each case — whether the current round funds the company to exit or it must raise again (when, how much, how dilutive), and what that raise means for us: the reserve to hold our stake, the total capital consumed to reach exit, and whether to enter now or at the next round.</p>
+        <p><strong>Where the numbers come from:</strong> every figure is <em>derived</em> from the per-case assumptions you already entered (revenue path, margins, opex/burn, capex, exit multiple, and the round/check sizes) — it adds <b>no new inputs</b>. The burn path is the P&amp;L's cumulative free cash flow; the rest is arithmetic on top of it.</p>
+        <p><strong>Theory:</strong> dilution is a consequence of the cash a company must raise to fund its burn, priced at what it is worth when it raises — not an assumed up-round. Pricing on the company's own projected value exposes a <em>financing wall</em> (a raise larger than the company's value) that a step-up assumption would hide — the binding downside in a weak case, biting at the runway well before any exit. Runways can look alike across cases early (opex-dominated burn while revenue is small) and diverge only later, in total capital and whether breakeven is reached. Entering now buys more ownership than waiting in any case that survives; waiting only skips the stalls but forfeits the winners too. A path that consumes far more capital than its outcome justifies argues for a smaller check.</p>
+        <p><strong>Math:</strong> cash-out (runway) = first year (current round + cumulative operating FCF) &lt; 0. Raise need = peak cumulative burn − current round. Next pre-money = forward revenue at cash-out × the deal's exit multiple (a proxy for the interim price); dilution = raise ÷ (next pre + raise); a <em>financing wall</em> when raise &gt; next pre, a <em>down round</em> when next pre &lt; current post. Follow-on to hold ownership <em>f</em> = <em>f</em> × raise. Total capital to exit = current round + raise = the deepest cumulative cash trough. Enter-now MOIC = exit EV × diluted ownership ÷ check; wait MOIC = exit EV ÷ the next round's post-money.</p>
+        <p><strong>Modeling choices &amp; caveats:</strong> none of these is a new input — (1) the next round is priced at the deal's exit multiple as a stand-in for an interim-round price; (2) "wait" assumes that round is the last raise before exit (no further dilution); (3) runway is at the <em>planned</em> burn — a company facing cash-out can cut costs to extend it, so read it as "at plan," not a hard floor. Follow-on assumes we hold and fully exercise pro-rata rights, and for a financing-wall case the wait MOIC assumes it can raise at all — it may not.</p>
+      </div></details>
+      <p class="dd-dsec-lede">Each case's <b>next</b> raise beyond the ${_ddM(nr.current_round_m)} round (${_ddM(nr.current_post_m)} post-money), and what it means for our ${_ddM(check)} stake:</p>
+      <div class="dd-nr-grid">${cards}</div>
+      <table class="dd-fo-table">
+        <thead><tr><th></th><th class="dd-fo-cons">Conservative</th><th class="dd-fo-base">Base</th><th class="dd-fo-best">Best</th></tr></thead>
+        <tbody>
+          ${row('Follow-on to hold our stake', 'our pro-rata of the next raise', 'followon')}
+          ${row('Total capital to exit', 'this round + all future raises', 'capital')}
+          ${row('Enter now → our MOIC', 'our check at this round', 'nowMoic')}
+          ${row('Wait, enter next round → MOIC', 'same check at the next round’s price', 'waitMoic')}
+        </tbody>
+      </table>`;
+}
+
+// ── Monitor: what to watch & when — milestones lead, financials lag (Q5)
+// Milestones are the LEADING drivers (you see them before the P&L moves); the financial
+// fan is the lagging confirmation. We surface both, plus the cleanest read: which year each
+// case crosses into EBITDA profit.
+function _ddRenderMonitoring() {
+    const el = document.getElementById('dd-monitoring'); if (!el) return;
+    const dv = _dd.result && _dd.result.divergence;
+    if (!dv || !dv.available) { el.innerHTML = ''; return; }
+    const milHead = `<div class="dd-mil-head"><div class="dd-mil-name"></div><div class="dd-mil-vals">${DD_CASES.map(k => `<span class="dd-mil-ch dd-c-${k}">${DD_CASE_LABEL[k]}</span>`).join('')}</div></div>`;
+    const mil = (dv.milestones || []).map(m => {
+        const vals = DD_CASES.map(k => `<span class="dd-mil-v dd-c-${k}">${m.by_case[k] || '—'}</span>`).join('');
+        return `<div class="dd-mil-row"><div class="dd-mil-name">${m.label}<span class="dd-mil-hint">${m.hint}</span></div><div class="dd-mil-vals">${vals}</div></div>`;
+    }).join('');
+    const sepBits = (dv.metrics || []).map(mt =>
+        `<span class="dd-sep-bit"><b>${mt.label}</b> ~${mt.first_separation_year ? 'Yr ' + mt.first_separation_year : 'late'}</span>`
+    ).join('<span class="dd-sep-dot">·</span>');
+    const be = dv.ebitda_breakeven_year || {};
+    const beTxt = DD_CASES.map(k => `<span class="dd-c-${k}"><b>${DD_CASE_LABEL[k]}</b> ${be[k] ? 'Yr ' + be[k] : 'never'}</span>`).join(' · ');
+    el.innerHTML = `
+      <div class="dd-dsec-head"><h3 class="dd-section-title">Leading indicators</h3></div>
+      <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
+        <p><strong>What it shows:</strong> Which signals distinguish the three cases, and when — separating leading operational milestones from lagging financial metrics.</p>
+        <p><strong>Theory:</strong> Financial metrics lag operations, and early spread between cases can be a mechanical artifact of differing Year-1 inputs rather than genuine signal. Milestones — launch timing, margin ramp, growth rate — move first and drive the financials that follow, so they are the indicators to watch early. The clearest single confirmation is the year EBITDA turns positive — when the company actually crosses into profit.</p>
+        <p><strong>How to use it:</strong> treat these as tripwires. Plot the company's actuals against the lines at each board meeting; tracking at or below the Conservative path by its breakeven year is the trigger to act — bridge, double down, or write down. The model flags the signal; the decision stays judgment.</p>
+        <p><strong>Math:</strong> First-separation year = the first year the Best-minus-Conservative gap exceeds a threshold (40% of the Base value for dollar metrics; 10 percentage points for margins). Breakeven year = the first commercial year with EBITDA ≥ 0, computed per case.</p>
+      </div></details>
+      <p class="dd-dsec-lede">Early on, the three cases look alike. Watch the operational <b>milestones</b> first — they move before the P&amp;L; the financial spread below only confirms which case the company is on a year or two later.</p>
+      <div class="dd-mon-block">
+        <div class="dd-mon-blab"><span class="dd-mon-step">1</span> Milestones to watch <span class="dd-mon-tag dd-tag-lead">leading</span></div>
+        <div class="dd-mil">${milHead}${mil}</div>
+      </div>
+      <div class="dd-mon-block">
+        <div class="dd-mon-blab"><span class="dd-mon-step">2</span> Financial separation <span class="dd-mon-tag dd-tag-lag">lagging</span></div>
+        <p class="dd-mon-sep">The cases first separate cleanly at: ${sepBits}. Early revenue gaps partly reflect differing Year-1 inputs, so treat them as weak signal.</p>
+        <div class="dd-mon-chart-wrap"><canvas id="dd-mon-chart" height="200"></canvas></div>
+        <p class="dd-mon-sep"><b>Year EBITDA turns positive:</b> ${beTxt}.</p>
+      </div>`;
+    if (typeof Chart !== 'undefined') {
+        const cv = document.getElementById('dd-mon-chart');
+        const eb = (dv.metrics || []).find(m => m.key === 'ebitda');
+        if (cv && eb) {
+            _ddDestroy('mon');
+            const ser = eb.series || {};
+            const n = Math.max(...DD_CASES.map(k => (ser[k] || []).length), 0);
+            const labels = Array.from({ length: n }, (_, i) => 'Yr ' + (i + 1));
+            const col = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
+            _dd.charts.mon = new Chart(cv.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels, datasets: DD_CASES.map(k => ({
+                        label: DD_CASE_LABEL[k], data: (ser[k] || []), borderColor: col[k],
+                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0,
+                        borderWidth: k === 'base' ? 2.6 : 1.8, borderDash: k === 'base' ? [] : [4, 3],
+                    }))
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+                    scales: { y: { title: { display: true, text: 'EBITDA ($M)' }, grid: { color: ctx => (ctx.tick && ctx.tick.value === 0) ? 'rgba(40,40,40,0.45)' : 'rgba(0,0,0,0.05)' } } },
+                },
+            });
+        }
+    }
 }
 
 // ── Hero (Base case headline) ─────────────────────────────────────

@@ -1097,6 +1097,216 @@ def _dd_two_way_grid(base: dict, deal_params: dict, recovery_moic: float,
     }
 
 
+def solve_entry_price(assumptions: dict, deal_params: dict, recovery_moic: float,
+                      metric: str, target: float):
+    """
+    The most pre-money ($M) you could pay for this scenario and still hit `target` on
+    `metric`. The return metrics are monotonically DECREASING in price (cheaper entry →
+    more ownership → higher MOIC), so a bisection finds the crossover exactly on the real
+    model (the closed form K/(pre+round) is ~10% off because price feeds back through the
+    future-round step-up). Returns None when even a near-zero price can't reach the target
+    — i.e. the downside is a structural risk, not something you can price your way out of.
+    """
+    def m(pre):
+        dp = dict(deal_params)
+        dp["pre_money_m"] = pre
+        ret, _ = _dd_run_one(assumptions, dp, recovery_moic)
+        return _dd_metric_value(ret, metric)
+
+    lo, hi = 0.1, 5000.0
+    if m(lo) < target:
+        return None
+    if m(hi) >= target:
+        return round(hi, 1)
+    for _ in range(44):
+        mid = 0.5 * (lo + hi)
+        if m(mid) >= target:
+            lo = mid
+        else:
+            hi = mid
+    return round(lo, 2)
+
+
+def _dd_pricing(scenarios: dict, deal_params: dict, recovery_moic: float,
+                metric: str = "moic", target: float = 3.0, floor: float = 1.0) -> dict:
+    """
+    Ask-anchored pricing. A check-writer is mostly a price-TAKER, so we don't surface
+    'max you could pay' ceilings (they blow up on the upside — a $200M number nobody pays).
+    Instead: the asking valuation, the entry ownership it buys, and two REFERENCE prices —
+    the downside-protected price (Conservative still returns ≥ floor) and the price at which
+    the Base case clears the target. The forward returns AT the ask come from the comparison.
+    """
+    ask = deal_params.get("pre_money_m")
+    check = float(deal_params.get("check_size_m") or 0.0)
+    round_sz = float(deal_params.get("round_size_m") or check or 0.0)
+    entry_own = (check / (ask + round_sz) * 100.0) if (ask is not None and (ask + round_sz) > 0) else None
+    cons, base = scenarios.get("conservative"), scenarios.get("base")
+
+    def _moic_at(asmp, pre):
+        if not asmp:
+            return None
+        dp = dict(deal_params); dp["pre_money_m"] = pre
+        r, _ = _dd_run_one(asmp, dp, recovery_moic)
+        return r.get("moic")
+
+    # Price curve: MOIC vs entry pre-money for the Conservative & Base cases. MOIC is
+    # monotonically DECREASING in price, so the frontend can interpolate this once-computed
+    # curve to answer "what's the max price that still clears the analyst's target / protects
+    # the floor?" for ANY target/floor instantly — no re-run. Sampled geometrically so the
+    # resolution is finest near the cheap end where the answer usually lives.
+    price_curve = []
+    if ask and base and cons and (ask + round_sz) > 0:
+        lo, hi = max(0.1, ask * 0.05), ask * 4.0
+        N = 30
+        for k in range(N):
+            P = lo * (hi / lo) ** (k / (N - 1))
+            price_curve.append({
+                "pre": round(P, 2),
+                "base_moic": _moic_at(base, P),
+                "cons_moic": _moic_at(cons, P),
+            })
+
+    return {
+        "metric": metric, "target": target, "floor": floor,
+        "ask_pre_money_m": ask, "round_size_m": round_sz, "check_size_m": check,
+        "entry_ownership_pct": (round(entry_own, 2) if entry_own is not None else None),
+        "base_moic_at_ask": (_moic_at(base, ask) if (ask and base) else None),
+        "cons_moic_at_ask": (_moic_at(cons, ask) if (ask and cons) else None),
+        "downside_protected_m": (solve_entry_price(cons, deal_params, recovery_moic, metric, floor) if cons else None),
+        "target_price_m": (solve_entry_price(base, deal_params, recovery_moic, metric, target) if base else None),
+        "price_curve": price_curve,
+    }
+
+
+def _dd_revenue_multiple(a: dict, pnl: dict) -> float:
+    """
+    The revenue-equivalent multiple to price an INTERIM round on. Interim rounds price off
+    (forward) revenue, not off the often-negative EBITDA of a still-burning company — so an
+    EV/EBITDA exit basis is converted to a revenue multiple using the deal's own modeled
+    mature EBITDA margin (falling back to gross margin if EBITDA never turns positive).
+    For the common EV/Revenue basis this is just the exit multiple, unchanged.
+    """
+    mult = _num(a, "exit_multiple", 0.0)
+    etype = a.get("exit_multiple_type", "ev_revenue") or "ev_revenue"
+    if etype != "ev_ebitda":
+        return mult
+    margins = pnl.get("ebitda_margin_pct") or []
+    m = (margins[-1] / 100.0) if margins else 0.0
+    if m <= 0:
+        m = _num(a, "gross_margin_end_pct", 0.0) / 100.0
+    return max(0.0, mult * m)
+
+
+def _dd_next_round(results: dict, deal_params: dict) -> dict:
+    """
+    Q2 — the NEXT round, per scenario. The current round funds the company until its
+    cumulative operating cash falls below zero net of the round (the 'cash-out' year).
+    Whatever burn remains beyond this round must be raised again — priced HONESTLY at what
+    the company is worth then (forward revenue × the deal's multiple), NOT at an assumed
+    up-round step-up. That exposes the real downside: in the weak case the company needs to
+    raise MORE THAN IT'S WORTH — a cram-down it may not even get — long before any exit.
+    """
+    check = float(deal_params.get("check_size_m") or 0.0)
+    pre = float(deal_params.get("pre_money_m") or 0.0)
+    round_sz = float(deal_params.get("round_size_m") or check or 0.0)
+    cur_post = pre + round_sz
+    order = [n for n in ("conservative", "base", "best_case") if n in results]
+    if not order:
+        return {"available": False}
+    out = {"available": True, "current_round_m": round(round_sz, 2),
+           "current_post_m": round(cur_post, 2), "cases": {}}
+    for nm in order:
+        a = results[nm]["assumptions"]; pnl = results[nm]["pnl"]; ret = results[nm]["returns"]
+        rev = pnl.get("revenue") or []
+        cum = pnl.get("cumulative_fcf") or []
+        peak = float(pnl.get("peak_cumulative_burn") or 0.0)
+        entry_own = float(ret.get("entry_ownership_pct") or 0.0)
+        rev_mult = _dd_revenue_multiple(a, pnl)
+        raise_need = max(0.0, peak - round_sz)
+        coy = next((i for i, c in enumerate(cum) if round_sz + c < 0), None)
+        if coy is None or raise_need <= 1e-6:
+            out["cases"][nm] = {
+                "status": "self_funded",
+                "entry_ownership_pct": round(entry_own, 1),
+                "ownership_after_pct": round(entry_own, 1),
+                "peak_burn_m": round(peak, 1),
+            }
+            continue
+        rev_at = rev[coy] if coy < len(rev) else (rev[-1] if rev else 0.0)
+        next_pre = rev_at * rev_mult
+        dil = raise_need / (next_pre + raise_need) if (next_pre + raise_need) > 0 else 1.0
+        out["cases"][nm] = {
+            "status": "wall" if raise_need > next_pre else "dilutive",
+            "cash_out_year": coy + 1,
+            "raise_need_m": round(raise_need, 1),
+            "revenue_at_m": round(rev_at, 1),
+            "rev_multiple": round(rev_mult, 1),
+            "next_pre_money_m": round(next_pre, 1),
+            "dilution_pct": round(dil * 100.0),
+            "entry_ownership_pct": round(entry_own, 1),
+            "ownership_after_pct": round(entry_own * (1.0 - dil), 1),
+            "down_round": next_pre < cur_post,
+            "peak_burn_m": round(peak, 1),
+        }
+    return out
+
+
+def _dd_divergence(results: dict) -> dict:
+    """
+    Q5 — what separates the cases, and WHEN. Financial metrics LAG: they don't cleanly fork
+    until the cases' growth/margin assumptions compound (typically Yr2-3, and early revenue
+    spread is partly just the input difference, not signal). The LEADING indicators are the
+    milestones — launch timing, margin ramp, growth rate — that DRIVE those financials. We
+    return both: the milestone drivers (watch first) and the financial fan with the first
+    year each metric's Best-vs-Conservative gap becomes unambiguous.
+    """
+    need = ("conservative", "base", "best_case")
+    if not all(n in results for n in need):
+        return {"available": False}
+    pnls = {n: results[n]["pnl"] for n in need}
+    asmp = {n: results[n]["assumptions"] for n in need}
+
+    specs = [("revenue", "Revenue", "$", 0.40),
+             ("gross_margin_pct", "Gross margin", "pp", 10.0),
+             ("ebitda", "EBITDA", "$", 0.40)]
+    metrics = []
+    for key, label, unit, thr in specs:
+        s = {n: (pnls[n].get(key) or []) for n in need}
+        c, b, x = s["conservative"], s["base"], s["best_case"]
+        m = min(len(c), len(b), len(x))
+        first = None
+        for i in range(m):
+            sep = (abs(x[i] - c[i]) >= thr) if unit == "pp" else \
+                  ((x[i] - c[i]) / max(abs(b[i]), 0.5) >= thr)
+            if sep:
+                first = i + 1; break
+        metrics.append({
+            "key": key, "label": label, "unit": unit,
+            "first_separation_year": first,
+            "series": {n: [round(v, 1) for v in s[n][:8]] for n in need},
+        })
+
+    def by_case(fn):
+        return {n: fn(asmp[n], pnls[n]) for n in need}
+
+    milestones = [
+        {"label": "Commercial launch", "hint": "Slips → every downstream year shifts with it",
+         "by_case": by_case(lambda a, p: (f"Yr {int(_num(a, 'time_to_launch_years', 0))}"
+                                          if _num(a, 'time_to_launch_years', 0) > 0 else "now"))},
+        {"label": "Gross-margin ramp", "hint": "Caps every profit metric downstream",
+         "by_case": by_case(lambda a, p: f"{_num(a, 'gross_margin_start_pct', 0):.0f}→{_num(a, 'gross_margin_end_pct', 0):.0f}%")},
+        {"label": "Revenue growth", "hint": "The compounding that fans the cases apart",
+         "by_case": by_case(lambda a, p: f"{_num(a, 'revenue_cagr_pct', 0):.0f}%/yr")},
+    ]
+
+    return {
+        "available": True,
+        "metrics": metrics,
+        "ebitda_breakeven_year": {n: results[n]["returns"].get("ebitda_breakeven_year") for n in need},
+        "milestones": milestones,
+    }
+
+
 def run_dd_analysis(scenarios: dict, deal_params: dict,
                     recovery_moic: float = 0.0, primary_metric: str = "expected_moic",
                     grid_x: str = None, grid_y: str = None) -> dict:
@@ -1136,12 +1346,18 @@ def run_dd_analysis(scenarios: dict, deal_params: dict,
 
     sensitivity = _dd_decompose(scenarios, deal_params, results, recovery_moic, primary_metric)
     two_way = _dd_two_way_grid(scenarios.get("base") or {}, deal_params, recovery_moic, primary_metric, grid_x, grid_y)
+    pricing = _dd_pricing(scenarios, deal_params, recovery_moic)
+    next_round = _dd_next_round(results, deal_params)
+    divergence = _dd_divergence(results)
 
     return {
         "scenarios": results,
         "comparison": comparison,
         "sensitivity": sensitivity,
         "two_way": two_way,
+        "pricing": pricing,
+        "next_round": next_round,
+        "divergence": divergence,
         "primary_metric": primary_metric,
     }
 

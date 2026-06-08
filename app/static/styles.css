@@ -4404,6 +4404,139 @@ h2 .info-tip-body {
 
 /* Results panel */
 .dd-results-panel { padding: 20px 32px; }
+/* Decision-support cards (pricing / financing / monitoring) — prototype */
+.dd-decision { background:#fbfdf9; border:1px solid #cdd8be; border-left:4px solid #5B7744; border-radius:10px; padding:15px 20px 16px; margin-bottom:18px; }
+.dd-decision:empty { display:none; }
+.dd-dsec-head { margin-bottom:5px; }
+.dd-dsec-head .dd-section-title { margin:0; }
+.dd-dsec-lede { font-size:12.7px; color:#4a5240; margin:0 0 12px; line-height:1.5; }
+.dd-dsec-mid { font-size:12.7px; color:#4a5240; margin:12px 0 0; line-height:1.55; }
+.dd-dsec-foot { font-size:11px; color:#9aa28c; font-style:italic; margin:9px 0 0; }
+.dd-dsec-verdict { font-size:13.5px; color:#1f2937; margin:12px 0 0; padding:11px 14px; border-radius:8px; line-height:1.5; }
+.dd-v-ok { background:rgba(91,119,68,.08); border:1px solid #9cbe7e; }
+.dd-v-over { background:#fbf6ec; border:1px solid #ecdfc6; color:#7a5a1f; }
+.dd-v-warn { background:#fbf3f1; border:1px solid #e6c9c0; color:#8a3d2a; }
+.dd-warn-txt { color:#c0563e; }
+/* The bet — expected value vs capital at risk */
+.dd-bet-row { display:flex; gap:14px; flex-wrap:wrap; }
+.dd-bet { flex:1; min-width:230px; border:1px solid #e1e6d8; border-radius:10px; padding:13px 16px; background:#fff; }
+.dd-bet-up { border-left:4px solid #2e8b3d; }
+.dd-bet-down { border-left:4px solid #c0563e; }
+.dd-bet-lbl { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#6b7a55; }
+.dd-bet-val { font-size:30px; font-weight:800; margin:3px 0 4px; letter-spacing:-.02em; color:#1f2937; }
+.dd-bet-up .dd-bet-val { color:#2e5e1f; } .dd-bet-down .dd-bet-val { color:#c0563e; }
+.dd-bet-sub { font-size:11.5px; color:#6b7a55; line-height:1.5; }
+/* §1 pricing — returns at the ask */
+.dd-ret-row { display:flex; gap:12px; flex-wrap:wrap; }
+.dd-ret { flex:1; min-width:90px; border:1px solid #e1e6d8; border-radius:8px; padding:9px 12px; text-align:center; background:#fff; }
+.dd-ret-exp { background:rgba(91,119,68,.05); border-color:#9cbe7e; }
+.dd-ret-lbl { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#6b7a55; }
+.dd-ret-val { font-size:20px; font-weight:800; color:#1f2937; margin-top:2px; }
+.dd-ret-val.pos { color:#2e5e1f; } .dd-ret-val.neg { color:#c0563e; }
+/* §2 financing — round timeline */
+.dd-fin-track { display:flex; flex-direction:column; gap:7px; }
+.dd-fin-round { display:flex; align-items:center; gap:12px; background:#fff; border:1px solid #e1e6d8; border-radius:8px; padding:8px 12px; font-size:12.5px; color:#4a5240; flex-wrap:wrap; }
+.dd-fin-yr { font-weight:700; color:#5B7744; min-width:42px; }
+.dd-fin-raise { flex:1; min-width:160px; }
+.dd-fin-dil { color:#6b7a55; font-weight:600; }
+.dd-fin-none { font-size:12.7px; color:#3a5228; background:rgba(91,119,68,.05); border:1px solid #9cbe7e; border-radius:8px; padding:11px 14px; margin:0; }
+/* §3 monitoring — scorecard */
+.dd-mon-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+.dd-mon-table th { text-align:right; font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; color:#6b7a55; padding:5px 10px; border-bottom:1px solid #e1e6d8; }
+.dd-mon-table th:first-child { text-align:left; }
+.dd-mon-table td { text-align:right; padding:5px 10px; border-bottom:1px solid #f0f2ea; font-variant-numeric:tabular-nums; }
+.dd-mon-table td:first-child { text-align:left; font-weight:600; color:#5b6b47; }
+.dd-mon-c { color:#c0563e; } .dd-mon-b { color:#1f2937; font-weight:700; } .dd-mon-x { color:#2e8b3d; }
+.dd-mon-chart-wrap { height:230px; margin:6px 0 2px; }
+.dd-mon-chart-wrap canvas { width:100% !important; height:230px !important; }
+@media (max-width:760px){ .dd-ret-row { flex-direction:column; } }
+
+/* ── Decide/Monitor eyebrow ── */
+.dd-dsec-eyebrow { display:inline-block; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.09em; color:#5B7744; background:rgba(91,119,68,.1); border-radius:4px; padding:2px 7px; margin-bottom:5px; }
+/* ── Hero pricing strip (Q1) ── */
+.dd-hero-card.dd-hero-pricing { grid-column:1/-1; text-align:left; display:flex; align-items:baseline; gap:10px; background:#f7faf3; border-color:#cdd8be; padding:11px 16px; }
+.dd-hero-price-tag { font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:#fff; background:#5B7744; border-radius:4px; padding:3px 8px; flex:none; }
+.dd-hero-price-txt { font-size:12.5px; color:#4a5240; line-height:1.5; }
+/* ── Q2 next round — financing wall ── */
+.dd-nr-grid { display:flex; gap:12px; flex-wrap:wrap; }
+.dd-nr-card { flex:1; min-width:170px; background:#fff; border:1px solid #e1e6d8; border-top:3px solid #b9c4a8; border-radius:10px; padding:11px 14px 12px; }
+.dd-nr-wall { border-top-color:#c0563e; background:#fdf6f4; }
+.dd-nr-dil  { border-top-color:#d8a23e; background:#fdfaf2; }
+.dd-nr-safe { border-top-color:#2e8b3d; background:#f5fbf5; }
+.dd-nr-case { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#6b7a55; }
+.dd-nr-tag { font-size:15px; font-weight:800; margin:1px 0 7px; color:#1f2937; }
+.dd-nr-wall .dd-nr-tag { color:#c0563e; } .dd-nr-dil .dd-nr-tag { color:#a9741f; } .dd-nr-safe .dd-nr-tag { color:#2e7d35; }
+.dd-nr-line { font-size:12px; color:#4a5240; line-height:1.5; }
+.dd-nr-fine { font-size:10.5px; color:#9aa28c; margin:1px 0 0; }
+.dd-nr-down { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:#c0563e; background:rgba(192,86,62,.1); border-radius:3px; padding:1px 5px; }
+.dd-nr-own { font-size:14px; font-weight:700; color:#1f2937; margin-top:8px; padding-top:7px; border-top:1px dashed #e1e6d8; }
+/* ── Q5 monitor — milestones + divergence ── */
+.dd-mon-block { margin:13px 0 0; }
+.dd-mon-blab { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; color:#5b6b47; margin-bottom:7px; display:flex; align-items:center; gap:8px; }
+.dd-mon-tag { font-size:9.5px; font-weight:700; text-transform:none; letter-spacing:0; border-radius:4px; padding:2px 7px; }
+.dd-tag-lead { color:#2e7d35; background:rgba(46,139,61,.1); }
+.dd-tag-lag  { color:#6b7a55; background:rgba(91,119,68,.08); }
+.dd-mil { display:flex; flex-direction:column; gap:6px; }
+.dd-mil-head { display:grid; grid-template-columns:1fr minmax(200px,290px); gap:12px; align-items:center; padding:0 13px 1px; }
+.dd-mil-row { display:grid; grid-template-columns:1fr minmax(200px,290px); gap:12px; align-items:center; background:#fff; border:1px solid #e1e6d8; border-radius:8px; padding:8px 13px; }
+.dd-mil-name { font-size:12.5px; font-weight:700; color:#3a4630; }
+.dd-mil-hint { display:block; font-size:10.5px; font-weight:400; color:#9aa28c; font-style:italic; margin-top:1px; }
+.dd-mil-vals { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+.dd-mil-ch { text-align:center; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.03em; padding:2px 0; border-radius:4px; }
+.dd-mil-v { text-align:center; font-size:11.5px; font-weight:700; font-variant-numeric:tabular-nums; padding:2px 6px; border-radius:5px; background:#f3f5ee; }
+.dd-c-conservative { color:#c0563e; background:rgba(192,86,62,.08); }
+.dd-c-base { color:#3a4630; background:rgba(91,119,68,.1); }
+.dd-c-best_case { color:#2e7d35; background:rgba(46,139,61,.09); }
+.dd-mon-sep { font-size:12px; color:#4a5240; margin:0 0 8px; line-height:1.5; }
+.dd-sep-bit { white-space:nowrap; } .dd-sep-dot { color:#c3ccb4; margin:0 7px; }
+.dd-mon-fork { font-size:12.3px; color:#3a4630; margin:9px 0 0; line-height:1.55; background:rgba(91,119,68,.05); border:1px solid #d6e0c6; border-radius:8px; padding:10px 13px; }
+.dd-mon-fork .dd-c-conservative, .dd-mon-fork .dd-c-base, .dd-mon-fork .dd-c-best_case { background:none; padding:0; }
+@media (max-width:760px){ .dd-nr-grid { flex-direction:column; } }
+
+/* ════ Decision Support — the standalone section for Joseph's questions ════ */
+.dd-dsupport { margin:8px 0 28px; border:1px solid #cdd8be; border-radius:14px; background:#f6f8f1; padding:0 0 4px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+.dd-dsupport-bar { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:13px 20px; background:linear-gradient(95deg,#5B7744,#41562d); flex-wrap:wrap; }
+.dd-dsupport-eyebrow { display:block; font-size:10.5px; font-weight:800; letter-spacing:.13em; text-transform:uppercase; color:#d3e3bd; }
+.dd-dsupport-title { margin:2px 0 0; font-size:18px; font-weight:800; color:#fff; letter-spacing:-.01em; }
+.dd-dsupport-targets { display:flex; gap:10px; }
+.dd-tgt { display:flex; flex-direction:column; gap:3px; font-size:9px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#e8f0dd; }
+.dd-tgt input { width:62px; padding:5px 6px; border-radius:6px; border:1px solid #b9c4a8; font-size:13px; font-weight:700; color:#1f2937; background:#fff; text-align:center; }
+.dd-tgt input:focus { outline:2px solid #aecb8e; outline-offset:0; }
+.dd-dsupport-intro { font-size:12.5px; color:#4a5240; margin:13px 20px 2px; line-height:1.5; }
+.dd-grp-key { display:inline-block; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:1px 7px; border-radius:4px; }
+.dd-grp-decide { color:#2e5e1f; background:rgba(91,119,68,.16); }
+.dd-grp-monitor { color:#7a5a1f; background:rgba(176,141,46,.2); }
+.dd-dsupport-group { padding:2px 20px 0; }
+.dd-dsupport-glabel { font-size:11.5px; font-weight:800; letter-spacing:.01em; color:#3a4630; margin:14px 0 9px; padding-bottom:5px; border-bottom:2px solid #e0e7d4; }
+.dd-glabel-decide { border-bottom-color:#bcd0a3; }
+.dd-glabel-monitor { border-bottom-color:#e6d39a; }
+.dd-dsupport .dd-decision { margin-bottom:12px; }
+.dd-dsupport-limits { font-size:11px; color:#8a937c; font-style:italic; margin:12px 20px 4px; padding-top:10px; border-top:1px dashed #d8e0cc; line-height:1.5; }
+/* Pricing card (Q1) */
+.dd-pr-grid { display:flex; gap:12px; flex-wrap:wrap; margin-top:2px; }
+.dd-pr-cell { flex:1; min-width:200px; border:1px solid #e1e6d8; border-radius:9px; padding:10px 14px; background:#fff; }
+.dd-pr-up { border-left:3px solid #2e8b3d; }
+.dd-pr-down { border-left:3px solid #c0563e; }
+.dd-pr-lbl { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:#6b7a55; }
+.dd-pr-val { font-size:24px; font-weight:800; color:#1f2937; margin:2px 0 3px; letter-spacing:-.01em; }
+.dd-pr-sub { font-size:11px; color:#6b7a55; line-height:1.45; }
+.dd-pr-ok { color:#2e8b3d; font-weight:800; }
+.dd-pr-no { color:#c0563e; font-weight:800; }
+@media (max-width:760px){ .dd-pr-grid { flex-direction:column; } .dd-dsupport-bar { gap:10px; } }
+/* bet card — neutral (breakeven) cell + step badges + methodology spacing */
+.dd-bet-info { border-left:4px solid #5a7488; }
+.dd-bet-info .dd-bet-val { color:#3c5260; }
+.dd-mon-step { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:#5B7744; color:#fff; font-size:10px; font-weight:800; margin-right:3px; }
+.dd-decision .dd-method { margin:6px 0 11px; }
+/* follow-on / runway / timing table */
+.dd-fo-table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:14px; }
+.dd-fo-table th { font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.04em; padding:5px 10px 6px; border-bottom:2px solid #e0e7d4; text-align:right; }
+.dd-fo-table th:first-child { text-align:left; }
+.dd-fo-table td { padding:7px 10px; border-bottom:1px solid #eef2e8; text-align:right; font-weight:700; font-variant-numeric:tabular-nums; color:#1f2937; }
+.dd-fo-table td.dd-fo-lbl { text-align:left; font-weight:600; color:#3a4630; }
+.dd-fo-hint { display:block; font-size:10px; font-weight:400; color:#9aa28c; font-style:italic; margin-top:1px; }
+.dd-fo-cons { color:#c0563e; } .dd-fo-base { color:#3a4630; } .dd-fo-best { color:#2e7d35; }
+@media (max-width:680px){ .dd-fo-table { font-size:11.5px; } .dd-fo-table td, .dd-fo-table th { padding:5px 6px; } }
 .dd-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .dd-hero-card { background: white; border: 1px solid var(--border, #e1e4e8); border-radius: 10px; padding: 16px 20px; text-align: center; }
 .dd-hero-card.dd-hero-highlight { border-color: #5b7744; background: rgba(91,119,68,0.04); }
