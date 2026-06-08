@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoLo Earth Ventures — Underwriting Engine</title>
-    <link rel="stylesheet" href="/static/styles.css?v=250">
+    <link rel="stylesheet" href="/static/styles.css?v=254">
     <!-- Aesthetic refresh overlay (purely additive — remove this line to fully revert) -->
     <link rel="stylesheet" href="/static/aesthetic-refresh.css?v=26">
     <!-- VoLo Mind (Beta) — disabled for now (styles not loaded; code retained). -->
@@ -1531,7 +1531,6 @@
                     <div class="dd-chart-card"><h4>Free Cash Flow &amp; Cumulative</h4><canvas id="dd-chart-fcf" height="260"></canvas></div>
                 </div>
             </div>
-        </div>
 
         <!-- ═══════════ CALCULATION METHODOLOGY (in-depth) ═══════════ -->
         <details class="dd-method dd-calc">
@@ -1593,7 +1592,7 @@
         </details>
 
         <!-- Decision Support — placed LAST, after the graphs and the full-model methodology -->
-        <section id="dd-dsupport" class="dd-dsupport" style="display:none;">
+        <section id="dd-dsupport" class="dd-dsupport">
             <div class="dd-dsupport-bar">
                 <div class="dd-dsupport-head">
                     <span class="dd-dsupport-eyebrow">Decision Support</span>
@@ -1603,15 +1602,16 @@
             <p class="dd-dsupport-intro">The scenarios above, translated into the financing and monitoring views an investment committee needs — each shown <b>per case</b>. <span class="dd-grp-key dd-grp-decide">Decide</span> = pre-investment &middot; <span class="dd-grp-key dd-grp-monitor">Monitor</span> = post-investment.</p>
 
             <div class="dd-dsupport-group">
-                <div class="dd-dsupport-glabel dd-glabel-decide">Decide — financing &amp; follow-on</div>
-                <div id="dd-financing" class="dd-decision"></div>
-            </div>
-            <div class="dd-dsupport-group">
                 <div class="dd-dsupport-glabel dd-glabel-monitor">Monitor — post-investment leading indicators</div>
                 <div id="dd-monitoring" class="dd-decision"></div>
             </div>
+            <div class="dd-dsupport-group">
+                <div class="dd-dsupport-glabel dd-glabel-decide">Decide — financing &amp; follow-on</div>
+                <div id="dd-financing" class="dd-decision"></div>
+            </div>
             <p class="dd-dsupport-limits"><b>Scope &amp; limitations.</b> A single deal under three deterministic cases — no portfolio or fund-level view, and no probability distribution beyond each case's stated success odds. It tests whether a set of assumptions is internally <i>consistent</i>, not whether the assumptions themselves are <i>correct</i>.</p>
         </section>
+        </div>
     </div>
 </div>
 
@@ -2455,7 +2455,7 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=250"></script>
+    <script src="/static/app.js?v=254"></script>
     <!-- VoLo Mind (Beta) — disabled for now (script not loaded; code retained). -->
     <!-- Portfolio (rework) — loads after host app.js so it can hook switchTab. -->
     <script src="/static/portfolio.js?v=12"></script>

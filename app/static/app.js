@@ -11895,7 +11895,6 @@ function ddReportChanged() {
             document.getElementById('dd-empty').style.display = 'none';
             document.getElementById('dd-workspace').style.display = '';
             document.getElementById('dd-outputs').style.display = 'none';
-            document.getElementById('dd-dsupport').style.display = 'none';
             _ddSetButtons(true);
         })
         .catch(e => alert('Could not load report: ' + e.message));
@@ -12078,7 +12077,7 @@ function ddBuildTable(preset) {
     tbl.innerHTML = html;
 }
 
-function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; document.getElementById('dd-dsupport').style.display = 'none'; }
+function ddResetDefaults() { ddBuildTable(_dd.seed && _dd.seed.preset); _ddRenderSeedNote(); document.getElementById('dd-outputs').style.display = 'none'; }
 
 function _ddOnEdit() { /* live-edit hook (kept light; results refresh on Run) */ }
 
@@ -12150,7 +12149,6 @@ function ddRun() {
         _dd.detailScenario = 'base';
         _ddRenderAll();
         document.getElementById('dd-outputs').style.display = '';
-        document.getElementById('dd-dsupport').style.display = '';   // decision support sits last, after the methodology
     }).catch(e => alert('Run error: ' + e.message))
       .finally(() => { if (btn) { btn.disabled = false; btn.textContent = 'Run Simulation'; } });
 }
@@ -12246,61 +12244,86 @@ function _ddRenderMonitoring() {
     const el = document.getElementById('dd-monitoring'); if (!el) return;
     const dv = _dd.result && _dd.result.divergence;
     if (!dv || !dv.available) { el.innerHTML = ''; return; }
-    const milHead = `<div class="dd-mil-head"><div class="dd-mil-name"></div><div class="dd-mil-vals">${DD_CASES.map(k => `<span class="dd-mil-ch dd-c-${k}">${DD_CASE_LABEL[k]}</span>`).join('')}</div></div>`;
-    const mil = (dv.milestones || []).map(m => {
-        const vals = DD_CASES.map(k => `<span class="dd-mil-v dd-c-${k}">${m.by_case[k] || '—'}</span>`).join('');
-        return `<div class="dd-mil-row"><div class="dd-mil-name">${m.label}<span class="dd-mil-hint">${m.hint}</span></div><div class="dd-mil-vals">${vals}</div></div>`;
+    // One table, grouped by metric (Revenue / Gross margin / EBITDA / Cash runway), each broken
+    // out year by year per case. Absorbs the old milestones grid: launch = the year revenue turns
+    // on, margin ramp = the gross-margin block, growth = the revenue block's climb.
+    const sc = _dd.result.scenarios || {};
+    const round = (_dd.deal && _dd.deal.round_size_m) || (_dd.result.pricing && _dd.result.pricing.round_size_m) || 0;
+    const NY = 6;
+    const dol = (v) => v == null ? '—' : _ddM(v);
+    const pct = (v) => (v == null || v === 0) ? '—' : _ddFmt(v, 0) + '%';
+    const METRICS = [
+        { label: 'Revenue ($M)', val: (p, i) => p.revenue ? p.revenue[i] : null, fmt: dol },
+        { label: 'Gross margin (%)', val: (p, i) => p.gross_margin_pct ? p.gross_margin_pct[i] : null, fmt: pct },
+        { label: 'EBITDA ($M)', val: (p, i) => p.ebitda ? p.ebitda[i] : null, fmt: dol },
+        { label: 'Cash runway ($M)', val: (p, i) => (p.cumulative_fcf && p.cumulative_fcf[i] != null) ? round + p.cumulative_fcf[i] : null, fmt: dol },
+    ];
+    const tbl = METRICS.map(m => {
+        const yrs = [];
+        for (let i = 0; i < NY; i++) {
+            const cells = DD_CASES.map(k => { const p = sc[k] && sc[k].pnl; return `<td>${p ? m.fmt(m.val(p, i)) : '—'}</td>`; }).join('');
+            yrs.push(`<tr><td class="dd-fo-lbl">Year ${i + 1}</td>${cells}</tr>`);
+        }
+        return `<tr class="dd-ck-metric"><td colspan="4">${m.label}</td></tr>${yrs.join('')}`;
     }).join('');
-    const sepBits = (dv.metrics || []).map(mt =>
-        `<span class="dd-sep-bit"><b>${mt.label}</b> ~${mt.first_separation_year ? 'Yr ' + mt.first_separation_year : 'late'}</span>`
-    ).join('<span class="dd-sep-dot">·</span>');
-    const be = dv.ebitda_breakeven_year || {};
-    const beTxt = DD_CASES.map(k => `<span class="dd-c-${k}"><b>${DD_CASE_LABEL[k]}</b> ${be[k] ? 'Yr ' + be[k] : 'never'}</span>`).join(' · ');
     el.innerHTML = `
       <div class="dd-dsec-head"><h3 class="dd-section-title">Leading indicators</h3></div>
       <details class="dd-method"><summary>Methodology — theory &amp; math</summary><div class="dd-method-body">
-        <p><strong>What it shows:</strong> Which signals distinguish the three cases, and when — separating leading operational milestones from lagging financial metrics.</p>
-        <p><strong>Theory:</strong> Financial metrics lag operations, and early spread between cases can be a mechanical artifact of differing Year-1 inputs rather than genuine signal. Milestones — launch timing, margin ramp, growth rate — move first and drive the financials that follow, so they are the indicators to watch early. The clearest single confirmation is the year EBITDA turns positive — when the company actually crosses into profit.</p>
-        <p><strong>How to use it:</strong> treat these as tripwires. Plot the company's actuals against the lines at each board meeting; tracking at or below the Conservative path by its breakeven year is the trigger to act — bridge, double down, or write down. The model flags the signal; the decision stays judgment.</p>
-        <p><strong>Math:</strong> First-separation year = the first year the Best-minus-Conservative gap exceeds a threshold (40% of the Base value for dollar metrics; 10 percentage points for margins). Breakeven year = the first commercial year with EBITDA ≥ 0, computed per case.</p>
+        <p><strong>What it shows:</strong> the full trajectory each case implies, year by year, across four signals — revenue, gross margin, EBITDA, and cash runway — as one table, with the same data on a toggleable chart below. Plot the company's actuals against the case columns and the case it tracks across all four is the one it's on. The old launch / margin-ramp / growth milestones are read straight off the table: launch = the year revenue turns on, margin ramp = the gross-margin block, growth = the revenue block's climb.</p>
+        <p><strong>Theory:</strong> the three cases tend to be close early — the spread is back-loaded, as growth and margin compound — so early figures are a weak signal. And no single metric is enough: a company can hit its revenue by burning cash or discounting, so the case is only confirmed when revenue, margin, EBITDA, and cash all line up. Cash runway crossing zero (out of money) and EBITDA crossing zero (into profit) are the hardest signals to fake.</p>
+        <p><strong>How to use it:</strong> at each board meeting plot the company's actuals against the case columns on every metric. A metric drifting toward the Conservative line — especially cash draining faster than plan — is the trigger to act (bridge, double down, or write down). The model flags the signal; the call stays judgment.</p>
+        <p><strong>Math:</strong> revenue, gross margin, and EBITDA each year come straight from that case's P&amp;L projection; cash runway = the current round + cumulative free cash flow (how much of the round is left). The chart plots the same per-year series for whichever metric is selected.</p>
       </div></details>
-      <p class="dd-dsec-lede">Early on, the three cases look alike. Watch the operational <b>milestones</b> first — they move before the P&amp;L; the financial spread below only confirms which case the company is on a year or two later.</p>
+      <p class="dd-dsec-lede">Plot the company's actuals against the case columns, year by year — the case it tracks across every metric is the one it's on. A metric drifting toward Conservative (especially cash draining faster than plan) is the early warning.</p>
       <div class="dd-mon-block">
-        <div class="dd-mon-blab"><span class="dd-mon-step">1</span> Milestones to watch <span class="dd-mon-tag dd-tag-lead">leading</span></div>
-        <div class="dd-mil">${milHead}${mil}</div>
+        <div class="dd-mon-blab"><span class="dd-mon-step">1</span> Year-by-year trajectories</div>
+        <table class="dd-fo-table dd-ck-table">
+          <thead><tr><th></th><th class="dd-fo-cons">Conservative</th><th class="dd-fo-base">Base</th><th class="dd-fo-best">Best</th></tr></thead>
+          <tbody>${tbl}</tbody>
+        </table>
       </div>
       <div class="dd-mon-block">
-        <div class="dd-mon-blab"><span class="dd-mon-step">2</span> Financial separation <span class="dd-mon-tag dd-tag-lag">lagging</span></div>
-        <p class="dd-mon-sep">The cases first separate cleanly at: ${sepBits}. Early revenue gaps partly reflect differing Year-1 inputs, so treat them as weak signal.</p>
-        <div class="dd-mon-chart-wrap"><canvas id="dd-mon-chart" height="200"></canvas></div>
-        <p class="dd-mon-sep"><b>Year EBITDA turns positive:</b> ${beTxt}.</p>
+        <div class="dd-mon-blab"><span class="dd-mon-step">2</span> Charted</div>
+        <div class="dd-mon-toggle">${[['revenue', 'Revenue'], ['gross_margin_pct', 'Gross margin'], ['ebitda', 'EBITDA'], ['cash', 'Cash runway']].map(([k, lbl]) =>
+            `<button type="button" class="dd-mon-tog-btn${(_dd.monMetric || 'revenue') === k ? ' on' : ''}" data-m="${k}" onclick="_ddMonChart('${k}', this)">${lbl}</button>`).join('')}</div>
+        <div class="dd-mon-chart-wrap"><canvas id="dd-mon-chart" height="220"></canvas></div>
       </div>`;
-    if (typeof Chart !== 'undefined') {
-        const cv = document.getElementById('dd-mon-chart');
-        const eb = (dv.metrics || []).find(m => m.key === 'ebitda');
-        if (cv && eb) {
-            _ddDestroy('mon');
-            const ser = eb.series || {};
-            const n = Math.max(...DD_CASES.map(k => (ser[k] || []).length), 0);
-            const labels = Array.from({ length: n }, (_, i) => 'Yr ' + (i + 1));
-            const col = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
-            _dd.charts.mon = new Chart(cv.getContext('2d'), {
-                type: 'line',
-                data: {
-                    labels, datasets: DD_CASES.map(k => ({
-                        label: DD_CASE_LABEL[k], data: (ser[k] || []), borderColor: col[k],
-                        backgroundColor: 'transparent', tension: 0.3, pointRadius: 0,
-                        borderWidth: k === 'base' ? 2.6 : 1.8, borderDash: k === 'base' ? [] : [4, 3],
-                    }))
-                },
-                options: {
-                    responsive: true, maintainAspectRatio: false,
-                    plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
-                    scales: { y: { title: { display: true, text: 'EBITDA ($M)' }, grid: { color: ctx => (ctx.tick && ctx.tick.value === 0) ? 'rgba(40,40,40,0.45)' : 'rgba(0,0,0,0.05)' } } },
-                },
-            });
-        }
-    }
+    _ddMonChart(_dd.monMetric || 'revenue');
+}
+
+// One chart, toggled across the four monitoring signals. All series come straight from each
+// case's P&L (cash runway = current round + cumulative FCF — how much of the round is left).
+function _ddMonChart(key, btn) {
+    _dd.monMetric = key;
+    document.querySelectorAll('#dd-monitoring .dd-mon-tog-btn').forEach(b => b.classList.toggle('on', b.dataset.m === key));
+    const cv = document.getElementById('dd-mon-chart');
+    if (!cv || typeof Chart === 'undefined' || !_dd.result) return;
+    const sc = _dd.result.scenarios || {};
+    const round = (_dd.deal && _dd.deal.round_size_m) || (_dd.result.pricing && _dd.result.pricing.round_size_m) || 0;
+    const ser = (k) => {
+        const p = sc[k] && sc[k].pnl; if (!p) return [];
+        return key === 'cash' ? (p.cumulative_fcf || []).map(v => round + v) : (p[key] || []);
+    };
+    const TITLE = { revenue: 'Revenue ($M)', gross_margin_pct: 'Gross margin (%)', ebitda: 'EBITDA ($M)', cash: 'Cash runway ($M)' };
+    const col = { conservative: '#c0563e', base: '#5B7744', best_case: '#2e8b3d' };
+    const n = Math.max(0, ...DD_CASES.map(k => ser(k).length));
+    _ddDestroy('mon');
+    _dd.charts.mon = new Chart(cv.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels: Array.from({ length: n }, (_, i) => 'Yr ' + (i + 1)),
+            datasets: DD_CASES.map(k => ({
+                label: DD_CASE_LABEL[k], data: ser(k), borderColor: col[k],
+                backgroundColor: 'transparent', tension: 0.3, pointRadius: 0,
+                borderWidth: k === 'base' ? 2.6 : 1.8, borderDash: k === 'base' ? [] : [4, 3],
+            }))
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
+            scales: { y: { title: { display: true, text: TITLE[key] || '' }, grid: { color: ctx => (ctx.tick && ctx.tick.value === 0) ? 'rgba(40,40,40,0.45)' : 'rgba(0,0,0,0.05)' } } },
+        },
+    });
 }
 
 // ── Hero (Base case headline) ─────────────────────────────────────

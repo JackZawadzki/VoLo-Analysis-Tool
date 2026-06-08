@@ -4537,6 +4537,13 @@ h2 .info-tip-body {
 .dd-fo-hint { display:block; font-size:10px; font-weight:400; color:#9aa28c; font-style:italic; margin-top:1px; }
 .dd-fo-cons { color:#c0563e; } .dd-fo-base { color:#3a4630; } .dd-fo-best { color:#2e7d35; }
 @media (max-width:680px){ .dd-fo-table { font-size:11.5px; } .dd-fo-table td, .dd-fo-table th { padding:5px 6px; } }
+/* monitoring chart metric toggle */
+.dd-mon-toggle { display:flex; gap:6px; flex-wrap:wrap; margin:10px 0 8px; }
+.dd-mon-tog-btn { font-size:11px; font-weight:700; padding:5px 12px; border-radius:7px; border:1px solid #cdd8be; background:#fff; color:#5b6b47; cursor:pointer; }
+.dd-mon-tog-btn:hover { background:#f3f5ee; }
+.dd-mon-tog-btn.on { background:#5B7744; border-color:#5B7744; color:#fff; }
+/* metric-grouped checkpoint table — section header rows */
+.dd-fo-table tr.dd-ck-metric td { text-align:left; font-size:9.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#5b6b47; background:#eef2e8; padding:8px 10px 5px; border-bottom:1px solid #d8e0cc; }
 .dd-hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 24px; }
 .dd-hero-card { background: white; border: 1px solid var(--border, #e1e4e8); border-radius: 10px; padding: 16px 20px; text-align: center; }
 .dd-hero-card.dd-hero-highlight { border-color: #5b7744; background: rgba(91,119,68,0.04); }

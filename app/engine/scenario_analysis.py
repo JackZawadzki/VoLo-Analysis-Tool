@@ -1127,54 +1127,22 @@ def solve_entry_price(assumptions: dict, deal_params: dict, recovery_moic: float
     return round(lo, 2)
 
 
-def _dd_pricing(scenarios: dict, deal_params: dict, recovery_moic: float,
-                metric: str = "moic", target: float = 3.0, floor: float = 1.0) -> dict:
+def _dd_pricing(scenarios: dict, deal_params: dict, recovery_moic: float = 0.0) -> dict:
     """
-    Ask-anchored pricing. A check-writer is mostly a price-TAKER, so we don't surface
-    'max you could pay' ceilings (they blow up on the upside — a $200M number nobody pays).
-    Instead: the asking valuation, the entry ownership it buys, and two REFERENCE prices —
-    the downside-protected price (Conservative still returns ≥ floor) and the price at which
-    the Base case clears the target. The forward returns AT the ask come from the comparison.
+    The basic entry facts the Decision Support section needs: the round's asking valuation,
+    its size, the check, and the entry ownership that check buys. Per-scenario returns AT that
+    valuation come straight from the comparison; we deliberately don't surface 'max you could
+    pay' ceilings — a minority investor is a price-taker, not the party setting the round.
     """
     ask = deal_params.get("pre_money_m")
     check = float(deal_params.get("check_size_m") or 0.0)
     round_sz = float(deal_params.get("round_size_m") or check or 0.0)
     entry_own = (check / (ask + round_sz) * 100.0) if (ask is not None and (ask + round_sz) > 0) else None
-    cons, base = scenarios.get("conservative"), scenarios.get("base")
-
-    def _moic_at(asmp, pre):
-        if not asmp:
-            return None
-        dp = dict(deal_params); dp["pre_money_m"] = pre
-        r, _ = _dd_run_one(asmp, dp, recovery_moic)
-        return r.get("moic")
-
-    # Price curve: MOIC vs entry pre-money for the Conservative & Base cases. MOIC is
-    # monotonically DECREASING in price, so the frontend can interpolate this once-computed
-    # curve to answer "what's the max price that still clears the analyst's target / protects
-    # the floor?" for ANY target/floor instantly — no re-run. Sampled geometrically so the
-    # resolution is finest near the cheap end where the answer usually lives.
-    price_curve = []
-    if ask and base and cons and (ask + round_sz) > 0:
-        lo, hi = max(0.1, ask * 0.05), ask * 4.0
-        N = 30
-        for k in range(N):
-            P = lo * (hi / lo) ** (k / (N - 1))
-            price_curve.append({
-                "pre": round(P, 2),
-                "base_moic": _moic_at(base, P),
-                "cons_moic": _moic_at(cons, P),
-            })
-
     return {
-        "metric": metric, "target": target, "floor": floor,
-        "ask_pre_money_m": ask, "round_size_m": round_sz, "check_size_m": check,
+        "ask_pre_money_m": ask,
+        "round_size_m": round_sz,
+        "check_size_m": check,
         "entry_ownership_pct": (round(entry_own, 2) if entry_own is not None else None),
-        "base_moic_at_ask": (_moic_at(base, ask) if (ask and base) else None),
-        "cons_moic_at_ask": (_moic_at(cons, ask) if (ask and cons) else None),
-        "downside_protected_m": (solve_entry_price(cons, deal_params, recovery_moic, metric, floor) if cons else None),
-        "target_price_m": (solve_entry_price(base, deal_params, recovery_moic, metric, target) if base else None),
-        "price_curve": price_curve,
     }
 
 
