@@ -522,3 +522,70 @@ def rank_inputs_by_impact(
         ))
     out.sort(key=lambda x: (-x.statement_cells, -x.out_degree))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Assumptions census (pipeline Phase 2 — "the reading pass")
+# ---------------------------------------------------------------------------
+
+def build_assumptions_census(
+    g: FormulaGraph,
+    statement_sheets: Iterable[str],
+    top_n: int = 40,
+) -> list:
+    """Typed inputs that actually drive the statements, ranked by impact.
+
+    Each entry records where the input bites, whether its row is flat across
+    all periods (flat ASPs / commodity prices / rent are finding candidates),
+    and any cell comment verbatim — real models hide decisive information in
+    comments.
+    """
+    from .schema import AssumptionEntry
+
+    impacts = rank_inputs_by_impact(g, statement_sheets, top_n=top_n * 4)
+    entries: list[AssumptionEntry] = []
+    seen_rows: set[tuple[str, int]] = set()
+    for imp in impacts:
+        if len(entries) >= top_n:
+            break
+        sd = g.wbd.sheets[imp.sheet]
+        # label: nearest string cell to the left on the same row
+        label = ""
+        for cc in range(imp.col - 1, 0, -1):
+            rec = sd.cell(imp.row, cc)
+            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+                label = rec.value.strip()
+                break
+        if not label:
+            for rr in (imp.row - 1, imp.row - 2):
+                rec = sd.cell(rr, imp.col) if rr > 0 else None
+                if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+                    label = rec.value.strip()
+                    break
+        # one entry per row keeps the census readable (curve rows would
+        # otherwise flood it with 50 sibling cells)
+        row_key = (imp.sheet, imp.row)
+        if row_key in seen_rows:
+            continue
+        seen_rows.add(row_key)
+
+        # flatness: typed numeric cells in this row (3+ of them, all equal)
+        row_vals = []
+        for (r, c), rec in sd.cells.items():
+            if r == imp.row and rec.formula is None and is_number(rec.value):
+                row_vals.append(float(rec.value))
+        flat = None
+        if len(row_vals) >= 3:
+            flat = max(row_vals) - min(row_vals) <= 1e-9 * max(1.0, abs(row_vals[0]))
+
+        rec = sd.cell(imp.row, imp.col)
+        entries.append(AssumptionEntry(
+            cell=imp.ref,
+            label=label[:120],
+            value=imp.value,
+            impact_rank=len(entries) + 1,
+            dependent_statement_cells=imp.statement_cells,
+            flat_all_periods=flat,
+            comment_text=(rec.comment.strip()[:500] if rec and rec.comment else None),
+        ))
+    return entries
