@@ -1089,8 +1089,8 @@ def _dedup_echoes(ctx: FCtx, cands: list[Candidate]) -> list[Candidate]:
             if j == i or j in absorbed or cands[j].category == cause.category:
                 continue
             echo = cands[j]
-            if echo.category in _PRIORITY[:5]:
-                continue  # structural findings are never echoes
+            if echo.category in _PRIORITY:
+                continue  # primary-story categories are never absorbed as echoes
             echo_nodes = {n for n in (_node_of_ref(ctx, r) for r in echo.cells()) if n is not None}
             if echo_nodes and echo_nodes <= downstream:
                 cause.narrative += f" (Downstream symptom folded in: {echo.title}.)"
