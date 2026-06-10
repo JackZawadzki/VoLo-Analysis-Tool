@@ -1,0 +1,16 @@
+# Generated synthetic fixture workbooks (rebuilt by tests/fixtures/synthetic/generate.py)
+tests/fixtures/synthetic/*.xlsx
+tests/fixtures/synthetic/*.xlsm
+
+# Real models are confidential and never committed
+tests/fixtures/real/*
+!tests/fixtures/real/.gitkeep
+
+# Tool output
+annotations/
+
+__pycache__/
+*.egg-info/
+.pytest_cache/
+build/
+dist/

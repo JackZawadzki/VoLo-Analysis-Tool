@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-annotator"
+version = "0.1.0"
+description = "Automated financial-model diligence: maps, verifies, derives, and annotates startup Excel models the way a senior VC analyst does by hand."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "Jack Zawadzki" }]
+dependencies = [
+    "openpyxl>=3.1",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.30"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+annotate-model = "model_annotator.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["model_annotator*"]
+
+[tool.setuptools.package-data]
+model_annotator = ["benchmarks.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

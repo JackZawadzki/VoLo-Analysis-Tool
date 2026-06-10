@@ -1,0 +1,45 @@
+# External reference ranges for model-annotator.
+#
+# EVERYTHING in this file is EXTERNAL knowledge — none of it comes from the
+# workbook under analysis. Any output that uses these numbers is rendered with
+# the literal prefix "External benchmark (not from workbook):".
+#
+# Edit freely; ranges are deliberately broad. `archetype` keys are matched by
+# the tool's company-archetype guess (hardware_industrial / equipment /
+# software / biotech) with `default` as fallback.
+
+meta:
+  description: Default benchmark ranges shipped with model-annotator 0.1.0
+  sources: "Generalist VC rules of thumb; replace with your own house view."
+
+ev_ebitda_multiple:
+  default: { low: 6.0, typical: 10.0, high: 15.0 }
+  hardware_industrial: { low: 6.0, typical: 9.0, high: 12.0 }
+  equipment: { low: 7.0, typical: 10.0, high: 14.0 }
+  software: { low: 12.0, typical: 18.0, high: 25.0 }
+
+ev_revenue_multiple:
+  default: { low: 1.0, typical: 3.0, high: 6.0 }
+  hardware_industrial: { low: 0.8, typical: 2.0, high: 4.0 }
+  equipment: { low: 1.0, typical: 2.5, high: 5.0 }
+  software: { low: 4.0, typical: 8.0, high: 15.0 }
+
+gross_margin_pct:
+  default: { low: 0.25, typical: 0.40, high: 0.60 }
+  hardware_industrial: { low: 0.15, typical: 0.30, high: 0.45 }
+  equipment: { low: 0.25, typical: 0.35, high: 0.50 }
+  software: { low: 0.65, typical: 0.75, high: 0.85 }
+
+# Annual discount rates used by VCs for early-stage DCF-style backsolves.
+discount_rate:
+  default: { low: 0.25, typical: 0.40, high: 0.60 }
+
+# Alternative exit multiples used for the valuation sensitivity table when the
+# model's own multiple looks out of range for the archetype.
+valuation_sensitivity:
+  ebitda_multiples: [6.0, 10.0, 14.0]
+  revenue_multiples: [1.5, 3.0, 6.0]
+
+# Receivables scenarios (days sales outstanding) for the working-capital
+# structural-absence quantification.
+receivables_scenario_days: [30, 60]
