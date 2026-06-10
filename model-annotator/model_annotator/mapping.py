@@ -182,7 +182,8 @@ def _norm(s: str) -> str:
 
 _DERIVED_VETO = re.compile(
     r"growth|% of|/ ?revenue|/ ?ebitda|per (unit|share|employee|fte|tpa|mwh|kg|machine)"
-    r"|cumulative|cushion|ratio|conversion|months of|runway|check|tie ?out|ex ?grants?|share on",
+    r"|cumulative|cushion|\bratio\b|\bconversion\b|months of|runway|\bcheck\b|tie ?out"
+    r"|ex ?grants?|share on",
 )
 
 
@@ -197,6 +198,7 @@ class OntologyRule:
     section_veto: tuple[str, ...] = ()
     weak_keywords: bool = False              # generic keywords ("revenue") score below threshold alone
     prefix_suffix: tuple[str, ...] = ()      # "x revenue" / "cogs x" patterns; strong segment signal
+    allow_cumulative: bool = False           # "Cumulative Capacity ..." is a real model row, not an analyst row
 
 
 RULES: list[OntologyRule] = [
@@ -258,7 +260,9 @@ RULES: list[OntologyRule] = [
                            "compensation", "rent", "facilities", "lease", "travel", "legal",
                            "professional", "insurance", "software", "overhead", "support",
                            "capital equipment", "equipment purchase", "capex", "capital expenditure",
-                           "lab supplies", "supplies", "materials", "utilities", "labor"),
+                           "lab supplies", "supplies", "materials", "utilities", "labor",
+                           "advertising", "bank charges", "recruitment", "phantom share",
+                           "stock comp", "share-based comp", "contractors"),
                  veto=("total", "%", "growth", "cogs", "cost of goods", "depreciation", "change in"),
                  section_veto=("cost of goods", "cogs", "cash flow", "investing", "financing",
                                "activities", "balance", "liabilit", "assets", "working capital"),
@@ -381,8 +385,9 @@ RULES: list[OntologyRule] = [
     OntologyRule("capacity",
                  keywords=("capacity", "nameplate", "contracted tpa", "operational tpa", "tpa",
                            "production volume", "throughput"),
-                 veto=("%", "per ", "utilization", "share", "revenue"),
-                 percent_expected=False),
+                 veto=("%", "per ", "utilization", "share", "revenue", "market"),
+                 percent_expected=False,
+                 allow_cumulative=True),
     OntologyRule("market_size",
                  exact=("market size", "tam", "sam", "som", "total addressable market", "total market"),
                  keywords=("market size", "addressable market", "market demand"),
@@ -444,6 +449,7 @@ def score_label(item: LineItem) -> list[tuple[str, float, str]]:
     if "chart" in item.section:
         return []
     derived_hit = _DERIVED_VETO.search(norm)
+    derived_hit_ex_cum = _DERIVED_VETO.search(norm.replace("cumulative", ""))
     out: list[tuple[str, float, str]] = []
     for rule in RULES:
         if any(v in norm for v in rule.veto):
@@ -451,7 +457,8 @@ def score_label(item: LineItem) -> list[tuple[str, float, str]]:
         if rule.section_veto and any(sv in item.section for sv in rule.section_veto):
             continue
         # derived/analyst rows (growth, ratios, cumulative) never map, except checks
-        if derived_hit and rule.canonical_id != "balance_check":
+        hit = derived_hit_ex_cum if rule.allow_cumulative else derived_hit
+        if hit and rule.canonical_id != "balance_check":
             continue
         score = 0.0
         ev = ""
