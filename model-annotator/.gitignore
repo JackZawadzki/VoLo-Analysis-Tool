@@ -6,6 +6,10 @@ tests/fixtures/synthetic/*.xlsm
 tests/fixtures/real/*
 !tests/fixtures/real/.gitkeep
 
+# Secrets — never commit the API key
+.env
+.env.local
+
 # Tool output
 annotations/
 
