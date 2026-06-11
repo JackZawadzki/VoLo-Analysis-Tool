@@ -1,0 +1,14 @@
+fixture: frozen_support_costs
+exit_code: 0
+trust_max: null
+trust_min: null
+findings_must_include:
+  - category: frozen_support_costs
+    min_severity: high
+    # Frozen rows: Customer Support (row 6), Rent (row 7); the rule cites
+    # each frozen series at the first valid period (2024 -> column B).
+    evidence_contains_any: ["Model!B6", "Model!B7"]
+    title_contains: null
+findings_must_not_include: []
+acquittals_must_include: []
+max_high_critical: null

@@ -126,6 +126,13 @@ def annotate(
     if llm.disabled_reason and not no_llm:
         limitations.append(f"LLM assist unavailable ({llm.disabled_reason}); heuristics-only run.")
 
+    if not any(structure.axes.get(name) for name in wbd.sheet_order):
+        limitations.insert(0, (
+            "No period axis found on any sheet: this looks like a point-estimate / "
+            "techno-economic workbook rather than a time-series financial model. "
+            "Time-series diligence (growth, runway, tie-outs) is out of scope for it; "
+            "the low trust score reflects missing coverage, not detected errors."))
+
     report = Report(
         source_file=str(src),
         sha256=wbd.sha256,

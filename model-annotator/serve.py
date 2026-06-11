@@ -21,6 +21,31 @@ from model_annotator.schema import Report, Severity, TieOutStatus
 
 log = logging.getLogger("model_annotator.serve")
 
+
+def _load_dotenv() -> None:
+    """Populate ANTHROPIC_API_KEY from a .env in this dir or any parent, if the
+    shell hasn't already set it. Dependency-free; only reads the keys we use."""
+    import os
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return
+    here = Path(__file__).resolve()
+    for d in [here.parent, *here.parents]:
+        env = d / ".env"
+        if not env.is_file():
+            continue
+        for raw in env.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") and v:
+                os.environ.setdefault(k, v)
+        return
+
+
+_load_dotenv()
+
 USE_LLM = False  # set by --llm
 
 _SEV_COLOR = {

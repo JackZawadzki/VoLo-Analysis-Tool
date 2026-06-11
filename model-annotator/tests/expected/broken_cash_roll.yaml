@@ -1,0 +1,13 @@
+fixture: broken_cash_roll
+exit_code: 3
+trust_max: 0.7
+trust_min: null
+findings_must_include:
+  - category: arithmetic_integrity
+    min_severity: critical
+    evidence_contains_any: ["Model!E9"]   # Ending Cash row, broken 2027 column
+    title_contains: null
+findings_must_not_include:
+  - category: data_quality
+acquittals_must_include: []
+max_high_critical: null

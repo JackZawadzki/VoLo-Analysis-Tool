@@ -578,8 +578,23 @@ def build_mapping(
 
     # Score and assign.
     scalar_best: dict[tuple[str, str], LineItem] = {}   # (sheet, canonical_id) -> winner
+    section_seg_candidates: list[LineItem] = []
     for it in res.items:
         cands = score_label(it)
+        if not cands:
+            # section-based segment inference candidate: numeric rows sitting
+            # under a "Revenue" section header can be revenue segments even
+            # when their labels carry no revenue keyword ("NRE — allocation").
+            # Resolved AFTER scoring, with magnitude guards against valuation/
+            # factor rows that merely live under revenue-ish headers.
+            norm = _norm(it.label)
+            if (re.match(r"^revenue\b", it.section) and not _DERIVED_VETO.search(norm)
+                    and not it.percentish
+                    and not any(v in it.section for v in ("valuation", "multiple", "exit", "factor", "adjust"))
+                    and not any(v in norm for v in ("total", "cumulative", "grant", "subsid",
+                                                    "valuation", "exit", "npv", "irr", "multiple"))):
+                section_seg_candidates.append(it)
+                continue
         if not cands and llm_classify is not None:
             llm_out = llm_classify(it.label, it.section, [])
             if llm_out:
@@ -645,6 +660,22 @@ def build_mapping(
                 f"{worse_ref} ({worse.label!r}, conf {worse.confidence:.2f})")
             worse.canonical_id = None
             worse.confidence = 0.0
+
+    # Resolve section-based segment candidates now that revenue_total winners
+    # are known: same-sheet revenue must exist and the candidate's magnitude
+    # must sit inside a sane share band of it.
+    for it in section_seg_candidates:
+        rev = scalar_best.get((it.sheet, "revenue_total"))
+        if rev is None:
+            continue
+        seg_max = max((abs(v) for v in it.values if v is not None), default=0.0)
+        rev_max = max((abs(v) for v in rev.values if v is not None), default=0.0)
+        if rev_max <= 0 or not (0.001 * rev_max <= seg_max <= 1.5 * rev_max):
+            continue
+        it.canonical_id = "revenue_segment"
+        it.confidence = 0.6
+        it.instance = it.label.strip()[:40]
+        it.evidence = f"numeric row under section {it.section!r} within revenue magnitude band"
 
     # Unmapped bucket: numeric rows on statement-role sheets that didn't map.
     for it in res.items:

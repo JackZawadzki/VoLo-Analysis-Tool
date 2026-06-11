@@ -1,0 +1,5 @@
+fixture: one_way_margin
+exit_code: 0
+findings_must_include:
+  - category: one_way_margin_expansion
+    min_severity: medium

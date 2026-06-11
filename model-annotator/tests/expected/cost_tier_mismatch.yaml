@@ -1,0 +1,6 @@
+fixture: cost_tier_mismatch
+exit_code: 0
+findings_must_include:
+  - category: cost_tier_mismatch
+    min_severity: high
+    evidence_contains_any: ["Cost Model"]

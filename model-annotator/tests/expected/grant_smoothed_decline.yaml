@@ -1,0 +1,11 @@
+fixture: grant_smoothed_decline
+exit_code: 0
+trust_max: null
+trust_min: null
+findings_must_include:
+  - category: grant_dependence
+    min_severity: high
+    title_contains: "smooth"
+findings_must_not_include: []
+acquittals_must_include: []
+max_high_critical: null

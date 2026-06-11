@@ -1,0 +1,9 @@
+fixture: runway_cliff_rescue
+exit_code: 0
+trust_min: 1.0
+findings_must_include:
+  - category: financing_cliff
+    min_severity: high
+    evidence_contains_any: ["'P&L'!D12"]   # 2026 ending cash, the cliff year
+findings_must_not_include:
+  - category: arithmetic_integrity
