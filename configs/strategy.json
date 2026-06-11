@@ -1,7 +1,7 @@
 {
   "fund_size": 130000000,
   "mgmt_fee_pct": 21.0,
-  "reserve_pct": 30.0,
+  "reserve_pct": 50.0,
   "reserve_conc": 1.0,
   "recycle_pct": 0.0,
   "nc": 20,
