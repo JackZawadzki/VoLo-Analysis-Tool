@@ -537,11 +537,15 @@ def _rule_opex_pegged_to_revenue(ctx: FCtx, cands: list[Candidate]) -> None:
     if opex is None or rev is None or opex.n_formula == 0:
         return
     from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
-    rev_nodes = set()
+    from .graph import decode
+    # match by (sheet, row), not exact cell: in yearly-left/monthly-right
+    # layouts the chain runs through the revenue row's MONTHLY cells, which
+    # are siblings (not ancestors) of the annual cells we mapped
+    rev_rows: set[tuple[int, int]] = set()
     for ref in rev.refs:
         s, cell = parse_ref(ref)
         cl, row = coordinate_from_string(cell)
-        rev_nodes.add(ctx.graph.node_of(s, row, column_index_from_string(cl)))
+        rev_rows.add((ctx.graph.sheet_index[s], row))
     pegged = 0
     checked = 0
     for ref in opex.refs[-6:]:
@@ -550,7 +554,7 @@ def _rule_opex_pegged_to_revenue(ctx: FCtx, cands: list[Candidate]) -> None:
         node = ctx.graph.node_of(s, row, column_index_from_string(cl))
         ups = ctx.graph.upstream(node, cap=120_000)
         checked += 1
-        if ups & rev_nodes:
+        if any(n >= 0 and (decode(n)[0], decode(n)[1]) in rev_rows for n in ups):
             pegged += 1
     if checked and pegged / checked > 0.5:
         pct = find_scalar_assumptions(ctx.wbd, ctx.structure,
