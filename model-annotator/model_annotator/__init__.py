@@ -104,6 +104,13 @@ def annotate(
 
     stmt_sheets = [mapping.primary_sheet] if mapping.primary_sheet else []
 
+    # ---- Phase 1.5: analysis plan (the WHY layer) ---------------------------
+    # LLM-guided when available: reads structure (labels only, never values),
+    # decides the business archetype and which extra relationships to compute.
+    # Deterministic heuristic plan in --no-llm runs.
+    from .planner import build_analysis_plan, execute_plan_computations
+    plan = build_analysis_plan(wbd, structure, mapping, llm, benchmarks)
+
     # ---- Phase 2: assumptions census ---------------------------------------
     census = build_assumptions_census(graph, stmt_sheets)
 
@@ -112,10 +119,12 @@ def annotate(
 
     # ---- Phase 4: derived metrics ------------------------------------------
     metrics = compute_metrics(wbd, structure, mapping, benchmarks)
+    metrics.metrics.extend(execute_plan_computations(plan, mapping, structure))
 
     # ---- Phases 5-7: findings / acquittals / severity-dedup ----------------
     fctx = FCtx(wbd=wbd, structure=structure, mapping=mapping, graph=graph,
-                integrity=integrity, metrics=metrics, census=census, benchmarks=benchmarks)
+                integrity=integrity, metrics=metrics, census=census, benchmarks=benchmarks,
+                plan=plan)
     fres = build_findings(fctx)
 
     # ---- assemble the Report -----------------------------------------------
@@ -138,6 +147,7 @@ def annotate(
         sha256=wbd.sha256,
         analyzed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         llm_used=llm.available,
+        analysis_plan=plan,
         workbook_map=wm,
         assumptions_census=census,
         tie_outs=integrity.tie_outs,

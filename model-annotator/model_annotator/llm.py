@@ -61,7 +61,7 @@ class LLMClient:
     def available(self) -> bool:
         return self._client is not None
 
-    def _call(self, system: str, user: str, max_tokens: int) -> Optional[str]:
+    def _call(self, system: str, user: str, max_tokens: int, effort: str = "low") -> Optional[str]:
         if self._client is None:
             return None
         try:
@@ -70,7 +70,7 @@ class LLMClient:
                 model=self.model,
                 max_tokens=max_tokens,
                 system=system,
-                output_config={"effort": "low"},
+                output_config={"effort": effort},
                 messages=[{"role": "user", "content": user}],
             )
             return next((b.text for b in resp.content if b.type == "text"), None)
@@ -79,6 +79,28 @@ class LLMClient:
             return None
         except Exception:
             log.warning("LLM call failed unexpectedly; continuing deterministically", exc_info=True)
+            return None
+
+    # -- structured planning calls (JSON out, validated by the caller) ------
+    def complete_json(self, system: str, user: str, max_tokens: int = 1500) -> Optional[dict]:
+        """One JSON-object completion. Returns a dict or None; never raises.
+        The caller validates every field against the workbook — anything the
+        model names that does not exist gets dropped, not trusted."""
+        import json as _json
+        out = self._call(system, user, max_tokens=max_tokens, effort="high")
+        if not out:
+            return None
+        text = out.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text, flags=re.S)
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            return None
+        try:
+            obj = _json.loads(text[start:end + 1])
+            return obj if isinstance(obj, dict) else None
+        except _json.JSONDecodeError:
+            log.warning("LLM planner returned unparseable JSON; using heuristic plan")
             return None
 
     # -- (a) ambiguous-label classification (labels only, never values) -----

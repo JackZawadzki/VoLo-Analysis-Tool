@@ -31,7 +31,7 @@ def test_real_model(path, tmp_path):
         print(f"  [{f.severity.value:8s}] ({f.category}) {f.title[:80]}")
 
     # hard invariants on every real model: schema-valid, citations clean
-    assert report.schema_version == "1.0"
+    assert report.schema_version.startswith("1.")
     citation_failures = [l for l in report.limitations if l.startswith("CITATION VALIDATION FAILURE")]
     assert not citation_failures, citation_failures
 

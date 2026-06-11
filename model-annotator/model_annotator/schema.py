@@ -18,8 +18,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.0"
-TOOL_VERSION = "0.1.0"
+SCHEMA_VERSION = "1.1"
+TOOL_VERSION = "0.2.0"
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +337,39 @@ class UnmappedRow(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Analysis plan (the WHY layer)
+# ---------------------------------------------------------------------------
+
+class CustomComputation(BaseModel):
+    """A calculation the LLM planner asked for. The LLM chose WHAT and WHY;
+    the arithmetic itself ran in Python on cited workbook rows."""
+    name: str
+    metric_id: str
+    numerator_ref: str               # "Sheet!r31 'Total Revenue'"
+    denominator_ref: str
+    rationale: str
+    executed: bool = True
+    skip_reason: Optional[str] = None
+
+
+class AnalysisPlan(BaseModel):
+    """Why this analysis looks the way it does for this company.
+
+    source == "llm": an LLM read the workbook's STRUCTURE (sheet names, row
+    labels, sections — never values) and reasoned about what kind of business
+    this is and which calculations matter. source == "heuristic": the
+    deterministic fallback used in --no-llm runs.
+    """
+    source: str = "heuristic"                      # "llm" | "heuristic"
+    archetype: str = "unknown"                     # free-form business read
+    benchmark_archetype: str = "default"           # must key into benchmarks.yaml
+    rationale: str = ""
+    risks_to_probe: list[str] = Field(default_factory=list)
+    priorities: list[str] = Field(default_factory=list)
+    custom_computations: list[CustomComputation] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Top-level report
 # ---------------------------------------------------------------------------
 
@@ -347,6 +380,7 @@ class Report(BaseModel):
     sha256: str
     analyzed_at: str
     llm_used: bool = False
+    analysis_plan: Optional[AnalysisPlan] = None
     workbook_map: WorkbookMap
     assumptions_census: list[AssumptionEntry] = Field(default_factory=list)
     tie_outs: list[TieOut] = Field(default_factory=list)

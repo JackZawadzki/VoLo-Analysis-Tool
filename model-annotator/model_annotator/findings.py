@@ -81,6 +81,7 @@ class FCtx:
     metrics: MetricsResult
     census: list[AssumptionEntry]
     benchmarks: dict
+    plan: Optional[object] = None      # AnalysisPlan; drives archetype-aware rules
 
     @property
     def sheet(self) -> Optional[str]:
@@ -804,8 +805,13 @@ def _rule_valuation_benchmark(ctx: FCtx, cands: list[Candidate]) -> None:
     if not mult:
         return
     ref, v, label = mult[0]
-    archetype = "hardware_industrial" if (ctx.mapping.get("capacity") or ctx.mapping.get_all("units_sold")) \
-        else "default"
+    # archetype comes from the analysis plan (LLM business read when available,
+    # structural heuristic otherwise)
+    if ctx.plan is not None and getattr(ctx.plan, "benchmark_archetype", None):
+        archetype = ctx.plan.benchmark_archetype
+    else:
+        archetype = "hardware_industrial" if (ctx.mapping.get("capacity") or ctx.mapping.get_all("units_sold")) \
+            else "default"
     rng = (bm.get("ev_ebitda_multiple") or {}).get(archetype) or (bm.get("ev_ebitda_multiple") or {}).get("default")
     if not rng or v <= rng.get("high", 1e9):
         return

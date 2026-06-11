@@ -204,6 +204,27 @@ def render_report(report: Report, filename: str) -> str:
     a("<h2>Read this first</h2>")
     a(f"<div class=card>{e(read_this_first(report))}<p class=muted style='margin:10px 0 0'>{e(trust_sentence(report))}</p></div>")
 
+    # analysis plan — why these calculations
+    plan = report.analysis_plan
+    if plan is not None:
+        a("<h2>Analysis plan <span class=muted style='font-weight:400;font-size:14px'>— why these calculations</span></h2>")
+        a("<div class=card>")
+        src = ("LLM business read of the workbook's structure (labels only — never values)"
+               if plan.source == "llm" else "deterministic structural heuristic (no LLM)")
+        a(f"<div class=muted style='margin-bottom:8px'>Source: {e(src)}</div>")
+        a(f"<div><b>Archetype:</b> {e(plan.archetype)} <span class=muted>(benchmarks: <code>{e(plan.benchmark_archetype)}</code>)</span></div>")
+        if plan.rationale:
+            a(f"<div style='margin-top:6px'>{e(plan.rationale)}</div>")
+        if plan.risks_to_probe:
+            a("<div style='margin-top:8px'><b>Risks worth probing:</b> " + "; ".join(e(r) for r in plan.risks_to_probe) + "</div>")
+        if plan.custom_computations:
+            a("<ul class=ev style='margin-top:8px'>")
+            for c in plan.custom_computations:
+                status = "computed" if c.executed else f"skipped — {e(c.skip_reason or '')}"
+                a(f"<li><code>{e(c.metric_id)}</code> <span class=muted>({status})</span> — {e(c.rationale)}</li>")
+            a("</ul>")
+        a("</div>")
+
     # findings
     a("<h2>Findings</h2>")
     if not report.findings:

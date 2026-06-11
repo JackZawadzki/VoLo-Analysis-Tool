@@ -72,6 +72,27 @@ def render_markdown(report: Report) -> str:
     a(trust_sentence(report))
     a("")
 
+    # ---- analysis plan (the WHY layer) ----
+    plan = report.analysis_plan
+    if plan is not None:
+        a("## Analysis plan — why these calculations")
+        a("")
+        src = ("LLM business read of the workbook's structure (labels only, never values)"
+               if plan.source == "llm" else "deterministic structural heuristic (--no-llm)")
+        a(f"*Source: {src}.*")
+        a("")
+        a(f"- **Archetype:** {plan.archetype} (benchmarks: `{plan.benchmark_archetype}`)")
+        if plan.rationale:
+            a(f"- **Rationale:** {plan.rationale}")
+        if plan.risks_to_probe:
+            a(f"- **Risks worth probing for this archetype:** {'; '.join(plan.risks_to_probe)}")
+        if plan.priorities:
+            a(f"- **Metric families prioritized:** {', '.join(plan.priorities)}")
+        for c in plan.custom_computations:
+            status = "computed" if c.executed else f"skipped — {c.skip_reason}"
+            a(f"- **LLM-directed computation** `{c.metric_id}` ({status}): {c.rationale}")
+        a("")
+
     # ---- tie-outs ----
     a("## Tie-outs (the model's own arithmetic)")
     a("")

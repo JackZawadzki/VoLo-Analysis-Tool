@@ -44,6 +44,9 @@ def read_this_first(report: Report) -> str:
     elif caps:
         what += f", building capacity ({', '.join(caps[:3])})"
     what += "."
+    plan = report.analysis_plan
+    if plan is not None and plan.source == "llm" and plan.rationale:
+        what = (f"Business read ({plan.archetype}): {plan.rationale} " + what)
 
     # Sentence 2 — headline numbers
     by_id = {m.metric_id: m for m in report.derived_metrics}
