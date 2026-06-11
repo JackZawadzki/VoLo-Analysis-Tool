@@ -1,0 +1,184 @@
+"""Markdown report renderer.
+
+Mirrors the human methodology, in order: header → "Read this first" →
+Tie-outs → Findings (severity-ordered diligence notes) → Acquittals →
+Clean checks → Derived-metrics appendix → Assumptions census appendix →
+Limitations. Tone: precise, neutral, question-forward.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from .narrate import read_this_first, trust_sentence
+from .schema import Report, Severity, TieOutStatus
+
+_STATUS_ICON = {
+    TieOutStatus.passed: "✓ pass",
+    TieOutStatus.failed: "✗ FAIL",
+    TieOutStatus.not_applicable: "– n/a",
+    TieOutStatus.unfalsifiable: "⚠ unfalsifiable",
+}
+
+_SEV_LABEL = {
+    Severity.critical: "CRITICAL",
+    Severity.high: "HIGH",
+    Severity.medium: "MEDIUM",
+    Severity.info: "INFO",
+}
+
+
+def _fmt_v(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        if v != v:  # NaN
+            return "NaN"
+        if abs(v) >= 1000:
+            return f"{v:,.1f}"
+        return f"{v:,.4f}".rstrip("0").rstrip(".")
+    return str(v)[:40]
+
+
+def render_markdown(report: Report) -> str:
+    wm = report.workbook_map
+    out: list[str] = []
+    a = out.append
+
+    # ---- header ----
+    a(f"# Model annotation: {report.source_file.rsplit('/', 1)[-1]}")
+    a("")
+    units_label = ""
+    if wm.primary_statement_sheet and wm.primary_statement_sheet in wm.units:
+        u = wm.units[wm.primary_statement_sheet]
+        units_label = f"{u.label} (confidence {u.confidence:.2f})"
+    periods = wm.period_axis.periods if wm.period_axis else []
+    a(f"| | |")
+    a(f"|---|---|")
+    a(f"| Primary statements | {wm.primary_statement_sheet or 'not identified'} |")
+    a(f"| Periods | {periods[0] + ' – ' + periods[-1] if periods else 'none detected'}"
+      f" ({wm.period_axis.granularity.value if wm.period_axis else '–'}, {len(periods)} periods) |")
+    a(f"| Units | {units_label or 'unknown'} |")
+    a(f"| Trust score | **{wm.trust_score:.2f}** |")
+    a(f"| Analyzed | {report.analyzed_at} · sha256 {report.sha256[:12]}… · "
+      f"tool {report.tool_version} · schema {report.schema_version} · "
+      f"LLM {'used' if report.llm_used else 'not used'} |")
+    a("")
+
+    # ---- read this first ----
+    a("## Read this first")
+    a("")
+    a(read_this_first(report))
+    a("")
+    a(trust_sentence(report))
+    a("")
+
+    # ---- tie-outs ----
+    a("## Tie-outs (the model's own arithmetic)")
+    a("")
+    a("| Check | Status | Max residual | Periods | Detail |")
+    a("|---|---|---|---|---|")
+    for t in report.tie_outs:
+        res = f"{t.max_abs_residual:,.2f}" if t.max_abs_residual is not None else ""
+        a(f"| {t.label or t.id} | {_STATUS_ICON.get(t.status, t.status.value)} | {res} | "
+          f"{t.periods_checked or ''} | {t.detail[:160].replace('|', '/')} |")
+    a("")
+
+    # ---- findings ----
+    a("## Findings")
+    a("")
+    if not report.findings:
+        a("No findings above the reporting threshold. See clean checks below.")
+        a("")
+    for f in report.sorted_findings():
+        a(f"### {f.id} · {_SEV_LABEL[f.severity]} — {f.title}")
+        a("")
+        flags = []
+        if f.trust_degraded:
+            flags.append("trust degraded by tie-out failures")
+        flags.append(f"confidence {f.confidence:.2f}")
+        a(f"*{f.category} · {' · '.join(flags)}*")
+        a("")
+        a(f.narrative)
+        a("")
+        if f.evidence_values:
+            a("Evidence:")
+            for e in f.evidence_values[:8]:
+                lbl = f" — {e.label}" if e.label else ""
+                val = f" = {_fmt_v(e.value)}" if e.value is not None else ""
+                a(f"- `{e.ref}`{val}{lbl}")
+            a("")
+        elif f.evidence_cells:
+            a("Evidence: " + ", ".join(f"`{c}`" for c in f.evidence_cells[:10]))
+            a("")
+        qi = f.quantified_impact
+        if qi is not None and (qi.as_modeled is not None or qi.as_corrected is not None):
+            a(f"Quantified impact ({qi.metric}): as modeled {_fmt_v(qi.as_modeled)} → "
+              f"as corrected {_fmt_v(qi.as_corrected)}. Basis: {qi.basis}")
+            a("")
+        if f.management_question:
+            a(f"> **Question for management:** {f.management_question}")
+            a("")
+        if f.supporting_echoes:
+            a(f"*Downstream symptoms folded into this finding: {'; '.join(f.supporting_echoes[:4])}*")
+            a("")
+
+    # ---- acquittals ----
+    a("## Acquittals — looked alarming, dissolved under investigation")
+    a("")
+    if not report.acquittals:
+        a("None this run.")
+        a("")
+    for acq in report.acquittals:
+        a(f"- **{acq.candidate}** *({acq.category})* — {acq.decomposition}")
+        if acq.resolution_cells:
+            a(f"  Resolution cells: {', '.join(f'`{c}`' for c in acq.resolution_cells[:6])}")
+    a("")
+
+    # ---- clean checks ----
+    a("## Clean checks — what the model gets right")
+    a("")
+    if not report.clean_checks:
+        a("None recorded.")
+    for c in report.clean_checks:
+        ev = (" (" + ", ".join(f"`{e}`" for e in c.evidence[:4]) + ")") if c.evidence else ""
+        a(f"- **{c.check}** — {c.result}{ev}")
+    a("")
+
+    # ---- derived metrics appendix ----
+    a("## Appendix A — Derived metrics")
+    a("")
+    a("Every value computed in Python from cells read out of the workbook; "
+      "`inputs` cites the source rows. Checkpoints are spot-verification values.")
+    a("")
+    a("| Metric | Checkpoints | Computation | Units |")
+    a("|---|---|---|---|")
+    for m in report.derived_metrics:
+        if m.scalar is not None:
+            chk = _fmt_v(m.scalar)
+        else:
+            chk = "; ".join(f"{p}: {_fmt_v(v)}" for p, v in list(m.checkpoints.items())[:3])
+        name = m.metric_id + (" ⚠ext" if m.external_benchmark else "")
+        a(f"| {name} | {chk} | `{m.computation[:90].replace('|', '/')}` | {m.units or ''} |")
+    a("")
+
+    # ---- assumptions census appendix ----
+    a("## Appendix B — Assumptions census (typed inputs that drive the statements)")
+    a("")
+    a("| # | Cell | Label | Value | Stmt cells fed | Flat? | Comment |")
+    a("|---|---|---|---|---|---|---|")
+    for e in report.assumptions_census[:40]:
+        comment = (e.comment_text or "").replace("\n", " ").replace("|", "/")[:90]
+        flat = {True: "flat", False: "", None: "?"}[e.flat_all_periods]
+        a(f"| {e.impact_rank} | `{e.cell}` | {e.label[:50].replace('|', '/')} | {_fmt_v(e.value)} | "
+          f"{e.dependent_statement_cells:,} | {flat} | {comment} |")
+    a("")
+
+    # ---- limitations ----
+    a("## Limitations")
+    a("")
+    if not report.limitations:
+        a("None recorded.")
+    for lim in report.limitations:
+        a(f"- {lim}")
+    a("")
+    return "\n".join(out)

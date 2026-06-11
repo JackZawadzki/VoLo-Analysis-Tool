@@ -740,3 +740,54 @@ def _verify_and_demote(res: MappingResult) -> None:
                     res.notes.append(
                         f"Mapping verification failed on {sheet!r}: ending_cash roll-forward off in "
                         f"all {checked} transitions; demoted {weakest.label!r}.")
+
+
+# ---------------------------------------------------------------------------
+# Reuse path: rebuild a MappingResult from a previously computed WorkbookMap
+# ---------------------------------------------------------------------------
+
+def mapping_from_workbook_map(wbd: WorkbookData, structure: StructureResult,
+                              wm) -> MappingResult:
+    """Rehydrate mappings from a prior run's workbook_map.json so a host
+    engine can parse once and analyze many ways. Values are re-read from the
+    workbook; only the row→ontology assignment is reused."""
+    from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
+
+    res = MappingResult()
+    res.primary_sheet = wm.primary_statement_sheet
+    for rm in wm.row_mappings:
+        if rm.demoted:
+            continue
+        sd = wbd.sheets.get(rm.sheet)
+        if sd is None:
+            res.notes.append(f"precomputed mapping references missing sheet {rm.sheet!r}; skipped")
+            continue
+        periods: list[str] = []
+        coords: list[tuple[int, int]] = []
+        values: list[Optional[float]] = []
+        for period, ref in rm.cells.items():
+            try:
+                _, cell = ref.rsplit("!", 1)
+                cl, row = coordinate_from_string(cell)
+                col = column_index_from_string(cl)
+            except Exception:
+                continue
+            periods.append(period)
+            coords.append((row, col))
+            rec = sd.cell(row, col)
+            values.append(_coerce_value(rec.value) if rec else None)
+        item = LineItem(
+            sheet=rm.sheet, index=rm.row, label=rm.label_text, depth=0, section="",
+            periods=periods, coords=coords, values=values,
+            percentish=rm.canonical_id.endswith("_pct"),
+            n_numeric=sum(1 for v in values if v is not None),
+            n_formula=0,
+        )
+        item.canonical_id = rm.canonical_id
+        item.instance = rm.instance
+        item.subtags = list(rm.subtags)
+        item.confidence = rm.confidence
+        item.evidence = (rm.evidence or "") + " [reused from precomputed workbook_map]"
+        res.items.append(item)
+    _verify_and_demote(res)
+    return res
