@@ -338,6 +338,20 @@ class VCSimulator:
         fail_rate = float(is_fail.mean())
         n_hw = float(is_hw.mean())
 
+        # Per-company terminal realized multiple (proceeds / invested) — the
+        # distribution of individual holdings, for the "typical holding" return
+        # profile. Active-at-terminal NAV is ~0 by the terminal year, so realized
+        # exits + writeoff recovery dominate.
+        _term = self.ages[-1]
+        _m_exit = (~np.isnan(exit_year)) & (exit_year <= _term)
+        _m_wo = (~np.isnan(writeoff_year)) & (writeoff_year <= _term)
+        _val = (np.where(_m_exit, ownership * np.nan_to_num(exit_val), 0.0)
+                + np.where(_m_wo, 0.10 * invested, 0.0))
+        company_moics = (_val / np.maximum(invested, 1e-9)).ravel()
+        if company_moics.size > 4000:
+            _ci = np.linspace(0, company_moics.size - 1, 4000).astype(int)
+            company_moics = company_moics[_ci]
+
         return {
             "ages": self.ages.copy(),
             "tvpi_matrix": tvpi,
@@ -346,6 +360,7 @@ class VCSimulator:
             "irrs": irrs,
             "fail_rate": fail_rate,
             "hw_pct": n_hw,
+            "company_moics": company_moics,
             **ptiles,
         }
 
@@ -562,8 +577,96 @@ class VCSimulator:
 
         irrs_base = irr_many(cf_base)
 
+        # Calibrated baseline fund-TVPI distribution (terminal year) for the
+        # "Fund Outcome Distribution vs Carta" visual. Uses run()'s
+        # NAV-inclusive, Carta-calibrated tvpi_matrix — the same basis the
+        # strategy is fit to — NOT the cashflow ratio used for the deal lift,
+        # so the histogram lines up correctly against the Carta ladder.
+        base_fund_tvpi = base["tvpi_matrix"][:, -1]
+        _hi = max(5.0, float(np.percentile(base_fund_tvpi, 98)))
+        _edges = np.linspace(0.0, _hi, 31)
+        _counts, _ = np.histogram(np.clip(base_fund_tvpi, 0.0, _hi - 1e-9), bins=_edges)
+        _centers = (_edges[:-1] + _edges[1:]) / 2.0
+        fund_dist = {
+            "bin_centers": [round(float(c), 3) for c in _centers],
+            "counts": [int(x) for x in _counts],
+            "bin_width": round(float(_edges[1] - _edges[0]), 4),
+            "mean": round(float(base_fund_tvpi.mean()), 3),
+            "median": round(float(np.median(base_fund_tvpi)), 3),
+            "p_below_1x": round(float((base_fund_tvpi < 1.0).mean()), 4),
+            "p_above_3x": round(float((base_fund_tvpi >= 3.0).mean()), 4),
+            "n": int(base_fund_tvpi.size),
+        }
+
+        # ── Marginal-impact visuals (graphs A / C / D) ─────────────────────
+        def _hist(arr, hi_min=5.0, nbins=30):
+            a = np.asarray(arr, dtype=float)
+            a = a[np.isfinite(a)]
+            if a.size == 0:
+                return None
+            hi = max(hi_min, float(np.percentile(a, 98)))
+            edges = np.linspace(0.0, hi, nbins + 1)
+            counts, _e = np.histogram(np.clip(a, 0.0, hi - 1e-9), bins=edges)
+            ctr = (edges[:-1] + edges[1:]) / 2.0
+            return {"bin_centers": [round(float(c), 3) for c in ctr],
+                    "counts": [int(x) for x in counts],
+                    "bin_width": round(float(edges[1] - edges[0]), 4)}
+
+        # A — fund return WITH vs WITHOUT the deal, both rebased to the calibrated
+        # mean level (so they match the cards) and binned on shared edges so the
+        # (small) shift between them is directly comparable.
+        _cf_base_mean = float(np.mean(tvpi_base)) or 1.0
+        _rebase = (fund_dist["mean"] / _cf_base_mean) if _cf_base_mean else 1.0
+        _b = tvpi_base * _rebase
+        _w = tvpi_new * _rebase
+        _ovhi = max(5.0, float(np.percentile(np.concatenate([_b, _w]), 98)))
+        _oved = np.linspace(0.0, _ovhi, 31)
+        _bc, _ = np.histogram(np.clip(_b, 0.0, _ovhi - 1e-9), bins=_oved)
+        _wc, _ = np.histogram(np.clip(_w, 0.0, _ovhi - 1e-9), bins=_oved)
+        _octr = (_oved[:-1] + _oved[1:]) / 2.0
+        fund_overlay = {
+            "bin_centers": [round(float(c), 3) for c in _octr],
+            "base_counts": [int(x) for x in _bc],
+            "with_counts": [int(x) for x in _wc],
+            "base_mean": round(float(_b.mean()), 3),
+            "with_mean": round(float(_w.mean()), 3),
+        }
+        # C — marginal contribution by metric. We report each metric as a PERCENT
+        # change versus the fund without the deal. Percent change is invariant to
+        # the calibrated rebase (the r factor cancels) and puts the four metrics —
+        # which otherwise live in different units (TVPI multiples vs a probability) —
+        # on one comparable axis, so the chart reads cleanly.
+        _bmean, _nmean = float(np.mean(tvpi_base)), float(np.mean(tvpi_new))
+        _bp50, _np50 = float(np.percentile(tvpi_base, 50)), float(np.percentile(tvpi_new, 50))
+        _bp90, _np90 = float(np.percentile(tvpi_base, 90)), float(np.percentile(tvpi_new, 90))
+        _bp5, _np5 = float((tvpi_base >= 5).mean()), float((tvpi_new >= 5).mean())
+
+        def _pct(new, base):
+            return round(100.0 * (new - base) / base, 2) if base > 1e-9 else 0.0
+
+        delta_metrics = {
+            # absolute deltas (cashflow basis) — kept for downstream/debugging
+            "mean": round(_nmean - _bmean, 4),
+            "p50": round(_np50 - _bp50, 4),
+            "p90": round(_np90 - _bp90, 4),
+            "p_ge_5x_pp": round((_np5 - _bp5) * 100, 2),
+            # percent change vs. fund-without-deal — what graph C plots
+            "mean_pct": _pct(_nmean, _bmean),
+            "p50_pct": _pct(_np50, _bp50),
+            "p90_pct": _pct(_np90, _bp90),
+            "p_ge_5x_pct": _pct(_np5, _bp5),
+        }
+        # D — this deal's own return profile vs a typical fund holding.
+        deal_moic_dist = _hist(gross_mult, hi_min=5.0)
+        holding_moic_dist = _hist(base.get("company_moics", []), hi_min=5.0)
+
         return {
             "deal_name": deal.name,
+            "fund_dist": fund_dist,
+            "fund_overlay": fund_overlay,
+            "delta_metrics": delta_metrics,
+            "deal_moic_dist": deal_moic_dist,
+            "holding_moic_dist": holding_moic_dist,
             "check_size": deal.check_size,
             "success_prob": deal.success_prob,
             "cap_multiple": deal.cap_multiple,

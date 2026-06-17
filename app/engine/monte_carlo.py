@@ -458,15 +458,24 @@ def run_simulation(
             },
         }
         for name, info in driver_inputs.items():
-            vals = info["values"]
-            if len(vals) == len(analysis_moic):
-                corr, pval = spearmanr(vals, analysis_moic)
-                variance_drivers[name] = round(abs(corr), 3)
-                driver_explanations[name] = {
-                    "explanation": info["explanation"],
-                    "correlation": round(float(corr), 3),
-                    "direction": "positive" if corr > 0 else "negative",
-                }
+            vals = np.asarray(info["values"], dtype=float)
+            if len(vals) != len(analysis_moic):
+                continue
+            # Skip degenerate inputs: a constant array (or one that matches a
+            # constant outcome) makes the rank correlation undefined → NaN. Emitting
+            # NaN here poisons the whole decomposition, so we drop such drivers and
+            # let the (possibly empty) result speak for itself downstream.
+            if not np.isfinite(vals).any() or float(np.nanstd(vals)) == 0.0:
+                continue
+            corr, pval = spearmanr(vals, analysis_moic)
+            if not np.isfinite(corr):
+                continue
+            variance_drivers[name] = round(abs(float(corr)), 3)
+            driver_explanations[name] = {
+                "explanation": info["explanation"],
+                "correlation": round(float(corr), 3),
+                "direction": "positive" if corr > 0 else "negative",
+            }
 
         total = sum(variance_drivers.values()) or 1
         variance_drivers = {k: round(v / total, 3) for k, v in variance_drivers.items()}

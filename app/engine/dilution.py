@@ -342,7 +342,14 @@ def simulate_dilution_path(
             "ownership_p75": float(np.nanpercentile(final_ownership[alive_mask], 75)) if alive_mask.any() else 0,
             "ownership_p90": float(np.nanpercentile(final_ownership[alive_mask], 90)) if alive_mask.any() else 0,
             "median_rounds": float(np.median(rounds_completed[alive_mask])) if alive_mask.any() else 0,
+            "mean_rounds": float(np.mean(rounds_completed[alive_mask])) if alive_mask.any() else 0,
             "median_bridge_rounds": float(np.median(bridge_rounds[alive_mask])) if alive_mask.any() else 0,
             "median_total_raised": float(np.median(total_raised[alive_mask])) if alive_mask.any() else 0,
+            # Realized financing-distress signal: share of ALL paths (not just
+            # survivors) that needed at least one bridge round. This is the
+            # simulated outcome, distinct from the TRL `extra_bridge_prob` INPUT.
+            "bridge_probability": float(np.mean(bridge_rounds > 0)),
+            # Worst-case capital intensity for the financing-risk readout.
+            "rounds_p90": float(np.nanpercentile(rounds_completed[alive_mask], 90)) if alive_mask.any() else 0,
         },
     }

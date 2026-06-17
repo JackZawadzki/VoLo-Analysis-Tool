@@ -762,6 +762,19 @@ def generate_deal_report(
     # Sizing always operates on the STANDALONE new-check return distribution —
     # the question is "how much more to invest now", independent of the blended
     # headline. For first checks sim_standalone IS sim.
+    #
+    # Keep the check optimizer's reserve assumption in sync with the fund model
+    # — single source of truth in configs/strategy.json — so the two can never
+    # drift. Raising fund reserves shrinks the first-check pool the optimizer
+    # sizes against, so both must read the same number.
+    try:
+        from pathlib import Path as _Path
+        from .portfolio.config import load_strategy as _load_strategy
+        _strat_path = _Path(__file__).resolve().parent.parent.parent / "configs" / "strategy.json"
+        if _strat_path.exists():
+            reserve_pct = float(_load_strategy(str(_strat_path)).reserve_pct)
+    except Exception:
+        pass  # fall back to the passed reserve_pct
     raw_moic = sim_standalone.get("_raw_moic", [])
     if raw_moic and len(raw_moic) > 100:
         try:
@@ -1579,6 +1592,20 @@ def _run_portfolio_impact(
                                  deal_follow_on_year=deal_follow_on_year)
         result["has_data"] = True
 
+        # Carta benchmark ladder (terminal TVPI) for the fund-distribution
+        # overlay — lets the frontend mark median / top-quartile / top-decile.
+        try:
+            if bench is not None and getattr(bench, "tvpi", None) is not None:
+                result["carta_lines"] = {
+                    "p50": round(float(bench.tvpi["p50"][-1]), 3),
+                    "p75": round(float(bench.tvpi["p75"][-1]), 3),
+                    "p90": round(float(bench.tvpi["p90"][-1]), 3),
+                }
+            else:
+                result["carta_lines"] = {"p50": 1.65, "p75": 2.2, "p90": 4.0}
+        except Exception:
+            result["carta_lines"] = {"p50": 1.65, "p75": 2.2, "p90": 4.0}
+
         n_committed = result.get("n_committed_deals", 0)
         narrative_parts = []
         if n_committed > 0:
@@ -1586,17 +1613,39 @@ def _run_portfolio_impact(
                 f"Portfolio baseline includes {n_committed} committed deal{'s' if n_committed > 1 else ''}"
             )
 
-        tvpi_lift = result.get("tvpi_mean_lift", 0)
         irr_lift = result.get("irr_mean_lift", 0)
-        if tvpi_lift > 0:
+        # Narrate the CALIBRATED (NAV-inclusive, Carta-fit) mean — the same honest
+        # level the report cards and the With/Without chart show. Calibration is a
+        # MULTIPLICATIVE rescale of the fund distribution, so the deal's effect is
+        # carried as a ratio (with/without), NOT the raw cashflow delta added onto a
+        # rescaled base (that would mix bases and overstate the lift). We reuse the
+        # overlay's own base/with means as the single source of truth, so the prose,
+        # the cards, and the chart cannot diverge.
+        _fo = result.get("fund_overlay") or {}
+        _base_cal = _fo.get("base_mean")
+        _new_cal = _fo.get("with_mean")
+        if _base_cal is None or _new_cal is None:
+            # Fallback when the overlay is unavailable: scale the cashflow lift onto
+            # the calibrated base by the same ratio rather than adding it raw.
+            _base_cal = (result.get("fund_dist") or {}).get("mean", result.get("tvpi_base_mean", 0))
+            _cf_base = result.get("tvpi_base_mean") or 0
+            _ratio = ((result.get("tvpi_new_mean") or 0) / _cf_base) if _cf_base else 1.0
+            _new_cal = _base_cal * _ratio
+        _lift_cal = _new_cal - _base_cal
+        # Reconciled calibrated figures — the frontend cards/table read these so they
+        # match the chart exactly.
+        result["tvpi_base_cal"] = round(float(_base_cal), 4)
+        result["tvpi_new_cal"] = round(float(_new_cal), 4)
+        result["tvpi_lift_cal"] = round(float(_lift_cal), 4)
+        if _lift_cal > 0:
             narrative_parts.append(
-                f"Adding this deal lifts expected portfolio TVPI by +{tvpi_lift:.3f}x "
-                f"(from {result['tvpi_base_mean']:.2f}x to {result['tvpi_new_mean']:.2f}x)"
+                f"Adding this deal lifts expected portfolio TVPI by +{_lift_cal:.2f}x "
+                f"(from {_base_cal:.2f}x to {_new_cal:.2f}x)"
             )
         else:
             narrative_parts.append(
-                f"This deal reduces expected portfolio TVPI by {tvpi_lift:.3f}x "
-                f"(from {result['tvpi_base_mean']:.2f}x to {result['tvpi_new_mean']:.2f}x)"
+                f"This deal reduces expected portfolio TVPI by {_lift_cal:.2f}x "
+                f"(from {_base_cal:.2f}x to {_new_cal:.2f}x)"
             )
         if irr_lift != 0:
             narrative_parts.append(

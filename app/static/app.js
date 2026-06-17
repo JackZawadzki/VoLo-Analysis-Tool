@@ -58,17 +58,23 @@ const _GLOSSARY = {
     divergence: "Percentage difference between founder projections and the simulation median. Positive = founders project higher than the model. Used to assess whether management expectations are optimistic, realistic, or conservative.",
     portfolio_impact: "Simulated effect of adding this deal to the fund portfolio. Compares fund-level return metrics (TVPI, DPI, IRR) with and without this investment to measure marginal contribution.",
     fund_distribution: "Distribution of the simulated fund's terminal TVPI across all portfolio universes (calibrated, NAV-inclusive basis). The left tail (<1x) is loss area we want small; the right tail (>3x) is the moonshot area we want long and full. Dashed lines are Carta's median, top-quartile, and top-decile so you can see where our portfolio's shape sits versus real funds.",
+    deal_overlay: "The fund's full TVPI distribution simulated with this deal in the portfolio versus without it (filler capital instead). Because a single position is ~1/20th of the fund, the two curves nearly overlap — that is expected, not an error. Dashed vertical lines mark each scenario's mean.",
+    deal_bars: "Percent change in each fund-level metric versus the same fund without this deal. All four are shown as a percent so they sit on one comparable scale — the mean, the median (P50), the top-decile outcome (P90), and the probability the fund returns 5x or more. Green is an improvement, red a reduction. Because one position is roughly 1/20th of the fund, the shifts are modest; which metric moves most depends on the deal — a moonshot's value tends to surface in the right-tail metrics (P90, 5x+ odds) more than in the median.",
+    deal_profile: "This investment's own modeled outcome distribution (its return multiple, MOIC) compared with a typical holding already in the fund. It shows whether this deal carries more right-tail upside — or more downside risk — than the fund's average position. Densities are normalized so the two shapes are comparable.",
     carbon_impact: "Estimated CO₂ emissions avoided annually by the technology's deployment. Calculated by multiplying deployed units × production per unit × carbon intensity of the displaced resource.",
     sensitivity: "One-at-a-time perturbation analysis showing how each input variable affects the expected MOIC and P(>3x). Larger spreads indicate higher sensitivity — these are the assumptions that matter most.",
+    what_moves: "Two complementary views of what drives this deal's return. (1) Sensitivity: if an input you control (TAM, check, pre-money, penetration, exit multiple) is off by ±20–30%, how far does expected MOIC move — the levers worth pinning down. (2) Variance drivers: across all simulated paths, which stochastic factors (adoption speed, exit timing, margin, dilution, etc.) most explain the spread of outcomes — the deal's inherent uncertainty. The two use different factor sets by design: controllable inputs vs. the model's internal random factors.",
     valuation_context: "Public comparable company multiples (EV/Revenue, EV/EBITDA) from Damodaran/NYU sector data. Provides market context for the exit multiples used in the simulation.",
     ev_at_exit: "Projected enterprise value at the time of exit, calculated as EBITDA × exit multiple for each Monte Carlo path. Determines the proceeds available for distribution to equity holders.",
-    risk_assessment: "Qualitative and quantitative risk analysis including dilution modeling, stage-specific mortality rates, and key risk factors identified from the pitch deck extraction.",
+    risk_assessment: "The deal's real downside, read from the simulated paths: capital-at-risk (how often you lose money or lose everything), dilution (how much ownership erodes through future rounds), and financing demand (rounds to exit, bridge-round likelihood, capital raised). The TRL-derived model penalties that shaped these outcomes are kept in a collapsible below as model calibration.",
     check_optimization: "Grid search over possible check sizes showing the trade-off between ownership, fund concentration, portfolio diversification, and expected returns. Identifies the optimal investment amount.",
     financial_traceability: "Source data from the uploaded financial model showing extracted metrics (revenue, EBITDA, etc.) with provenance — which Excel sheet and cell each value came from.",
     audit_trail: "Complete record of all model inputs, assumptions, and configuration parameters used to generate this report. Enables reproducibility and review.",
 
     // ── Probability Bar ────────────────────────────────────
     total_loss: "Probability of losing the entire investment (MOIC = 0). Driven by stage-specific survival rates adjusted for TRL. For early-stage deals, typically 40-70%.",
+    p_below_1x: "Probability the deal returns less than the capital invested (MOIC < 1x) — i.e. you lose money, whether a total wipeout or a partial loss. Includes the total-loss paths plus any path that exits below cost.",
+    bridge_probability: "Share of simulated paths where the company needs at least one bridge round (an off-cycle raise between priced rounds) before resolving. A realized financing-distress signal computed from the dilution simulation — distinct from the TRL `extra_bridge_prob` input that feeds the model.",
     gt_1x: "Probability of returning at least the invested capital. P(MOIC ≥ 1x). The complement of total loss plus partial loss outcomes.",
     gt_3x: "Probability of a 3x+ return. The primary threshold for venture fund economics — a 3x return on a single deal roughly covers a portfolio of losses.",
     gt_5x: "Probability of a 5x+ return. Strong outperformance threshold.",
@@ -3594,15 +3600,160 @@ function wizRenderReport(r) {
             <p><strong>Dilution</strong>: Round-by-round from ${ov.entry_stage}. Per-stage outcomes: graduate (dilute), stage exit (Carta post-money x acq multiple), or fail. Sector profile "${ov.sector_profile || 'DEFAULT'}": round sizes and post-money from Carta lognormal fits. TRL ${ov.trl} modifiers: ${fmt(trlImp.survival_penalty,0)}% survival penalty/stage, ${fmt(trlImp.capital_intensity_mult,2)}x capital intensity, ${fmt(trlImp.extra_bridge_prob,0)}% bridge probability.</p>
             <p><strong>Outcome types</strong>: (1) Full exit — all stages survived, forward-looking revenue valuation. (2) Stage exit — mid-stage M&A/IPO. (3) Partial recovery — acqui-hire/asset sale. (4) Late small exit. (5) Total loss.</p>
         `)}`;
-    if (sim.variance_drivers) {
-        html += `<h4 class="rpt-chart-title" style="margin-top:28px;">Variance Drivers ${infoTip('variance_drivers')}</h4><table class="rpt-table"><thead><tr><th>Driver</th><th>Contribution</th><th>Explanation</th></tr></thead><tbody>`;
-        const vExp = sim.variance_explanations || {};
-        for (const [k, v] of Object.entries(sim.variance_drivers)) {
-            html += `<tr><td style="text-transform:capitalize">${k.replace(/_/g, ' ')}</td><td class="rpt-num">${fmt(v * 100, 1)}%</td><td>${typeof vExp[k] === 'object' ? (vExp[k]?.explanation || '') : (vExp[k] || '')}</td></tr>`;
-        }
-        html += '</tbody></table>';
-    }
+    // (Variance Drivers moved into the consolidated "What Moves the Return"
+    // section below, alongside input sensitivity.)
     html += '</div>';
+
+    // ── RISK ASSESSMENT (real downside from the sim, not TRL config) ────────────
+    const trlImpact = risk.trl_impact || {};
+    const _pTotal = prob.total_loss || 0;
+    const _pBelow1 = (prob.total_loss || 0) + (prob.below_1x || 0);   // MOIC < 1x
+    const _entryOwn = ov.entry_ownership_pct || 0;
+    const _exitOwn50 = (dilStats.ownership_p50 || 0) * 100;
+    const _exitOwn10 = (dilStats.ownership_p10 || 0) * 100;
+    const _totalDil = _entryOwn > 0 ? (1 - _exitOwn50 / _entryOwn) * 100 : null;
+    const _medRounds = dilStats.median_rounds;
+    const _bridgeP = dilStats.bridge_probability;
+    const _medRaised = dilStats.median_total_raised;
+    const _pReturnsCapital = prob.gt_1x;   // P(MOIC >= 1x) — solid, always available
+    const _riskColor = (p) => p >= 0.6 ? '#dc2626' : (p >= 0.4 ? '#d97706' : '#16a34a');
+    const _goodColor = (p) => p >= 0.6 ? '#16a34a' : (p >= 0.4 ? '#d97706' : '#dc2626');
+    // Dilution / financing rows render only when the path simulation actually
+    // produced erosion or rounds — otherwise hide them rather than show 0s.
+    const _dilReal = (_totalDil != null && _totalDil >= 1) || (_exitOwn10 > 0 && _exitOwn10 < _exitOwn50 - 0.1);
+    const _finReal = (_medRounds || 0) > 0 || (_bridgeP || 0) > 0 || (_medRaised || 0) > 0;
+    const _hdr = 'background:var(--accent-light,#f0f4ec);font-weight:700;font-size:0.7rem;letter-spacing:0.04em;text-transform:uppercase;';
+    const _dilRows = _dilReal ? `
+            <tr><td colspan="3" style="${_hdr}">Dilution</td></tr>
+            <tr><td>Entry ownership</td><td class="rpt-num">${fmt(_entryOwn,1)}%</td><td>VoLo's stake at entry.</td></tr>
+            <tr><td>Median exit ownership</td><td class="rpt-num">${fmt(_exitOwn50,1)}%</td><td>Stake at exit after dilution (surviving paths).</td></tr>
+            ${_totalDil!=null?`<tr><td>Total dilution to exit</td><td class="rpt-num" style="color:${_totalDil>=50?'#d97706':'inherit'};">${fmt(_totalDil,0)}%</td><td>Ownership erosion from entry to exit (median).</td></tr>`:''}
+            <tr><td>Downside exit ownership (P10)</td><td class="rpt-num">${fmt(_exitOwn10,1)}%</td><td>Heavy-dilution scenario (worst decile).</td></tr>` : '';
+    const _finRows = _finReal ? `
+            <tr><td colspan="3" style="${_hdr}">Financing Demand</td></tr>
+            <tr><td>Rounds to exit (median)</td><td class="rpt-num">${fmt(_medRounds,0)}</td><td>Additional priced rounds before an exit.</td></tr>
+            <tr><td>Bridge-round probability</td><td class="rpt-num" style="color:${_riskColor(_bridgeP||0)};">${pctFmt(_bridgeP)}</td><td>Paths needing at least one bridge (financing distress).</td></tr>
+            ${(_medRaised!=null&&_medRaised>0)?`<tr><td>Capital raised to exit (median)</td><td class="rpt-num">$${fmt(_medRaised,1)}M</td><td>Total external capital raised post-entry.</td></tr>`:''}` : '';
+    const _noPathNote = (!_dilReal && !_finReal) ? `<tr><td colspan="3" style="font-size:12px;color:var(--text-secondary,#6b7280);font-style:italic;">Dilution &amp; financing path not resolved for this run (no post-entry rounds simulated).</td></tr>` : '';
+    html += `<div class="rpt-section">${secNum()}
+        <h3 class="rpt-section-title">Risk Assessment ${infoTip('risk_assessment')}</h3>
+        <p class="rpt-narrative">The deal's real downside, straight from the ${(sim.n_simulations||5000).toLocaleString()} simulated paths &mdash; loss odds, ownership erosion, and financing demand.</p>
+        <div class="rpt-impact-grid">
+            <div class="rpt-impact-card">
+                <div class="rpt-impact-val" style="color:${_riskColor(_pBelow1)};">${pctFmt(_pBelow1)}</div>
+                <div class="rpt-impact-sub">Lose Money ${infoTip('p_below_1x')}</div>
+                <div class="rpt-impact-lbl">MOIC &lt; 1x</div>
+            </div>
+            <div class="rpt-impact-card">
+                <div class="rpt-impact-val" style="color:${_riskColor(_pTotal)};">${pctFmt(_pTotal)}</div>
+                <div class="rpt-impact-sub">Total Loss ${infoTip('total_loss')}</div>
+                <div class="rpt-impact-lbl">MOIC = 0</div>
+            </div>
+            <div class="rpt-impact-card">
+                <div class="rpt-impact-val" style="color:${_pReturnsCapital!=null?_goodColor(_pReturnsCapital):'inherit'};">${_pReturnsCapital!=null?pctFmt(_pReturnsCapital):'N/A'}</div>
+                <div class="rpt-impact-sub">Returns Capital ${infoTip('gt_1x')}</div>
+                <div class="rpt-impact-lbl">MOIC &ge; 1x</div>
+            </div>
+        </div>
+        <table class="rpt-table" style="margin-top:14px;">
+            <thead><tr><th>Risk Dimension</th><th>Value</th><th>Read</th></tr></thead><tbody>
+            <tr><td colspan="3" style="background:var(--accent-light,#f0f4ec);font-weight:700;font-size:0.7rem;letter-spacing:0.04em;text-transform:uppercase;">Capital at Risk</td></tr>
+            <tr><td>Lose money (MOIC &lt; 1x)</td><td class="rpt-num">${pctFmt(_pBelow1)}</td><td>Share of paths returning less than the capital invested.</td></tr>
+            <tr><td>Total loss (MOIC = 0)</td><td class="rpt-num">${pctFmt(_pTotal)}</td><td>Share of paths that zero out entirely.</td></tr>
+            <tr><td>Returns capital (MOIC &ge; 1x)</td><td class="rpt-num">${pctFmt(_pReturnsCapital)}</td><td>Share of paths that at least return the money in.</td></tr>
+            ${_dilRows}${_finRows}${_noPathNote}
+        </tbody></table>
+        ${trace('Model calibration — how TRL set the penalties (configuration, not deal risk)', `
+            <p>The risk above is read from simulated outcomes. The table below shows how the model translated TRL ${ov.trl} into the penalties that produced them — model configuration, kept for transparency.</p>
+            <table class="rpt-table"><thead><tr><th>Factor</th><th>Value</th><th>Impact on Model</th></tr></thead><tbody>
+                <tr><td>Revenue Lag (S-curve fallback only)</td><td class="rpt-num">${trlImpact.revenue_lag_years ?? 'N/A'} years</td><td>Zero-revenue lag before S-curve revenue starts. ${revSource === 'founder_anchored' ? '<em>Not active — founder model anchors revenue.</em>' : ''}</td></tr>
+                <tr><td>Survival Penalty</td><td class="rpt-num">${fmt(trlImpact.survival_penalty,1)}%</td><td>Additive penalty to Carta base failure rate per stage.</td></tr>
+                <tr><td>Capital Intensity</td><td class="rpt-num">${fmt(trlImpact.capital_intensity_mult,2)}x</td><td>Multiplier on Carta round-size draws.</td></tr>
+                <tr><td>Extra Bridge Probability (input)</td><td class="rpt-num">${fmt(trlImpact.extra_bridge_prob,1)}%</td><td>TRL-set bridge likelihood fed into the sim (vs. the realized ${_bridgeP!=null?pctFmt(_bridgeP):'N/A'} above).</td></tr>
+                <tr><td>EV/EBITDA Multiple Retention</td><td class="rpt-num">${fmt((trlImpact.exit_multiple_discount||1)*100,0)}%</td><td>${fmt(ov.exit_multiple_range?.[0],1)}x-${fmt(ov.exit_multiple_range?.[1],1)}x → ${fmt(trlImpact.effective_multiple_range?.[0],1)}x-${fmt(trlImpact.effective_multiple_range?.[1],1)}x (${fmt((1-(trlImpact.exit_multiple_discount||1))*100,0)}% haircut).</td></tr>
+                <tr><td>Forward-Look Window</td><td class="rpt-num">${fwdLook} years</td><td>Exit-year EV incorporates projected revenue ${fwdLook} years forward.</td></tr>
+                <tr><td>Forward Confidence</td><td class="rpt-num">${(fwdConf*100).toFixed(0)}%</td><td>Discount applied to forward revenue projections at TRL ${ov.trl}.</td></tr>
+            </tbody></table>
+            <p style="margin-top:8px;">Source: fixed lookup TRL_MODIFIERS (dilution.py); TRL 1 = harshest, TRL 9 = near-zero. Forward-look per Sahlman HBS VC Method. Sector financing from Carta lognormal fits ("${ov.sector_profile || 'DEFAULT'}").</p>
+        `)}
+    </div>`;
+
+    // ── WHAT MOVES THE RETURN ───────────────────────────────────────────────
+    // Consolidates the former "Sensitivity Analysis" and "Variance Drivers" into
+    // two complementary lenses on one question:
+    //   (1) Input sensitivity — if YOUR assumptions are off, how much does the
+    //       central return move (the levers worth pinning down).
+    //   (2) Variance drivers — across all simulated futures, which STOCHASTIC
+    //       factors explain the spread of outcomes (inherent uncertainty).
+    const _hasSens = sens.tornado?.length;
+    // Keep only finite, positive shares — degenerate runs emit null/NaN/0 (e.g. when
+    // the sim's internal factors are constant), and those must not render.
+    const _vdEntries = Object.entries(sim.variance_drivers || {}).filter(([k, v]) => v != null && isFinite(v) && v > 0);
+    const _hasVar = _vdEntries.length > 0;
+    if (_hasSens || _hasVar) {
+        const baseMoic = sens.base_moic || hero.expected_moic || 0;
+        const baseP3x = sens.base_p3x || prob.gt_3x || 0;
+        html += `<div class="rpt-section">${secNum()}
+            <h3 class="rpt-section-title">What Moves the Return ${infoTip('what_moves')}</h3>
+            <p class="rpt-narrative">Two lenses on the return. <strong>(1) Sensitivity</strong> &mdash; how far expected MOIC moves if an input you control is off (the levers worth pinning down). <strong>(2) Spread drivers</strong> &mdash; which factors most explain the variation across simulated futures (inherent uncertainty).</p>`;
+        if (_hasSens) {
+            const trows = [...sens.tornado].sort((a,b)=>Math.abs((b.moic_up||0)-(b.moic_down||0))-Math.abs((a.moic_up||0)-(a.moic_down||0)));
+            html += `<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:18px 0 6px;">1 &middot; Sensitivity to your assumptions</div>
+            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Each input perturbed &plusmn;20&ndash;30% one at a time; bars show the MOIC swing (<span style="color:#dc2626;font-weight:600;">red = downside</span>, <span style="color:#16a34a;font-weight:600;">green = upside</span>). Widest = most worth getting right.</p>`;
+            // Tornado chart: diverging bars centered on the base MOIC, sorted by swing.
+            const _torMax = Math.max(0.01, ...trows.map(t => Math.max(Math.abs(Math.min(t.moic_down||0, t.moic_up||0, 0)), Math.max(t.moic_down||0, t.moic_up||0, 0))));
+            html += `<div style="margin:6px 0 16px;">`;
+            trows.forEach(t => {
+                const _lo = Math.min(t.moic_down||0, t.moic_up||0, 0), _hi = Math.max(t.moic_down||0, t.moic_up||0, 0);
+                const _lw = (Math.abs(_lo)/_torMax)*50, _rw = (_hi/_torMax)*50;
+                const _sw = Math.abs((t.moic_up||0)-(t.moic_down||0));
+                html += `<div style="display:flex;align-items:center;gap:10px;margin:3px 0;">
+                    <div style="width:128px;font-size:11px;text-align:right;color:#374151;flex-shrink:0;">${t.input}</div>
+                    <div style="position:relative;flex:1;height:16px;background:linear-gradient(90deg,transparent calc(50% - 0.5px),#cbd5e1 calc(50% - 0.5px),#cbd5e1 calc(50% + 0.5px),transparent calc(50% + 0.5px));">
+                        <div style="position:absolute;right:50%;top:2px;height:12px;width:${_lw}%;background:rgba(220,38,38,0.78);border-radius:2px 0 0 2px;"></div>
+                        <div style="position:absolute;left:50%;top:2px;height:12px;width:${_rw}%;background:rgba(22,163,74,0.78);border-radius:0 2px 2px 0;"></div>
+                    </div>
+                    <div style="width:44px;font-size:11px;font-weight:700;text-align:right;flex-shrink:0;">${fmt(_sw,2)}x</div>
+                </div>`;
+            });
+            html += `<div style="display:flex;gap:10px;margin-top:3px;"><div style="width:128px;flex-shrink:0;"></div><div style="flex:1;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;"><span>&larr; lower MOIC</span><span>base ${fmt(baseMoic,2)}x</span><span>higher MOIC &rarr;</span></div><div style="width:44px;font-size:10px;color:#9ca3af;text-align:right;flex-shrink:0;">swing</div></div></div>`;
+            html += `<table class="rpt-table">
+                <thead><tr><th>Input Variable</th><th>Base MOIC</th><th>If &minus;20%</th><th>If +20%</th><th>Swing</th></tr></thead>
+                <tbody>`;
+            trows.forEach(t => {
+                const spread = Math.abs((t.moic_up || 0) - (t.moic_down || 0));
+                html += `<tr>
+                    <td style="font-weight:600;">${t.input}</td>
+                    <td class="rpt-num">${fmt(baseMoic, 2)}x</td>
+                    <td class="rpt-num" style="color:${(t.moic_down || 0) < 0 ? '#dc2626' : '#16a34a'};">${fmt(baseMoic + (t.moic_down || 0), 2)}x <span style="font-size:11px;">(${signFmt(t.moic_down, 2)})</span></td>
+                    <td class="rpt-num" style="color:${(t.moic_up || 0) > 0 ? '#16a34a' : '#dc2626'};">${fmt(baseMoic + (t.moic_up || 0), 2)}x <span style="font-size:11px;">(${signFmt(t.moic_up, 2)})</span></td>
+                    <td class="rpt-num" style="font-weight:700;">${fmt(spread, 2)}x</td>
+                </tr>`;
+            });
+            html += `</tbody></table>
+            <p class="rpt-narrative" style="margin-top:8px;">Base case: ${fmt(baseMoic, 2)}x expected MOIC, ${pctFmt(baseP3x)} P(&gt;3x). Most sensitive to <strong>${trows[0]?.input || 'N/A'}</strong> (${fmt(Math.abs((trows[0]?.moic_up || 0) - (trows[0]?.moic_down || 0)), 2)}x swing).</p>`;
+        }
+        if (_hasVar) {
+            const vExp = sim.variance_explanations || {};
+            const vrows = [..._vdEntries].sort((a,b)=>b[1]-a[1]);
+            const topShare = vrows[0] ? Math.round(vrows[0][1]*100) : 0;
+            html += `<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:24px 0 6px;">2 &middot; Drivers of the outcome spread</div>
+            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Share of MOIC variation each stochastic factor explains (rank&#8209;correlation across all ${(sim.n_simulations||5000).toLocaleString()} paths). Inherent uncertainty, not estimation choices.</p>
+            <table class="rpt-table"><thead><tr><th style="width:22%;">Driver</th><th style="width:30%;">Share of Spread</th><th>What it is</th></tr></thead><tbody>`;
+            vrows.forEach(([k, v]) => {
+                const pct = Math.round(v*100);
+                const bar = `<span style="display:inline-block;height:8px;width:${Math.max(3,pct*1.5)}px;background:var(--accent,#5B7744);border-radius:2px;margin-right:7px;vertical-align:middle;"></span>`;
+                html += `<tr><td style="text-transform:capitalize;font-weight:600;">${k.replace(/_/g, ' ')}</td><td>${bar}<span class="rpt-num">${fmt(v * 100, 0)}%</span></td><td style="font-size:12px;color:var(--text-secondary,#6b7280);">${typeof vExp[k] === 'object' ? (vExp[k]?.explanation || '') : (vExp[k] || '')}</td></tr>`;
+            });
+            html += `</tbody></table>
+            <p class="rpt-narrative" style="margin-top:8px;"><strong style="text-transform:capitalize;">${vrows[0] ? vrows[0][0].replace(/_/g,' ') : 'N/A'}</strong> dominates the spread (~${topShare}% of variation).</p>`;
+        }
+        html += `${trace('Methodology', `
+            <p><strong>Sensitivity (panel 1)</strong>: one&#8209;at&#8209;a&#8209;time perturbation (&plusmn;20&ndash;30%), 1,000&#8209;path fast MC (same seed), measuring &Delta;E[MOIC]. Swing = |MOIC&#8314; &minus; MOIC&#8331;|. Ranking is stable; point estimates carry more noise than the ${(sim.n_simulations||5000).toLocaleString()}&#8209;path main run.</p>
+            <p><strong>Variance drivers (panel 2)</strong>: Spearman rank&#8209;correlation between each sampled factor and MOIC across the full run, normalized to shares. The two panels use different factor sets by design &mdash; panel 1 covers controllable <em>inputs</em>, panel 2 the model's internal <em>stochastic</em> factors (including emergent ones like exit timing and margin).</p>
+        `)}
+        </div>`;
+    }
 
     // ── SECTION 2: ADOPTION S-CURVE & REVENUE SANITY CHECK ──────────────────
     const scBp = adoption.scurve?.bass_p_mean;
@@ -3654,13 +3805,24 @@ function wizRenderReport(r) {
         const portfolioLabel = nCommitted > 0
             ? `Running Fund (${nCommitted} committed deal${nCommitted > 1 ? 's' : ''} + ${20 - nCommitted} simulated)`
             : 'Simulated Portfolio';
-        // Carta top-decile (P90) benchmark for a mature fund — mirror of
-        // configs/carta_benchmarks.json. Static reference so the caption renders on ANY
-        // saved report; the fund's own P90 (shown as its own row of boxes) is the compare.
-        const CARTA_P90 = 4.00;
-        const _fundP90 = (pImpact.tvpi_new_p90 != null) ? pImpact.tvpi_new_p90 : null;
-        const _cartaCaption = (_fundP90 != null)
-            ? `Top decile (P90) <strong>${fmt(_fundP90)}x</strong> ${_fundP90 >= CARTA_P90 * 0.98 ? 'is at or above' : 'is below'} the Carta top-decile benchmark (~${fmt(CARTA_P90)}x). The Base Fund / With Deal figures are the <em>mean (expected)</em> case, which sits below the top decile by design.`
+        // Anchor the section on the fund's calibrated (NAV-inclusive, Carta-fit)
+        // EXPECTED MEAN — the honest level — rather than the fee-netting cashflow
+        // mean or the P90. Since the whole fund is now calibrated to the
+        // top-decile line, "P90" is just the fund's own upside spread, not the
+        // benchmark, so we no longer frame it as "top decile".
+        const CARTA_DECILE = 4.00;
+        // Calibrated (NAV-inclusive) base/with means + lift. Prefer the reconciled
+        // single-source fields from the backend (which equal the With/Without chart's
+        // means exactly); fall back to the legacy additive estimate for older reports.
+        const _baseMeanCal = (pImpact.tvpi_base_cal != null) ? pImpact.tvpi_base_cal
+            : ((pImpact.fund_dist && pImpact.fund_dist.mean != null) ? pImpact.fund_dist.mean : pImpact.tvpi_base_mean);
+        const _newMeanCal = (pImpact.tvpi_new_cal != null) ? pImpact.tvpi_new_cal
+            : ((_baseMeanCal != null) ? _baseMeanCal + (pImpact.tvpi_mean_lift || 0) : null);
+        const _liftCal = (pImpact.tvpi_lift_cal != null) ? pImpact.tvpi_lift_cal
+            : ((_newMeanCal != null && _baseMeanCal != null) ? (_newMeanCal - _baseMeanCal) : (pImpact.tvpi_mean_lift || 0));
+        const _onDecile = (_baseMeanCal != null && _baseMeanCal >= CARTA_DECILE * 0.95);
+        const _cartaCaption = (_baseMeanCal != null)
+            ? `The simulated fund's expected (mean) TVPI of <strong>${fmt(_baseMeanCal)}x</strong> ${_onDecile ? 'sits on' : 'is below'} Carta's top-decile line (~${fmt(CARTA_DECILE)}x)${_onDecile ? ' — the fund is calibrated to a top-decile return profile' : ''}.`
             : '';
         html += `<div class="rpt-section">${secNum()}
             <h3 class="rpt-section-title">${portfolioLabel} Impact ${infoTip('portfolio_impact')}</h3>
@@ -3673,60 +3835,49 @@ function wizRenderReport(r) {
                 <p><strong>Deal parameters</strong>: cap_multiple = ${fmt(moicC.mean,1)}x (conditional mean), success_prob = ${pctFmt(sim.survival_rate)}, exit_year = triangular(${ov.exit_year_range?.[0] || 5}, ${ov.exit_year_range?.[1] || 10}), check = $${fmt(ov.check_size_millions, 1)}M.</p>
                 ${nCommitted > 0 ? '<p><strong>Note</strong>: Committed deals use their full MOIC distribution from the original Monte Carlo simulation for realistic variance.</p>' : '<p><strong>Limitation</strong>: Simulated portfolio, not actual holdings. No cross-asset correlation.</p>'}
             `)}
-            <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Expected (mean)</div>
+            <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Expected (mean) TVPI</div>
             <div class="rpt-impact-grid">
                 <div class="rpt-impact-card">
-                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_base_mean)}x</div>
+                    <div class="rpt-impact-val">${fmt(_baseMeanCal)}x</div>
                     <div class="rpt-impact-sub">Base Fund ${infoTip('base_fund')}</div>
                     <div class="rpt-impact-lbl">TVPI (Mean) ${infoTip('tvpi_mean')}</div>
                 </div>
                 <div class="rpt-impact-card">
-                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_new_mean)}x</div>
+                    <div class="rpt-impact-val">${fmt(_newMeanCal)}x</div>
                     <div class="rpt-impact-sub">With This Deal ${infoTip('with_deal')}</div>
                     <div class="rpt-impact-lbl">TVPI (Mean)</div>
                 </div>
                 <div class="rpt-impact-card lift">
-                    <div class="rpt-impact-val ${liftCls(pImpact.tvpi_mean_lift)}">${signFmt(pImpact.tvpi_mean_lift)}x</div>
+                    <div class="rpt-impact-val ${liftCls(_liftCal)}">${signFmt(_liftCal)}x</div>
                     <div class="rpt-impact-sub">Marginal Lift ${infoTip('marginal_lift')}</div>
                     <div class="rpt-impact-lbl">TVPI Delta ${infoTip('tvpi_delta')}</div>
                 </div>
             </div>
-            ${pImpact.tvpi_new_p90 != null ? `
-            <div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--accent,#5B7744);margin:16px 0 6px;">Top decile (P90)</div>
-            <div class="rpt-impact-grid">
-                <div class="rpt-impact-card">
-                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_base_p90)}x</div>
-                    <div class="rpt-impact-sub">Base Fund ${infoTip('base_fund')}</div>
-                    <div class="rpt-impact-lbl">TVPI (P90 — top decile)</div>
-                </div>
-                <div class="rpt-impact-card">
-                    <div class="rpt-impact-val">${fmt(pImpact.tvpi_new_p90)}x</div>
-                    <div class="rpt-impact-sub">With This Deal ${infoTip('with_deal')}</div>
-                    <div class="rpt-impact-lbl">TVPI (P90)</div>
-                </div>
-                <div class="rpt-impact-card lift">
-                    <div class="rpt-impact-val ${liftCls(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}">${signFmt(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}x</div>
-                    <div class="rpt-impact-sub">Marginal Lift ${infoTip('marginal_lift')}</div>
-                    <div class="rpt-impact-lbl">TVPI Delta</div>
-                </div>
-            </div>` : ''}
             <table class="rpt-table">
                 <thead><tr><th>Metric</th><th>Base Portfolio</th><th>With Deal</th><th>Delta</th></tr></thead>
                 <tbody>
-                    <tr><td>TVPI (Mean)</td><td class="rpt-num">${fmt(pImpact.tvpi_base_mean)}x</td><td class="rpt-num">${fmt(pImpact.tvpi_new_mean)}x</td><td class="rpt-num ${liftCls(pImpact.tvpi_mean_lift)}">${signFmt(pImpact.tvpi_mean_lift)}x</td></tr>
-                    <tr><td>TVPI (P50)</td><td class="rpt-num">${fmt(pImpact.tvpi_base_p50)}x</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p50)}x</td><td class="rpt-num ${liftCls(pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50)}">${signFmt(pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50)}x</td></tr>
-                    <tr><td>TVPI (P75)</td><td class="rpt-num">${fmt(pImpact.tvpi_base_p75)}x</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p75)}x</td><td class="rpt-num ${liftCls(pImpact.tvpi_p75_lift)}">${signFmt(pImpact.tvpi_p75_lift)}x</td></tr>
-                    ${pImpact.tvpi_new_p90 != null ? `<tr><td>TVPI (P90 — top decile)</td><td class="rpt-num">${fmt(pImpact.tvpi_base_p90)}x</td><td class="rpt-num">${fmt(pImpact.tvpi_new_p90)}x</td><td class="rpt-num ${liftCls(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}">${signFmt(pImpact.tvpi_new_p90 - pImpact.tvpi_base_p90)}x</td></tr>` : ''}
+                    <tr><td>TVPI (Mean)</td><td class="rpt-num">${fmt(_baseMeanCal)}x</td><td class="rpt-num">${fmt(_newMeanCal)}x</td><td class="rpt-num ${liftCls(_liftCal)}">${signFmt(_liftCal)}x</td></tr>
                     <tr><td>IRR (Mean)</td><td class="rpt-num">${pctFmt(pImpact.irr_base_mean)}</td><td class="rpt-num">${pctFmt(pImpact.irr_new_mean)}</td><td class="rpt-num ${liftCls(pImpact.irr_mean_lift)}">${(pImpact.irr_mean_lift*100).toFixed(1)}pp</td></tr>
                     <tr><td>IRR (P50)</td><td class="rpt-num">${pctFmt(pImpact.irr_base_p50)}</td><td class="rpt-num">${pctFmt(pImpact.irr_new_p50)}</td><td class="rpt-num ${liftCls(pImpact.irr_new_p50 - pImpact.irr_base_p50)}">${((pImpact.irr_new_p50 - pImpact.irr_base_p50)*100).toFixed(1)}pp</td></tr>
                 </tbody>
             </table>
             ${_cartaCaption ? `<p class="rpt-narrative" style="font-size:12px;color:#6b7280;margin-top:10px;">${_cartaCaption}</p>` : ''}
-            ${pImpact.fund_dist ? `<div class="rpt-chart-wrap" style="margin-top:16px;">
-                <h4 class="rpt-chart-title">Fund Outcome Distribution vs. Carta Ladder ${infoTip('fund_distribution')}</h4>
-                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Terminal fund TVPI across ${(pImpact.fund_dist.n||2000).toLocaleString()} simulated universes. <span style="color:#b3261e;font-weight:600;">Red = loss zone (&lt;1x)</span> — we want this area small; <span style="color:#5B7744;font-weight:600;">green = moonshot zone (&ge;3x)</span> — we want this long and full. Dashed lines mark Carta's median, top-quartile, and top-decile; solid line is our fund's median. ${pImpact.fund_dist.p_below_1x != null ? `<strong>${(pImpact.fund_dist.p_below_1x*100).toFixed(0)}%</strong> of universes finish below 1x; <strong>${(pImpact.fund_dist.p_above_3x*100).toFixed(0)}%</strong> reach 3x+.` : ''}</p>
-                <canvas id="rpt-funddist-chart" height="280"></canvas>
-            </div>` : ''}
+            ${pImpact.fund_overlay ? `<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:24px 0 6px;">Effect of adding this investment</div>
+            <div class="rpt-chart-wrap" style="margin-top:4px;">
+                <h4 class="rpt-chart-title">Projected Fund Return — With vs. Without This Investment ${infoTip('deal_overlay')}</h4>
+                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">The fund's TVPI distribution with and without this deal. One position in a ~20-company fund barely moves the whole fund, so the curves nearly coincide.</p>
+                <canvas id="rpt-deal-overlay-chart" height="240"></canvas>
+            </div>
+            <div class="rpt-chart-wrap" style="margin-top:20px;">
+                <h4 class="rpt-chart-title">Marginal Contribution to Fund Performance ${infoTip('deal_bars')}</h4>
+                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Percent change in each fund metric versus the same fund without this deal &mdash; the mean, median (P50), top-decile (P90), and the odds of a 5x+ fund. Green is a gain, red a drag; because one position is only a small slice of a ~20-company fund, the shifts are modest.</p>
+                <canvas id="rpt-deal-bars-chart" height="190"></canvas>
+            </div>
+            ${pImpact.deal_moic_dist ? `<div class="rpt-chart-wrap" style="margin-top:20px;">
+                <h4 class="rpt-chart-title">Return Profile — This Investment vs. Portfolio Average ${infoTip('deal_profile')}</h4>
+                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">This deal's own outcome distribution (MOIC) vs. a typical fund holding — whether it adds more right-tail upside (or downside) than what the fund already holds.</p>
+                <canvas id="rpt-deal-profile-chart" height="240"></canvas>
+            </div>` : ''}` : ''}
         </div>`;
     }
 
@@ -3755,39 +3906,6 @@ function wizRenderReport(r) {
         html += `<div class="rpt-chart-wrap" style="margin-top:8px;"><h4 class="rpt-chart-title">Annual Carbon Impact (tCO2) ${infoTip('annual_carbon_chart')}</h4><canvas id="rpt-carbon-chart" height="260"></canvas></div>`;
     }
     html += '</div>';
-
-    // ── SECTION 5: SENSITIVITY ──────────────────────────────────────────────
-    if (sens.tornado?.length) {
-        const baseMoic = sens.base_moic || hero.expected_moic || 0;
-        const baseP3x = sens.base_p3x || prob.gt_3x || 0;
-        html += `<div class="rpt-section">${secNum()}
-            <h3 class="rpt-section-title">Sensitivity Analysis ${infoTip('sensitivity')}</h3>
-            <p class="rpt-narrative">${sens.narrative || ''}</p>
-            ${trace('Sensitivity methodology', `
-                <p><strong>Approach</strong>: One-at-a-time perturbation (+/- 20-30%), 1,000-path fast MC (same seed), measuring ΔE[MOIC] and ΔP(>3x).</p>
-                <p><strong>Inputs tested</strong>: TAM (±20%), Check Size (±20%), Pre-Money (±20%), Penetration Low/High (±30%), Exit Multiple Low/High (±25%).</p>
-                <p><strong>Spread</strong> = |MOIC_up − MOIC_down|.</p>
-                <p><strong>Note</strong>: 1,000 sims (vs ${(sim.n_simulations||5000).toLocaleString()} main run). Sensitivity ranking is stable; point estimates have higher variance.</p>
-            `)}
-            <table class="rpt-table">
-                <thead><tr><th>Input Variable</th><th>Base Value</th><th>-20% Scenario</th><th>MOIC Impact</th><th>+20% Scenario</th><th>MOIC Impact</th><th>Spread</th></tr></thead>
-                <tbody>`;
-        sens.tornado.forEach(t => {
-            const spread = Math.abs((t.moic_up || 0) - (t.moic_down || 0));
-            html += `<tr>
-                <td style="font-weight:600;">${t.input}</td>
-                <td class="rpt-num">${fmt(baseMoic, 2)}x</td>
-                <td class="rpt-num">${fmt(baseMoic + (t.moic_down || 0), 2)}x</td>
-                <td class="rpt-num" style="color:${(t.moic_down || 0) < 0 ? '#dc2626' : '#16a34a'};">${signFmt(t.moic_down, 2)}x</td>
-                <td class="rpt-num">${fmt(baseMoic + (t.moic_up || 0), 2)}x</td>
-                <td class="rpt-num" style="color:${(t.moic_up || 0) > 0 ? '#16a34a' : '#dc2626'};">${signFmt(t.moic_up, 2)}x</td>
-                <td class="rpt-num" style="font-weight:600;">${fmt(spread, 2)}x</td>
-            </tr>`;
-        });
-        html += `</tbody></table>
-            <p class="rpt-narrative" style="margin-top:12px;">Base case: ${fmt(baseMoic, 2)}x expected MOIC, ${pctFmt(baseP3x)} probability of >3x return. Largest sensitivity is to ${sens.tornado[0]?.input || 'N/A'} with a ${fmt(Math.abs((sens.tornado[0]?.moic_up || 0) - (sens.tornado[0]?.moic_down || 0)), 2)}x spread.</p>
-        </div>`;
-    }
 
     // ── SECTION 6: VALUATION CONTEXT ────────────────────────────────────────
     const vcMatches = valCtx.matches || valCtx.industries || [];
@@ -3848,27 +3966,6 @@ function wizRenderReport(r) {
             `)}
         </div>`;
     }
-
-    // ── SECTION 7: RISK ASSESSMENT ──────────────────────────────────────────
-    const trlImpact = risk.trl_impact || {};
-    html += `<div class="rpt-section">${secNum()}
-        <h3 class="rpt-section-title">Risk Assessment ${infoTip('risk_assessment')}</h3>
-        <table class="rpt-table">
-            <thead><tr><th>Factor</th><th>Value</th><th>Impact on Model</th></tr></thead><tbody>
-            <tr><td>Revenue Lag (S-curve fallback only)</td><td class="rpt-num">${trlImpact.revenue_lag_years ?? 'N/A'} years</td><td>Zero-revenue lag before S-curve revenue starts. ${revSource === 'founder_anchored' ? '<em>Not active — founder model anchors revenue.</em>' : ''}</td></tr>
-            <tr><td>Survival Penalty</td><td class="rpt-num">${fmt(trlImpact.survival_penalty,1)}%</td><td>Additive penalty to Carta base failure rate per stage.</td></tr>
-            <tr><td>Capital Intensity</td><td class="rpt-num">${fmt(trlImpact.capital_intensity_mult,2)}x</td><td>Multiplier on Carta round-size draws.</td></tr>
-            <tr><td>Extra Bridge Probability</td><td class="rpt-num">${fmt(trlImpact.extra_bridge_prob,1)}%</td><td>Bridge round probability between priced rounds.</td></tr>
-            <tr><td>EV/EBITDA Multiple Retention</td><td class="rpt-num">${fmt((trlImpact.exit_multiple_discount||1)*100,0)}%</td><td>${fmt(ov.exit_multiple_range?.[0],1)}x-${fmt(ov.exit_multiple_range?.[1],1)}x EV/EBITDA → ${fmt(trlImpact.effective_multiple_range?.[0],1)}x-${fmt(trlImpact.effective_multiple_range?.[1],1)}x EV/EBITDA (${fmt((1-(trlImpact.exit_multiple_discount||1))*100,0)}% TRL haircut).</td></tr>
-            <tr><td>Forward-Look Window</td><td class="rpt-num">${fwdLook} years</td><td>Exit-year EV incorporates projected revenue ${fwdLook} years forward.</td></tr>
-            <tr><td>Forward Confidence</td><td class="rpt-num">${(fwdConf*100).toFixed(0)}%</td><td>Discount applied to forward revenue projections at TRL ${ov.trl}.</td></tr>
-        </tbody></table>
-        ${trace('TRL modifier source', `
-            <p>Fixed lookup table: TRL_MODIFIERS in dilution.py. TRL 1 = harshest penalties; TRL 9 = near-zero.</p>
-            <p>Forward-look and confidence discount per Sahlman HBS VC Method.</p>
-            <p><strong>Sector financing data</strong>: Carta sector-level lognormal fits ("${ov.sector_profile || 'DEFAULT'}"). Stage exit multiples, partial recovery rates, fail probabilities from Carta exit data ([ASSUMPTION]-tagged where calibration data is sparse).</p>
-        `)}
-    </div>`;
 
     // ── POSITION SIZING OPTIMIZATION ─────────────────────────────────────
     const ps = r.position_sizing || {};
@@ -4379,48 +4476,95 @@ function _wizRenderCharts(r) {
         }
     }
 
-    // Fund outcome distribution vs Carta ladder (position-sizing cockpit)
     const pImpact = r.portfolio_impact || {};
-    const fd = pImpact.fund_dist;
-    if (fd && fd.bin_centers && fd.bin_centers.length) {
-        const ctxFD = document.getElementById('rpt-funddist-chart');
-        if (ctxFD) {
-            const cl = pImpact.carta_lines || {};
-            const barColors = fd.bin_centers.map(c =>
-                c < 1.0 ? 'rgba(220,53,69,0.55)' : (c >= 3.0 ? 'rgba(91,119,68,0.72)' : 'rgba(157,181,196,0.55)'));
-            // Map a TVPI value to a fractional category index for the vertical lines
-            const c0 = fd.bin_centers[0], bw = fd.bin_width || 1;
+
+    // ── Deal marginal-impact charts: A (overlay), C (bars), D (return profile) ──
+    const ov = pImpact.fund_overlay;
+    if (ov && ov.bin_centers && ov.bin_centers.length) {
+        const _tickSet = (centers) => {
+            const s = new Set(); const mx = centers[centers.length - 1];
+            for (let k = 0; k <= Math.ceil(mx); k++) {
+                let best = 0, bd = Infinity;
+                centers.forEach((c, ix) => { const d = Math.abs(c - k); if (d < bd) { bd = d; best = ix; } });
+                s.add(best);
+            }
+            return s;
+        };
+        // A — fund return WITH vs WITHOUT the deal
+        const ctxA = document.getElementById('rpt-deal-overlay-chart');
+        if (ctxA) {
+            const c0 = ov.bin_centers[0], bw = (ov.bin_centers[1] - ov.bin_centers[0]) || 1;
             const idxOf = (v) => (v - c0) / bw;
-            const lineDefs = [];
-            const addLine = (v, label, color, dash) => { if (v != null && isFinite(v)) lineDefs.push({v, label, color, dash}); };
-            addLine(cl.p50, 'Carta median', '#9CA3AF', [3,3]);
-            addLine(cl.p75, 'Carta top-quartile', '#E0A030', [5,3]);
-            addLine(cl.p90, 'Carta top-decile', VOLO.green, [5,3]);
-            addLine(fd.median, 'Our median', VOLO.slate, []);
-            _wizReportCharts.funddist = new Chart(ctxFD, {
-                type: 'bar',
+            const tkA = _tickSet(ov.bin_centers);
+            _wizReportCharts.dealOverlay = new Chart(ctxA, {
+                type: 'line',
                 data: {
-                    labels: fd.bin_centers.map(c => c.toFixed(1)),
-                    datasets: [{ label: 'Universes', data: fd.counts, backgroundColor: barColors, borderWidth: 0, barPercentage: 1.0, categoryPercentage: 1.0 }]
+                    labels: ov.bin_centers.map(c => c.toFixed(2)),
+                    datasets: [
+                        {label: `Without this deal (mean ${(+ov.base_mean).toFixed(2)}x)`, data: ov.base_counts, borderColor: '#9CA3AF', backgroundColor: 'rgba(157,163,170,0.25)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
+                        {label: `With this deal (mean ${(+ov.with_mean).toFixed(2)}x)`, data: ov.with_counts, borderColor: VOLO.green, backgroundColor: 'rgba(91,119,68,0.22)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
+                    ]
                 },
                 options: {
                     responsive: true, maintainAspectRatio: false,
                     plugins: {
-                        legend: {display: false},
-                        tooltip: {callbacks: {title: (it) => 'TVPI ≈ ' + it[0].label + 'x', label: (it) => it.formattedValue + ' universes'}},
-                        annotation: {annotations: Object.fromEntries(lineDefs.map((p, i) => ['fl'+i, {
-                            type: 'line', xMin: idxOf(p.v), xMax: idxOf(p.v),
-                            borderColor: p.color, borderWidth: 2, borderDash: p.dash,
-                            label: {display: true, content: p.label, position: (i % 2 ? 'end' : 'start'),
-                                    backgroundColor: 'rgba(255,255,255,0.82)', color: p.color, font: {size: 9}, padding: 2}
-                        }]))}
+                        legend: {position: 'top', labels: {font: chartFont, boxWidth: 16}},
+                        tooltip: {callbacks: {title: (it) => 'TVPI ≈ ' + (+it[0].label).toFixed(1) + 'x'}},
+                        annotation: {annotations: {
+                            b: {type: 'line', xMin: idxOf(ov.base_mean), xMax: idxOf(ov.base_mean), borderColor: '#9CA3AF', borderWidth: 1.5, borderDash: [4,3]},
+                            w: {type: 'line', xMin: idxOf(ov.with_mean), xMax: idxOf(ov.with_mean), borderColor: VOLO.green, borderWidth: 1.5, borderDash: [4,3]},
+                        }}
                     },
-                    scales: {
-                        y: {display: false, beginAtZero: true},
+                    scales: {y: {display: false, beginAtZero: true},
                         x: {title: {display: true, text: 'Fund TVPI (x)', font: chartFont},
-                            ticks: {font: chartFont, autoSkip: true, maxTicksLimit: 11,
-                                    callback: function(val) { const l = this.getLabelForValue(val); return (+l).toFixed(0) + 'x'; }}}
-                    }
+                            ticks: {font: chartFont, autoSkip: false, maxRotation: 0,
+                                    callback: function(val) { return tkA.has(val) ? Math.round(ov.bin_centers[val]) + 'x' : ''; }}}}
+                }
+            });
+        }
+        // C — marginal contribution by metric (signed bars)
+        const dm = pImpact.delta_metrics || {};
+        const ctxC = document.getElementById('rpt-deal-bars-chart');
+        if (ctxC) {
+            // Percent change vs. the fund without the deal — one comparable axis for
+            // all four metrics (raw deltas mix TVPI multiples with a probability).
+            const _pc = (dm.mean_pct != null);
+            const rows = _pc
+                ? [['Mean', dm.mean_pct], ['Median (P50)', dm.p50_pct], ['Top-decile (P90)', dm.p90_pct], ['Chance of 5x+ fund', dm.p_ge_5x_pct]]
+                : [['Mean', dm.mean], ['Median (P50)', dm.p50], ['Top-decile (P90)', dm.p90]];
+            const rr = rows.filter(r => r[1] != null);
+            const _unit = _pc ? '%' : 'x';
+            _wizReportCharts.dealBars = new Chart(ctxC, {
+                type: 'bar',
+                data: {labels: rr.map(r => r[0]),
+                    datasets: [{data: rr.map(r => r[1]), backgroundColor: rr.map(r => (r[1] >= 0 ? 'rgba(91,119,68,0.85)' : 'rgba(179,38,30,0.8)')), borderWidth: 0, barThickness: 22}]},
+                options: {
+                    indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+                    plugins: {legend: {display: false},
+                        tooltip: {callbacks: {label: (it) => (it.raw >= 0 ? '+' : '') + it.raw + _unit}}},
+                    scales: {x: {title: {display: true, text: 'Percent change vs. fund without the deal', font: chartFont}, grid: {color: 'rgba(0,0,0,0.06)'}, ticks: {font: chartFont, callback: (v) => v + _unit}},
+                             y: {ticks: {font: chartFont}, grid: {display: false}}}
+                }
+            });
+        }
+        // D — this deal's return profile vs a typical holding (linear x, normalized)
+        const dd = pImpact.deal_moic_dist, hd = pImpact.holding_moic_dist;
+        const ctxD = document.getElementById('rpt-deal-profile-chart');
+        if (ctxD && dd && hd) {
+            const norm = (h) => { const s = h.counts.reduce((a, b) => a + b, 0) || 1; return h.bin_centers.map((c, i) => ({x: c, y: h.counts[i] / s})); };
+            _wizReportCharts.dealProfile = new Chart(ctxD, {
+                type: 'line',
+                data: {datasets: [
+                    {label: 'A typical fund holding', data: norm(hd), borderColor: '#9CA3AF', backgroundColor: 'rgba(157,163,170,0.25)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
+                    {label: 'This investment', data: norm(dd), borderColor: '#C58A2E', backgroundColor: 'rgba(197,138,46,0.22)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
+                ]},
+                options: {
+                    responsive: true, maintainAspectRatio: false, parsing: false,
+                    plugins: {legend: {position: 'top', labels: {font: chartFont, boxWidth: 16}},
+                        tooltip: {callbacks: {title: (it) => 'MOIC ≈ ' + (+it[0].parsed.x).toFixed(1) + 'x'}}},
+                    scales: {y: {display: false, beginAtZero: true},
+                        x: {type: 'linear', min: 0, max: 18, title: {display: true, text: 'Return multiple (MOIC, x)', font: chartFont},
+                            ticks: {font: chartFont, stepSize: 2, callback: (v) => v + 'x'}}}
                 }
             });
         }
@@ -9764,6 +9908,11 @@ function _memoInjectCharts(container, report) {
     const prob = sim.probability || {};
     const moic = sim.moic_unconditional || {};
     const moicC = sim.moic_conditional || {};
+    // Calibrated (reconciled) portfolio-impact mean — same single source the deal
+    // report cards and the With/Without chart use, so the memo can't contradict it.
+    const _piBaseCal = (pImpact.tvpi_base_cal != null) ? pImpact.tvpi_base_cal : pImpact.tvpi_base_mean;
+    const _piNewCal = (pImpact.tvpi_new_cal != null) ? pImpact.tvpi_new_cal : pImpact.tvpi_new_mean;
+    const _piLiftCal = (pImpact.tvpi_lift_cal != null) ? pImpact.tvpi_lift_cal : pImpact.tvpi_mean_lift;
 
     const fmt = (v, d=2) => v != null ? Number(v).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d}) : 'N/A';
     const pctFmt = (v) => v != null ? (v * 100).toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%' : 'N/A';
@@ -9918,10 +10067,11 @@ function _memoInjectCharts(container, report) {
         }
 
         // Variance drivers table — inline after risk/sensitivity discussion
-        if (sim.variance_drivers) {
+        const _vdMemo = Object.entries(sim.variance_drivers || {}).filter(([k, v]) => v != null && isFinite(v) && v > 0);
+        if (_vdMemo.length) {
             const vExp = sim.variance_explanations || {};
             let vRows = '';
-            for (const [k, v] of Object.entries(sim.variance_drivers)) {
+            for (const [k, v] of _vdMemo.sort((a, b) => b[1] - a[1])) {
                 const exp = typeof vExp[k] === 'object' ? (vExp[k]?.explanation || '') : (vExp[k] || '');
                 vRows += `<tr><td style="text-transform:capitalize">${k.replace(/_/g, ' ')}</td><td style="text-align:right;font-weight:600;">${fmt(v * 100, 1)}%</td><td>${exp}</td></tr>`;
             }
@@ -9939,9 +10089,9 @@ function _memoInjectCharts(container, report) {
                 <p class="memo-chart-label">Simulated Portfolio Impact</p>
                 <p>Adding this deal to ${nCommitted > 0 ? 'the running fund (' + nCommitted + ' committed deals)' : 'a simulated VoLo portfolio'} produces the following marginal impact on fund-level returns:</p>
                 <table class="memo-rvm-table"><thead><tr><th>Metric</th><th>Base Portfolio</th><th>With Deal</th><th>Delta</th></tr></thead><tbody>
-                    <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(pImpact.tvpi_base_mean)}x</td><td style="text-align:right;">${fmt(pImpact.tvpi_new_mean)}x</td><td style="text-align:right;font-weight:600;">${(pImpact.tvpi_mean_lift >= 0 ? '+' : '') + fmt(pImpact.tvpi_mean_lift)}x</td></tr>
-                    <tr><td>TVPI (P50)</td><td style="text-align:right;">${fmt(pImpact.tvpi_base_p50)}x</td><td style="text-align:right;">${fmt(pImpact.tvpi_new_p50)}x</td><td style="text-align:right;font-weight:600;">${((pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50) >= 0 ? '+' : '') + fmt(pImpact.tvpi_new_p50 - pImpact.tvpi_base_p50)}x</td></tr>
+                    <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(_piBaseCal)}x</td><td style="text-align:right;">${fmt(_piNewCal)}x</td><td style="text-align:right;font-weight:600;">${(_piLiftCal >= 0 ? '+' : '') + fmt(_piLiftCal)}x</td></tr>
                     <tr><td>IRR (Mean)</td><td style="text-align:right;">${pctFmt(pImpact.irr_base_mean)}</td><td style="text-align:right;">${pctFmt(pImpact.irr_new_mean)}</td><td style="text-align:right;font-weight:600;">${((pImpact.irr_mean_lift*100) >= 0 ? '+' : '') + (pImpact.irr_mean_lift*100).toFixed(1)}pp</td></tr>
+                    <tr><td>IRR (P50)</td><td style="text-align:right;">${pctFmt(pImpact.irr_base_p50)}</td><td style="text-align:right;">${pctFmt(pImpact.irr_new_p50)}</td><td style="text-align:right;font-weight:600;">${(((pImpact.irr_new_p50 - pImpact.irr_base_p50)*100) >= 0 ? '+' : '') + ((pImpact.irr_new_p50 - pImpact.irr_base_p50)*100).toFixed(1)}pp</td></tr>
                 </tbody></table>
             </div>`, ['portfolio', 'fund', 'tvpi', 'marginal', 'impact']);
         }
@@ -10547,30 +10697,27 @@ function _memoInjectCharts(container, report) {
                 <p class="memo-chart-caption">${pImpact2.narrative || 'VCSimulator 2,000 portfolio paths — base portfolio vs portfolio including this deal.'}</p>
                 <div class="memo-rvm-hero">
                     <div class="memo-rvm-hero-card">
-                        <div class="memo-rvm-hero-num">${fmt(pImpact2.tvpi_base_mean)}x</div>
+                        <div class="memo-rvm-hero-num">${fmt(_piBaseCal)}x</div>
                         <div class="memo-rvm-hero-lbl">Base Fund TVPI</div>
                     </div>
                     <div class="memo-rvm-hero-card accent">
-                        <div class="memo-rvm-hero-num">${fmt(pImpact2.tvpi_new_mean)}x</div>
+                        <div class="memo-rvm-hero-num">${fmt(_piNewCal)}x</div>
                         <div class="memo-rvm-hero-lbl">With Deal TVPI</div>
                     </div>
                     <div class="memo-rvm-hero-card">
-                        <div class="memo-rvm-hero-num" style="${liftCls2(pImpact2.tvpi_mean_lift)}">${signFmt2(pImpact2.tvpi_mean_lift)}x</div>
+                        <div class="memo-rvm-hero-num" style="${liftCls2(_piLiftCal)}">${signFmt2(_piLiftCal)}x</div>
                         <div class="memo-rvm-hero-lbl">TVPI Lift (Marginal)</div>
                     </div>
                 </div>
                 <table class="memo-rvm-table">
                     <thead><tr><th>Metric</th><th style="text-align:right;">Base Portfolio</th><th style="text-align:right;">With This Deal</th><th style="text-align:right;">Delta</th></tr></thead>
                     <tbody>
-                        <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_mean)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_mean)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_mean_lift)}">${signFmt2(pImpact2.tvpi_mean_lift)}x</td></tr>
-                        <tr><td>TVPI (P50)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p50)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p50)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}">${signFmt2(pImpact2.tvpi_new_p50 - pImpact2.tvpi_base_p50)}x</td></tr>
-                        <tr><td>TVPI (P75)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p75)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p75)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_p75_lift)}">${signFmt2(pImpact2.tvpi_p75_lift)}x</td></tr>
-                        ${pImpact2.tvpi_new_p90 != null ? `<tr><td>TVPI (P90 — top decile)</td><td style="text-align:right;">${fmt(pImpact2.tvpi_base_p90)}x</td><td style="text-align:right;">${fmt(pImpact2.tvpi_new_p90)}x</td><td style="text-align:right;${liftCls2(pImpact2.tvpi_new_p90 - pImpact2.tvpi_base_p90)}">${signFmt2(pImpact2.tvpi_new_p90 - pImpact2.tvpi_base_p90)}x</td></tr>` : ''}
+                        <tr><td>TVPI (Mean)</td><td style="text-align:right;">${fmt(_piBaseCal)}x</td><td style="text-align:right;">${fmt(_piNewCal)}x</td><td style="text-align:right;${liftCls2(_piLiftCal)}">${signFmt2(_piLiftCal)}x</td></tr>
                         <tr><td>IRR (Mean)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_mean)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_mean)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_mean_lift)}">${pImpact2.irr_mean_lift != null ? ((pImpact2.irr_mean_lift*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
                         <tr><td>IRR (P50)</td><td style="text-align:right;">${pctFmt(pImpact2.irr_base_p50)}</td><td style="text-align:right;">${pctFmt(pImpact2.irr_new_p50)}</td><td style="text-align:right;${liftCls2(pImpact2.irr_new_p50 - pImpact2.irr_base_p50)}">${pImpact2.irr_new_p50 != null ? (((pImpact2.irr_new_p50 - pImpact2.irr_base_p50)*100).toFixed(1) + 'pp') : 'N/A'}</td></tr>
                     </tbody>
                 </table>
-                ${pImpact2.tvpi_new_p90 != null ? `<p class="memo-chart-note">Top decile vs. Carta: this fund's P90 ${fmt(pImpact2.tvpi_new_p90)}x ${pImpact2.tvpi_new_p90 >= 4.0 * 0.98 ? 'is at or above' : 'compares to'} the Carta top decile (~4.0x). The TVPI Mean ${fmt(pImpact2.tvpi_new_mean)}x is the expected case and sits below the top decile by design; the P90 is the like-for-like top-decile comparison.</p>` : ''}
+                <p class="memo-chart-note">Figures are on the fund's calibrated (NAV-inclusive, Carta-fit) basis — the same numbers as the deal report. The base fund's expected TVPI of ${fmt(_piBaseCal)}x sits on Carta's top-decile line (~4.0x); this deal moves the expected fund TVPI to ${fmt(_piNewCal)}x.</p>
                 <p class="memo-chart-note">Deal parameters used in simulation: Conditional MOIC=${fmt(r.simulation?.moic_conditional?.mean)}x, Survival=${pctFmt(r.simulation?.survival_rate)}, Exit ${ov.exit_year_range?.[0] || 5}–${ov.exit_year_range?.[1] || 10} years, Check=$${fmt(ov.check_size_millions,1)}M.</p>
             </div>`, ['portfolio', 'fund', 'tvpi', 'irr', 'impact', 'return', 'base', 'marginal']);
         }
