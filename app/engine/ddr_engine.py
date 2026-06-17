@@ -55,6 +55,7 @@ def _agentic_call(client: Anthropic, prompt: str,
     """
     messages = [{"role": "user", "content": prompt}]
     final_text = ""
+    web_sources = []  # real URLs harvested from web_search results
 
     while True:
         backoff_delays = [30, 60, 120, 240, 300]
@@ -94,6 +95,17 @@ def _agentic_call(client: Anthropic, prompt: str,
         for block in response.content:
             if hasattr(block, "text"):
                 final_text = block.text
+            # Harvest REAL source URLs straight from the web_search tool
+            # results — these come from the search engine, not the model, so
+            # they are genuine working links (the reliable fix for broken or
+            # hallucinated citations). The model's per-claim citations are a
+            # safeguard layer on top of these.
+            if getattr(block, "type", "") == "web_search_tool_result":
+                for _r in (getattr(block, "content", None) or []):
+                    _u = getattr(_r, "url", None)
+                    if _u:
+                        web_sources.append(
+                            {"title": getattr(_r, "title", None) or _u, "url": _u})
 
         # Count both client-side tool_use and server-side web_search calls
         tool_calls = [b for b in response.content
@@ -114,7 +126,13 @@ def _agentic_call(client: Anthropic, prompt: str,
         else:
             break
 
-    return final_text
+    # de-dupe harvested links by URL, preserving first-seen order
+    _seen, _deduped = set(), []
+    for _s in web_sources:
+        if _s["url"] not in _seen:
+            _seen.add(_s["url"])
+            _deduped.append(_s)
+    return final_text, _deduped
 
 
 # ── JSON Extraction with Recovery ────────────────────────────────────────────
@@ -219,6 +237,17 @@ OUTCOME COMPARABLES — reference real companies with known valuations:
 - "If the efficiency claims are accurate, this could compete with [Company] which holds X% of the market, valued at $Y"
 - Use: IEA, Bloomberg NEF, Bain, McKinsey, CB Insights, Crunchbase, PitchBook
 
+CITATIONS — every source must be a verifiable, clickable reference. Provide each
+source as an OBJECT, never a bare name:
+  {{"title": "Exact article / report / paper name", "url": "https://...", "publisher": "Bloomberg"}}
+- The "url" MUST be a real link from your web_search results — a page you actually
+  opened. NEVER invent, guess, or reconstruct a URL from memory. If you do not have a
+  real URL for a source, OMIT the "url" field entirely and give just "title" +
+  "publisher" so a reader can still find it by name.
+- "title" is REQUIRED for every source — the report falls back to it whenever a link
+  is missing or broken. Prefer the primary source (the actual filing, report, or
+  paper) over an aggregator.
+
 Pitch Deck:
 {pitch_text}
 
@@ -271,7 +300,7 @@ Return comprehensive JSON:
                 "stage": "Seed / Series A / Series B",
                 "funding_raised_usd": 5000000,
                 "description": "1-2 sentences: what they do, how they overlap, their edge vs this company",
-                "sources": ["Crunchbase"]
+                "sources": [{{"title": "Company funding profile", "url": "https://real-url-from-your-search", "publisher": "Crunchbase"}}]
             }}
         ],
         "market_leaders": [
@@ -280,7 +309,7 @@ Return comprehensive JSON:
                 "market_position": "e.g. '35% market share in offshore wind'",
                 "valuation_or_revenue": "e.g. '$18B market cap'",
                 "description": "1-2 sentences: what they do, threat to this company",
-                "sources": ["Bloomberg"]
+                "sources": [{{"title": "Market position report", "url": "https://real-url-from-your-search", "publisher": "Bloomberg"}}]
             }}
         ],
         "competitive_risks": ["Specific risk 1", "Specific risk 2"],
@@ -294,7 +323,7 @@ Return comprehensive JSON:
             "verification_status": "VERIFIED / UNVERIFIED / PARTIALLY VERIFIED",
             "source_label": "COMPANY CLAIM (Unverified) / VERIFIED: [Source]",
             "what_needs_investigation": "Specific test or data source that could verify this",
-            "sources": ["Source 1"]
+            "sources": [{{"title": "Report or article name", "url": "https://real-url-from-your-search", "publisher": "Publisher"}}]
         }},
         {{
             "type": "MARKET",
@@ -302,7 +331,7 @@ Return comprehensive JSON:
             "verification_status": "VERIFIED / UNVERIFIED / PARTIALLY VERIFIED",
             "source_label": "COMPANY CLAIM (Unverified) / VERIFIED: [Source]",
             "what_needs_investigation": "Specific data source that would verify this",
-            "sources": ["Source 1"]
+            "sources": [{{"title": "Report or article name", "url": "https://real-url-from-your-search", "publisher": "Publisher"}}]
         }}
     ],
 
@@ -377,9 +406,14 @@ def analyze(api_key: str, pitch_text: str, on_progress=None) -> dict:
     client = Anthropic(api_key=api_key)
     prompt = _ANALYSIS_PROMPT.format(pitch_text=pitch_text[:60000])
 
-    raw_text = _agentic_call(
+    raw_text, web_sources = _agentic_call(
         client, prompt,
         max_tokens=16000, temperature=0.2,
         on_progress=on_progress,
     )
-    return _extract_json(raw_text)
+    result = _extract_json(raw_text)
+    # Attach the real, search-engine-provided links as a verified citation pool
+    # (the report renders these as guaranteed-clickable sources).
+    if isinstance(result, dict) and not result.get("web_sources"):
+        result["web_sources"] = web_sources
+    return result

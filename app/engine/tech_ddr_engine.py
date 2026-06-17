@@ -263,7 +263,7 @@ def _plain_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget
 
 
 def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budget,
-                 model: str = MODEL, on_search=None) -> str:
+                 model: str = MODEL, on_search=None, link_sink=None) -> str:
     """An agentic Opus + web_search call. Bounded by RESEARCH_MAX_ITERS, the
     web_search max_uses, and the token/time budget. (`temperature` is not sent —
     Opus 4.8 deprecated it.)"""
@@ -278,6 +278,17 @@ def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budge
         )
         budget.record(resp)
         final_text = _last_text(resp) or final_text
+
+        # Harvest REAL source links straight from the web_search results
+        # (search-engine provided, with titles) — reliable, named citations
+        # that don't depend on the model writing a correct URL from memory.
+        if link_sink is not None:
+            for _b in resp.content:
+                if getattr(_b, "type", None) == "web_search_tool_result":
+                    for _r in (getattr(_b, "content", None) or []):
+                        _u = getattr(_r, "url", None)
+                        if _u:
+                            link_sink.append({"title": getattr(_r, "title", None) or _u, "url": _u})
 
         tool_calls = [b for b in resp.content
                       if getattr(b, "type", None) in ("tool_use", "server_tool_use")]
@@ -493,9 +504,18 @@ def _research(client: Anthropic, innovation_hint: str, doc_notes: list,
         innovation_hint=(innovation_hint.strip() or "(none provided — infer the innovation from the documents)"),
         doc_notes=json.dumps(doc_notes, ensure_ascii=False)[:120_000],
     )
+    _harvested = []
     raw = _search_call(client, prompt, max_tokens=PASS2_OUT_TOKENS, budget=budget,
-                       model=model, on_search=on_search)
-    return _extract_json(raw) if raw else {}
+                       model=model, on_search=on_search, link_sink=_harvested)
+    out = _extract_json(raw) if raw else {}
+    if isinstance(out, dict):
+        _seen, _dedup = set(), []
+        for _s in _harvested:
+            if _s["url"] not in _seen:
+                _seen.add(_s["url"])
+                _dedup.append(_s)
+        out["web_sources"] = _dedup
+    return out
 
 
 # ── Pass 3: synthesize the final report ──────────────────────────────────────
@@ -793,6 +813,8 @@ def analyze_tech(api_key: str, docs: list, innovation_hint: str = "",
 
     report.setdefault("_research_sources",
                       research.get("sources", []) if isinstance(research, dict) else [])
+    report.setdefault("web_sources",
+                      research.get("web_sources", []) if isinstance(research, dict) else [])
     report["_doc_filenames"] = [d["filename"] for d in docs]
     report["_usage"] = {**budget.summary(), "model": model, "docs_submitted": n,
                         "docs_read": len(doc_notes), "input_truncated": truncated}

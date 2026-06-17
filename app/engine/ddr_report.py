@@ -96,6 +96,38 @@ def _dollar(amount_usd: float) -> str:
     return "Not quantified"
 
 
+# ── Citations ────────────────────────────────────────────────────────────────
+
+def _cite(src) -> str:
+    """Render one citation as reportlab inline markup.
+
+    Accepts a legacy plain string (source name) or a dict
+    ``{title, url, publisher}``. Produces a clickable link — with the title as
+    the visible text — when a real http(s) URL is present; otherwise just the
+    title/name, which stays findable even if a link is missing or dead (the
+    safeguard). The visible label is returned RAW so the caller's ``_p()``
+    escapes it; only the href URL is sanitized here.
+    """
+    if isinstance(src, dict):
+        title = str(src.get("title") or src.get("publisher") or src.get("name") or "Source").strip()
+        pub = str(src.get("publisher") or "").strip()
+        label = title if (not pub or pub.lower() in title.lower()) else f"{title} ({pub})"
+        url = str(src.get("url") or "").strip()
+    else:
+        label = str(src).strip()
+        url = ""
+    if url and re.match(r'^https?://\S+$', url):
+        safe_url = url.replace("&", "&amp;").replace('"', "%22").replace("<", "").replace(">", "")
+        return f'<a href="{safe_url}" color="#3a6ea8"><u>{label}</u></a>'
+    return label
+
+
+def _cite_list(sources, limit: int = 3) -> str:
+    """Comma-join up to ``limit`` citations (clickable where a real URL exists)."""
+    items = [_cite(s) for s in (sources or [])[:limit] if s]
+    return ", ".join(i for i in items if i)
+
+
 # ── PDF Styles ───────────────────────────────────────────────────────────────
 
 def _build_styles():
@@ -334,7 +366,7 @@ def generate_report_pdf(analysis: dict, output_path: str):
                     f"<b>{p.get('name', 'Unknown')}</b> "
                     f"({p.get('stage', '?')} — {funding_str}): "
                     f"{p.get('description', '')}"
-                    + (f" <i>[{', '.join(p['sources'][:2])}]</i>" if p.get('sources') else ""),
+                    + (f" <i>[{_cite_list(p['sources'], 2)}]</i>" if p.get('sources') else ""),
                     S["body_small"],
                 ))
                 story.append(Spacer(1, 0.04 * inch))
@@ -356,7 +388,7 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 story.append(_p(
                     f"<b>{ldr.get('name', 'Unknown')}</b>{ldr_meta}: "
                     f"{ldr.get('description', '')}"
-                    + (f" <i>[{', '.join(ldr['sources'][:2])}]</i>" if ldr.get('sources') else ""),
+                    + (f" <i>[{_cite_list(ldr['sources'], 2)}]</i>" if ldr.get('sources') else ""),
                     S["body_small"],
                 ))
                 story.append(Spacer(1, 0.04 * inch))
@@ -399,7 +431,7 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 f"{cl.get('source_label', v_status)}"
             )
             if cl.get('sources'):
-                text += f" — <i>{', '.join(cl['sources'][:2])}</i>"
+                text += f" — <i>{_cite_list(cl['sources'], 2)}</i>"
             story.append(_p(text, use_style))
             story.append(Spacer(1, 0.04 * inch))
 
@@ -588,10 +620,10 @@ def generate_report_pdf(analysis: dict, output_path: str):
                     val = obj.get(key)
                     if isinstance(val, list):
                         for s in val:
-                            if isinstance(s, str) and s.strip():
-                                section_sources.setdefault(section_label, []).append(s.strip())
-                    elif isinstance(val, str) and val.strip():
-                        section_sources.setdefault(section_label, []).append(val.strip())
+                            if isinstance(s, dict) or (isinstance(s, str) and s.strip()):
+                                section_sources.setdefault(section_label, []).append(s)
+                    elif isinstance(val, dict) or (isinstance(val, str) and val.strip()):
+                        section_sources.setdefault(section_label, []).append(val)
                 for key in ('source_note', 'note'):
                     val = obj.get(key)
                     if isinstance(val, str) and val.strip():
@@ -609,6 +641,11 @@ def generate_report_pdf(analysis: dict, output_path: str):
         _collect(analysis.get('status_flags', {}), 'Status & Legal')
         _collect(analysis.get('outcome_magnitude', {}), 'Outcome Magnitude')
 
+        def _src_key(s):
+            if isinstance(s, dict):
+                return (s.get("url") or s.get("title") or s.get("publisher") or "").strip().lower()
+            return str(s).strip().lower()
+
         total_unique = set()
         for section_label in ['Claims', 'Competitive Landscape', 'Status & Legal',
                               'Unverified Claims', 'Outcome Magnitude']:
@@ -618,15 +655,33 @@ def generate_report_pdf(analysis: dict, output_path: str):
             seen = set()
             unique = []
             for s in sources:
-                key = s.lower()
-                if key not in seen:
+                key = _src_key(s)
+                if key and key not in seen:
                     seen.add(key)
                     unique.append(s)
                     total_unique.add(key)
             story.append(_p(
-                f"<b>{section_label}:</b> {' · '.join(unique)}",
+                f"<b>{section_label}:</b> " + " · ".join(_cite(s) for s in unique),
                 src_heading_style,
             ))
+
+        # Verified live links harvested directly from web search — guaranteed
+        # real URLs (the reliable-link layer beneath the per-claim citations).
+        web_sources = analysis.get('web_sources') or []
+        if web_sources:
+            story.append(Spacer(1, 0.08 * inch))
+            story.append(_p(
+                "<b>Verified Live Links</b> <i>(captured directly from web search)</i>:",
+                src_heading_style,
+            ))
+            seen_w = set()
+            for ws in web_sources[:40]:
+                u = (ws.get('url') or '').strip() if isinstance(ws, dict) else ''
+                if not u or u in seen_w:
+                    continue
+                seen_w.add(u)
+                total_unique.add(u.lower())
+                story.append(_p("&#8226; " + _cite(ws), src_style))
 
         story.append(Spacer(1, 0.1 * inch))
         story.append(_p(

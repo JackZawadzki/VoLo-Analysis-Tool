@@ -182,7 +182,7 @@ def _p(text, style) -> Paragraph:
 
 
 def _safe_href(url: str) -> str:
-    u = (url or "").strip()
+    u = str(url or "").strip()
     if not u:
         return ""
     if u.lower().startswith("doi:"):
@@ -198,7 +198,19 @@ def _link(text: str, url: str) -> str:
     href = _safe_href(url)
     if href:
         return f'<a href="{href}" color="{ACCENT_BLUE}"><u>{text}</u></a>'
-    return text
+    return str(text)
+
+
+def _cite(src) -> str:
+    """A citation as inline markup. Accepts a bare string (URL or name) OR a
+    dict {title,url,publisher,link}. Renders a clickable link with the title/name
+    as visible text when a real URL exists, else just the title/name (the
+    safeguard — still findable). Never raises on odd input (numbers, None, etc.)."""
+    if isinstance(src, dict):
+        url = str(src.get("url") or src.get("link") or "").strip()
+        title = str(src.get("title") or src.get("publisher") or src.get("name") or url or "Source").strip()
+        return _link(title, url)
+    return _link(str(src).strip(), str(src).strip())
 
 
 def _risk_color(sev: str) -> str:
@@ -337,10 +349,10 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
                 v = obj.get(k)
                 if isinstance(v, list):
                     for s in v:
-                        if isinstance(s, str) and s.strip():
-                            acc.append(s.strip())
-                elif isinstance(v, str) and v.strip():
-                    acc.append(v.strip())
+                        if isinstance(s, dict) or (isinstance(s, str) and s.strip()):
+                            acc.append(s)
+                elif isinstance(v, dict) or (isinstance(v, str) and v.strip()):
+                    acc.append(v)
             for vk, vv in obj.items():
                 if vk == 'related_research':
                     continue
@@ -455,7 +467,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         story.append(_p("5. PRIOR WORK & LITERATURE MAP", S["heading"]))
         for pw in (analysis.get('prior_work_literature_map', []) or []):
             srcs = [s for s in (pw.get('sources') or []) if s]
-            src_txt = f" <i>[{', '.join(_link(s, s) for s in srcs[:2])}]</i>" if srcs else ""
+            src_txt = f" <i>[{', '.join(_cite(s) for s in srcs[:2])}]</i>" if srcs else ""
             mat = f" <font color='{MUTED}'>({pw['maturity']})</font>" if pw.get('maturity') else ""
             bench = f"<br/><b>Benchmark it sets:</b> {pw['benchmark_it_sets']}" if pw.get('benchmark_it_sets') else ""
             diff = f"<br/><b>Differentiation:</b> {pw['differentiation']}" if pw.get('differentiation') else ""
@@ -488,7 +500,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         if bench_rows:
             for b in bench_rows:
                 src = b.get('source', '')
-                src_txt = f" <i>[{_link(src, src)}]</i>" if src else ""
+                src_txt = f" <i>[{_cite(src)}]</i>" if src else ""
                 good = f"<br/><b>What good looks like:</b> {b['what_good_looks_like']}" if b.get('what_good_looks_like') else ""
                 story.append(_p(
                     f"<b>{b.get('metric', 'Metric')}</b> — {b.get('why_it_matters', '')}{good}{src_txt}",
@@ -591,19 +603,41 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
                     'claimed_product', 'executive_summary'):
             _section_sources(analysis.get(key), acc)
         acc.extend(analysis.get('_research_sources', []) or [])
+        def _src_key(s):
+            if isinstance(s, dict):
+                return str(s.get('url') or s.get('link') or s.get('title') or '').strip().lower()
+            return str(s).strip().lower()
         seen, unique = set(), []
         for s in acc:
-            k = s.lower()
-            if k not in seen:
+            k = _src_key(s)
+            if k and k not in seen:
                 seen.add(k)
                 unique.append(s)
         src_st = ParagraphStyle('TSrc', parent=S['small'], fontSize=8, leading=11,
                                 spaceAfter=2, fontName=FONT, textColor=colors.HexColor('#333333'))
         if unique:
             for s in unique:
-                story.append(_p(f"- {_link(s, s)}", src_st))
+                story.append(_p(f"- {_cite(s)}", src_st))
         else:
             story.append(_p("No external citations were recorded.", src_st))
+
+        # Verified live links harvested straight from web search — real URLs WITH
+        # titles (the reliable, named citation layer beneath the model's own).
+        web_sources = analysis.get('web_sources') or []
+        if web_sources:
+            story.append(Spacer(1, 0.06 * inch))
+            story.append(_p("<b>Verified live links</b> <i>(captured directly from web search)</i>:", src_st))
+            seen_w = set()
+            for ws in web_sources[:40]:
+                if not isinstance(ws, dict):
+                    continue
+                u = str(ws.get('url') or '').strip()
+                if not u or u in seen_w:
+                    continue
+                seen_w.add(u)
+                title = str(ws.get('title') or u).strip()
+                story.append(_p(f"- {_link(title, u)}", src_st))
+
         docs = analysis.get('_doc_filenames', []) or []
         if docs:
             story.append(Spacer(1, 0.06 * inch))
