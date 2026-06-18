@@ -148,6 +148,11 @@ def terminal_scale(s: dict[str, Optional[float]], periods: list[str]) -> float:
     return max(vals) if vals else 0.0
 
 
+def _years_between(a: str, b: str) -> Optional[float]:
+    ma, mb = re.match(r"(\d{4})", a), re.match(r"(\d{4})", b)
+    return float(int(mb.group(1)) - int(ma.group(1))) if (ma and mb) else None
+
+
 def _checkpoints(series: dict[str, Optional[float]]) -> dict[str, Optional[float]]:
     keys = [p for p, v in series.items() if v is not None]
     if not keys:
@@ -220,18 +225,24 @@ def _core_growth_and_margins(ctx: Ctx, out: MetricsResult) -> None:
     rev = ctx.series("revenue_total")
     cogs = ctx.series("cogs_total")
     gp = ctx.series("gross_profit")
-    if rev and cogs:
-        sign = 1.0
-        # COGS may be stored negative; orient so margins are meaningful
-        vals = [v for v in cogs.values() if v is not None]
-        if vals and sum(vals) < 0:
-            sign = -1.0
-        gm = combine(P, lambda r, c: (r - sign * c) / r if abs(r) > EPS else None, rev, cogs)
+    if rev and gp:
+        # prefer the model's OWN gross-profit row (respects adjustments) when it
+        # ties to revenue - |COGS|; the renderer then shows GP as the basis row
+        out.metrics.append(mk(
+            "gross_margin", "Gross margin (from the model's gross-profit row)",
+            applicability="revenue_total and gross_profit mapped",
+            inputs=ctx.refs("gross_profit", "revenue_total"),
+            computation="gross_profit[t] / revenue_total[t]",
+            series=ratio(gp, rev, P), units="fraction"))
+    elif rev and cogs:
+        # no GP row: derive from revenue and COGS, orienting COGS PER PERIOD
+        # (a single credit period must not flip the whole series)
+        gm = combine(P, lambda r, c: (r - abs(c)) / r if abs(r) > EPS else None, rev, cogs)
         out.metrics.append(mk(
             "gross_margin", "Gross margin (computed from revenue and COGS)",
             applicability="revenue_total and cogs_total mapped",
             inputs=ctx.refs("revenue_total", "cogs_total"),
-            computation="(revenue_total[t] - cogs_total[t]) / revenue_total[t]",
+            computation="(revenue_total[t] - |cogs_total[t]|) / revenue_total[t]",
             series=gm, units="fraction"))
     ebitda = ctx.series("ebitda_or_ebit")
     if rev and ebitda:
@@ -249,6 +260,140 @@ def _core_growth_and_margins(ctx: Ctx, out: MetricsResult) -> None:
             inputs=ctx.refs("revenue_total", "opex_total"),
             computation="opex_total[t] / revenue_total[t]",
             series=ratio(opex, rev, P), units="fraction"))
+
+    # Full-horizon CAGR (analysts always state the multi-year compounding rate)
+    for cid, mid, label in (("revenue_total", "revenue_cagr", "Revenue CAGR (full horizon)"),
+                            ("gross_profit", "gross_profit_cagr", "Gross profit CAGR (full horizon)")):
+        s = ctx.series(cid)
+        if not s:
+            continue
+        pts = [(p, s[p]) for p in P if s.get(p) is not None and s[p] > 0]
+        if len(pts) >= 3:
+            (p0, v0), (pn, vn) = pts[0], pts[-1]
+            yrs = _years_between(p0, pn)
+            if yrs and yrs > 0:
+                cagr = (vn / v0) ** (1.0 / yrs) - 1.0
+                out.metrics.append(mk(
+                    mid, label, applicability=f"{cid} mapped, >=3 positive periods",
+                    inputs=ctx.refs(cid),
+                    computation=f"({cid}[{pn}]/{cid}[{p0}])^(1/{yrs:g}) - 1",
+                    scalar=cagr, units="fraction",
+                    notes=f"compounded {p0}->{pn}; smooths the volatile year-over-year series"))
+
+    # Operating leverage: incremental EBITDA margin (ΔEBITDA / ΔRevenue)
+    if rev and ebitda:
+        oplev: dict[str, Optional[float]] = {}
+        prev_r = prev_e = None
+        for p in P:
+            r, ev = rev.get(p), ebitda.get(p)
+            if r is not None and ev is not None and prev_r is not None and abs(r - prev_r) > EPS:
+                oplev[p] = (ev - prev_e) / (r - prev_r)
+            else:
+                oplev[p] = None
+            if r is not None:
+                prev_r, prev_e = r, ev
+        out.metrics.append(mk(
+            "operating_leverage", "Operating leverage (ΔEBITDA / ΔRevenue)",
+            applicability="revenue and EBITDA mapped",
+            inputs=ctx.refs("revenue_total", "ebitda_or_ebit"),
+            computation="(ebitda[t]-ebitda[t-1]) / (revenue[t]-revenue[t-1])",
+            series=oplev, units="incremental fraction",
+            notes="how much of each new revenue dollar drops to EBITDA"))
+
+    # Rule of 40: revenue growth % + EBITDA margin %
+    if rev and ebitda:
+        rg = growth(rev, P)
+        em = ratio(ebitda, rev, P)
+        out.metrics.append(mk(
+            "rule_of_40", "Rule of 40 (revenue growth % + EBITDA margin %)",
+            applicability="revenue and EBITDA mapped",
+            inputs=ctx.refs("revenue_total", "ebitda_or_ebit"),
+            computation="revenue_growth[t] + ebitda_margin[t]",
+            series=combine(P, lambda g, m: g + m, rg, em), units="fraction",
+            notes="growth-stage health check; >=0.40 is the conventional bar"))
+
+
+def _capital_efficiency(ctx: Ctx, out: MetricsResult) -> None:
+    """Burn multiple, capex intensity, and the EBITDA-relative ratios an analyst
+    adds by hand (Lithios blue rows: Net Interest/EBITDA, Taxes/EBITDA,
+    Capex/Revenue, Cumulative Capex)."""
+    P = ctx.periods
+    rev = ctx.series("revenue_total")
+    ebitda = ctx.series("ebitda_or_ebit")
+    capex = ctx.series("capex")
+    interest = ctx.series("interest_net")
+    taxes = ctx.series("taxes")
+    cf_op = ctx.series("cf_operating")
+    cf_inv = ctx.series("cf_investing")
+
+    # Burn multiple = net cash burn / net new revenue (the headline capital-efficiency number).
+    # Prefer the CF statement; fall back to net_change_cash ex-financing.
+    burn_series: Optional[dict[str, Optional[float]]] = None
+    burn_inputs: list[str] = []
+    burn_expr = ""
+    if cf_op is not None and cf_inv is not None:
+        burn_series = combine(P, lambda o, i: -(o + i), cf_op, cf_inv)
+        burn_inputs = ctx.refs("cf_operating", "cf_investing")
+        burn_expr = "-(cf_op[t]+cf_inv[t])"
+    else:
+        chg = ctx.series("net_change_cash")
+        cf_fin = ctx.series("cf_financing")
+        if chg is not None and cf_fin is not None:
+            burn_series = combine(P, lambda n, f: -(n - f), chg, cf_fin)
+            burn_inputs = ctx.refs("net_change_cash", "cf_financing")
+            burn_expr = "-(net_change_cash[t] - cf_financing[t])"
+    if rev is not None and burn_series is not None:
+        bm: dict[str, Optional[float]] = {}
+        prev_r = None
+        for p in P:
+            r, burn = rev.get(p), burn_series.get(p)
+            new_rev = (r - prev_r) if (r is not None and prev_r is not None) else None
+            if burn is not None and new_rev is not None and new_rev > EPS and burn > 0:
+                bm[p] = burn / new_rev
+            else:
+                bm[p] = None
+            if r is not None:
+                prev_r = r
+        if any(v is not None for v in bm.values()):
+            out.metrics.append(mk(
+                "burn_multiple", "Burn multiple (net burn / net new revenue)",
+                applicability="cash burn and revenue mapped",
+                inputs=burn_inputs + ctx.refs("revenue_total"),
+                computation=f"{burn_expr} / (revenue[t]-revenue[t-1]); burn-positive, growth-positive periods",
+                series=bm, units="x",
+                notes="dollars burned per incremental dollar of revenue; <1 is efficient, >2 is heavy"))
+
+    if rev and capex:
+        out.metrics.append(mk(
+            "capex_over_revenue", "Capex / revenue",
+            applicability="capex and revenue mapped",
+            inputs=ctx.refs("capex", "revenue_total"),
+            computation="|capex[t]| / revenue_total[t]",
+            series=combine(P, lambda c, r: abs(c) / r if abs(r) > EPS else None, capex, rev),
+            units="fraction", notes="capital intensity of the build"))
+        out.metrics.append(mk(
+            "cumulative_capex", "Cumulative capex",
+            applicability="capex mapped", inputs=ctx.refs("capex"),
+            computation="cumsum(|capex|)",
+            series=cumulative({p: (abs(capex[p]) if capex[p] is not None else None) for p in P}, P),
+            units=ctx.units_label(), notes="total capital sunk into the asset base over the horizon"))
+
+    if ebitda and interest:
+        out.metrics.append(mk(
+            "net_interest_over_ebitda", "Net interest / EBITDA",
+            applicability="interest_net and EBITDA mapped",
+            inputs=ctx.refs("interest_net", "ebitda_or_ebit"),
+            computation="interest_net[t] / ebitda[t] (EBITDA-positive periods)",
+            series=combine(P, lambda i, e: i / e if abs(e) > EPS and e > 0 else None, interest, ebitda),
+            units="fraction", notes="debt-service load relative to operating earnings"))
+    if ebitda and taxes:
+        out.metrics.append(mk(
+            "taxes_over_ebitda", "Taxes / EBITDA",
+            applicability="taxes and EBITDA mapped",
+            inputs=ctx.refs("taxes", "ebitda_or_ebit"),
+            computation="|taxes[t]| / ebitda[t] (EBITDA-positive periods)",
+            series=combine(P, lambda t, e: abs(t) / e if abs(e) > EPS and e > 0 else None, taxes, ebitda),
+            units="fraction"))
 
 
 def _runway(ctx: Ctx, out: MetricsResult) -> None:
@@ -311,11 +456,24 @@ def _runway(ctx: Ctx, out: MetricsResult) -> None:
     chg = ctx.series("net_change_cash")
     if chg:
         out.metrics.append(mk(
-            "avg_monthly_cash_change", "Average monthly net cash change",
+            "avg_monthly_cash_change", "Average monthly net cash change (incl. financing)",
             applicability="net_change_cash mapped",
             inputs=ctx.refs("net_change_cash"),
             computation=f"net_change_cash[t] / {mpp:g}",
-            series=combine(P, lambda n: n / mpp, chg), units=ctx.units_label() + " per month"))
+            series=combine(P, lambda n: n / mpp, chg), units=ctx.units_label() + " per month",
+            notes="includes financing inflows — a raise year reads positive; see operating burn for the spend rate"))
+    # operating burn ex-financing (the real spend rate)
+    cf_op2 = ctx.series("cf_operating")
+    cf_inv2 = ctx.series("cf_investing")
+    if cf_op2 and cf_inv2:
+        out.metrics.append(mk(
+            "avg_monthly_operating_burn", "Average monthly operating burn (ex-financing)",
+            applicability="cf_operating and cf_investing mapped",
+            inputs=ctx.refs("cf_operating", "cf_investing"),
+            computation=f"-(cf_op[t]+cf_inv[t]) / {mpp:g}",
+            series=combine(P, lambda o, i: -(o + i) / mpp, cf_op2, cf_inv2),
+            units=ctx.units_label() + " per month",
+            notes="financing stripped out — positive = burning cash, negative = self-funding"))
 
 
 def _cumulative_capital(ctx: Ctx, out: MetricsResult) -> None:
@@ -577,6 +735,88 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
             notes="divergence from typed ASPs means mix shift"))
 
 
+_SEG_STOP = re.compile(r"\b(revenue|sales|cogs|cost|gross|margin|net|total|the|of|and|&)\b", re.I)
+
+
+def _seg_tokens(label: str) -> set[str]:
+    base = _SEG_STOP.sub(" ", label.lower())
+    return {t for t in re.split(r"[^a-z0-9]+", base) if len(t) > 2}
+
+
+def _segment_detail(ctx: Ctx, out: MetricsResult) -> None:
+    """Per-segment growth, COGS/revenue, and gross margin — the line-by-line
+    decomposition an analyst runs to see which product line drives the story."""
+    P = ctx.periods
+    segs = [it for it in ctx.items("revenue_segment") if it.sheet == ctx.sheet]
+    if not segs:
+        return
+    cogs_comps = [it for it in ctx.items("cogs_component") if it.sheet == ctx.sheet]
+
+    for seg in segs[:8]:
+        inst = (seg.instance or seg.label.strip())[:40]
+        s = {p: seg.value_for(p) for p in P}
+        out.metrics.append(mk(
+            f"segment_growth::{inst}", f"Revenue growth: {inst}",
+            applicability="revenue segments mapped", inputs=seg.refs[:30],
+            computation=f"({inst}[t] - {inst}[t-1]) / |{inst}[t-1]|",
+            series=growth(s, P), units="x (period growth)",
+            notes="per-segment growth exposes which line actually drives the top-line story"))
+
+        # match a COGS component to this segment by shared name token
+        stoks = _seg_tokens(seg.label)
+        match = None
+        for c in cogs_comps:
+            if stoks & _seg_tokens(c.label):
+                match = c
+                break
+        if match is not None:
+            cs = {p: match.value_for(p) for p in P}
+            out.metrics.append(mk(
+                f"segment_cogs_ratio::{inst}", f"COGS / revenue: {inst}",
+                applicability="segment revenue and matching COGS component mapped",
+                inputs=(seg.refs + match.refs)[:50],
+                computation=f"|{match.label.strip()[:24]}|[t] / {inst}[t]",
+                series=combine(P, lambda c, r: abs(c) / r if abs(r) > EPS else None, cs, s),
+                units="fraction", notes=f"matched COGS row: {match.label.strip()!r}"))
+            out.metrics.append(mk(
+                f"segment_gross_margin::{inst}", f"Gross margin: {inst}",
+                applicability="segment revenue and matching COGS component mapped",
+                inputs=(seg.refs + match.refs)[:50],
+                computation=f"({inst}[t] - |{match.label.strip()[:20]}|[t]) / {inst}[t]",
+                series=combine(P, lambda r, c: (r - abs(c)) / r if abs(r) > EPS else None, s, cs),
+                units="fraction", notes="per-line margin; divergence across lines flags mix risk"))
+
+
+def _labor(ctx: Ctx, out: MetricsResult) -> None:
+    """Payroll / revenue and payroll growth — does the org scale sub-linearly
+    with revenue, or is headcount cost outrunning the top line?"""
+    P = ctx.periods
+    labor = [it for it in ctx.items("opex_component") if "labor" in it.subtags and it.sheet == ctx.sheet]
+    rev = ctx.series("revenue_total")
+    if not labor or rev is None:
+        return
+    payroll: dict[str, Optional[float]] = {}
+    for p in P:
+        vals = [it.value_for(p) for it in labor]
+        vals = [v for v in vals if v is not None]
+        payroll[p] = sum(vals) if vals else None
+    refs = [r for it in labor for r in it.refs][:50]
+    names = ", ".join(it.label.strip() for it in labor[:3])
+    out.metrics.append(mk(
+        "payroll_over_revenue", "Payroll / revenue",
+        applicability=f"labor opex rows mapped: {names}",
+        inputs=refs + ctx.refs("revenue_total"),
+        computation="sum(payroll rows)[t] / revenue_total[t]",
+        series=combine(P, lambda pay, r: abs(pay) / r if abs(r) > EPS else None, payroll, rev),
+        units="fraction", notes="should fall over time as the company gains operating leverage"))
+    out.metrics.append(mk(
+        "payroll_growth", "Payroll growth",
+        applicability=f"labor opex rows mapped: {names}", inputs=refs,
+        computation="growth(sum(payroll rows))",
+        series=growth({p: (abs(payroll[p]) if payroll[p] is not None else None) for p in P}, P),
+        units="x (period growth)", notes="compare against revenue growth — labor should lag it"))
+
+
 def _capacity_and_share(ctx: Ctx, out: MetricsResult) -> None:
     P = ctx.periods
     caps = ctx.items("capacity")
@@ -739,12 +979,15 @@ def _taxes(ctx: Ctx, out: MetricsResult) -> None:
         sign = -1.0 if tvals and sum(tvals) < 0 else 1.0
         # pretax = net income with the tax expense added back, whichever way taxes are signed
         pretax = combine(P, lambda n, t: n + t if sign > 0 else n - t, ni, taxes)
-        eff = combine(P, lambda t, pt: (sign * t) / pt if pt > EPS else None, taxes, pretax)
+        # cap implausible rates (tiny pretax with a big tax line yields nonsense
+        # effective rates of several hundred percent) so they don't pollute the series
+        eff = combine(P, lambda t, pt: ((sign * t) / pt if -1.0 <= (sign * t) / pt <= 1.5 else None)
+                      if pt > EPS else None, taxes, pretax)
         out.metrics.append(mk(
             "effective_tax_rate", "Effective tax rate (profitable periods)",
             applicability="taxes and net_income mapped",
             inputs=ctx.refs("taxes", "net_income"),
-            computation="taxes[t] / (net_income[t] + taxes[t]) where pretax > 0",
+            computation="taxes[t] / (net_income[t] + taxes[t]) where pretax > 0, capped to [-100%, 150%]",
             series=eff, units="fraction"))
         cum_pretax = cumulative(pretax, P)
         nol = combine(P, lambda t, cpt: (sign * t) if (cpt < 0 and sign * t > EPS) else None,
@@ -776,25 +1019,49 @@ def _taxes(ctx: Ctx, out: MetricsResult) -> None:
 
 def _headcount(ctx: Ctx, out: MetricsResult) -> None:
     P = ctx.periods
+    hc_item = ctx.item("headcount")
     hc = ctx.series("headcount")
     rev = ctx.series("revenue_total")
+    scale = ctx.structure.units.get(ctx.sheet)
+    unit_scale = scale.scale if scale else 1.0
+    money = scale.label if scale else "model units"
+
+    # The model's OWN headcount trajectory is the sanity-check an analyst reads
+    # directly (e.g. 809 -> 1,461 FTEs); surface it rather than only a recompute.
+    if hc:
+        out.metrics.append(mk(
+            "headcount_trajectory", "Headcount (the model's own FTE row)",
+            applicability="headcount row mapped", inputs=ctx.refs("headcount"),
+            computation="model's headcount row, as-is",
+            series={p: hc.get(p) for p in P}, units="FTEs",
+            notes="does the org size the model implies match the story?"))
     if hc and rev:
+        # revenue is in `money` scale; report $ per FTE in whole currency
         out.metrics.append(mk(
             "revenue_per_employee", "Revenue per employee",
             applicability="headcount mapped",
             inputs=ctx.refs("headcount", "revenue_total"),
-            computation="revenue_total[t] / headcount[t]",
-            series=combine(P, lambda r, h: r / h if h and h > EPS else None, rev, hc),
-            units=ctx.units_label() + " per FTE"))
+            computation=f"revenue_total[t] * {unit_scale:g} / headcount[t]",
+            series=combine(P, lambda r, h: r * unit_scale / h if h and h > EPS else None, rev, hc),
+            units="whole currency per FTE",
+            notes=f"revenue scale: {money}"))
+
+    # Implied FTEs from a typed cost-per-head — ONLY when the model has no
+    # headcount row of its own (otherwise it just noisily recomputes a mapped
+    # row, and the unit-scale mismatch made it wrong by ~1000x).
+    if hc:
+        return
     per_head = find_scalar_assumptions(
         ctx.wbd, ctx.structure,
-        r"per\s+(corporate\s+)?(fte|head|employee)|cost\s+per\s+(fte|head|employee)|all.?in.*fte", (0.5, 1_000_000))
+        r"per\s+(corporate\s+)?(fte|head|employee)|cost\s+per\s+(fte|head|employee)|all.?in.*fte", (0.5, 1e9))
     labor = [it for it in ctx.items("opex_component") if "labor" in it.subtags]
     opex = ctx.series("opex_total")
     if per_head and (labor or opex):
         ref, v, label = per_head[0]
         monthly = "month" in label.lower() or "/mo" in label.lower()
         annual_cost = v * 12.0 if monthly else v
+        # reconcile units: opex is in `money` scale, the typed cost-per-head is
+        # whole currency — bring opex to whole currency before dividing
         base: dict[str, Optional[float]] = {}
         if labor:
             for p in P:
@@ -807,12 +1074,12 @@ def _headcount(ctx: Ctx, out: MetricsResult) -> None:
             base = opex or {}
             base_refs = ctx.refs("opex_total")
             base_name = "opex_total (no labor rows mapped)"
-        implied = combine(P, lambda b: abs(b) / annual_cost if annual_cost > EPS else None, base)
+        implied = combine(P, lambda b: abs(b) * unit_scale / annual_cost if annual_cost > EPS else None, base)
         out.metrics.append(mk(
             "implied_fte_from_cost_per_head", f"Implied FTEs from {label!r}",
-            applicability="typed cost-per-head found",
+            applicability="typed cost-per-head found and no headcount row mapped",
             inputs=[ref] + base_refs,
-            computation=f"{base_name}[t] / {annual_cost:g} (annualized cost per head)",
+            computation=f"{base_name}[t] * {unit_scale:g} / {annual_cost:g} (annualized cost per head)",
             series=implied, units="FTEs",
             notes="sanity-check the implied organization size against the story"))
 
@@ -830,6 +1097,37 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
         notes=("model carries " + ", ".join(present)) if present else
               "no AR/AP/inventory anywhere: cash-basis model with instant collection"))
     rev = ctx.series("revenue_total")
+
+    # When AR/AP/inventory ARE present, compute the efficiency ratios the
+    # analyst runs (Sample: AR/Revenue, AR/Beginning Cash).
+    ar = ctx.series("accounts_receivable")
+    if ar and rev:
+        out.metrics.append(mk(
+            "ar_over_revenue", "Accounts receivable / revenue",
+            applicability="accounts_receivable and revenue mapped",
+            inputs=ctx.refs("accounts_receivable", "revenue_total"),
+            computation="accounts_receivable[t] / revenue_total[t]",
+            series=ratio(ar, rev, P), units="fraction",
+            notes="implied days sales outstanding; a rising ratio ties up more cash in receivables"))
+        beg = ctx.series("beginning_cash")
+        if beg:
+            out.metrics.append(mk(
+                "ar_over_beginning_cash", "Accounts receivable / beginning cash",
+                applicability="accounts_receivable and beginning_cash mapped",
+                inputs=ctx.refs("accounts_receivable", "beginning_cash"),
+                computation="accounts_receivable[t] / beginning_cash[t]",
+                series=ratio(ar, beg, P), units="fraction",
+                notes="receivables as a share of the cash on hand — liquidity strain if it climbs"))
+    inv = ctx.series("inventory")
+    if inv and rev:
+        out.metrics.append(mk(
+            "inventory_over_revenue", "Inventory / revenue",
+            applicability="inventory and revenue mapped",
+            inputs=ctx.refs("inventory", "revenue_total"),
+            computation="inventory[t] / revenue_total[t]",
+            series=ratio(inv, rev, P), units="fraction",
+            notes="rising inventory intensity can signal demand softening or overbuild"))
+
     if rev and "accounts_receivable" not in present:
         days_list = (ctx.benchmarks or {}).get("receivables_scenario_days") or [30, 60]
         peak_rev = terminal_scale(rev, P)
@@ -847,9 +1145,9 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
                 notes="tool-computed scenario, not a model value: extra peak cash need if customers paid this slowly"))
 
 
-BUILDERS = [_core_growth_and_margins, _runway, _cumulative_capital, _grants,
-            _capex_in_opex, _segments, _capacity_and_share, _valuation,
-            _taxes, _headcount, _working_capital]
+BUILDERS = [_core_growth_and_margins, _capital_efficiency, _runway, _cumulative_capital,
+            _grants, _capex_in_opex, _segments, _segment_detail, _labor, _capacity_and_share,
+            _valuation, _taxes, _headcount, _working_capital]
 
 
 def compute_metrics(

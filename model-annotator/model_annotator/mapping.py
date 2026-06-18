@@ -591,8 +591,12 @@ def build_mapping(
             if (re.match(r"^revenue\b", it.section) and not _DERIVED_VETO.search(norm)
                     and not it.percentish
                     and not any(v in it.section for v in ("valuation", "multiple", "exit", "factor", "adjust"))
+                    and not re.match(r"^(gp|gm|ebitda|ebit)\b", norm)
                     and not any(v in norm for v in ("total", "cumulative", "grant", "subsid",
-                                                    "valuation", "exit", "npv", "irr", "multiple"))):
+                                                    "valuation", "exit", "npv", "irr", "multiple",
+                                                    "gross profit", "gross margin", "gp ", "gm ",
+                                                    "cogs", "cost", "ebitda", "ebit", "net income",
+                                                    "opex", "expense"))):
                 section_seg_candidates.append(it)
                 continue
         if not cands and llm_classify is not None:

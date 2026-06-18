@@ -125,8 +125,13 @@ def build_analysis_plan(
     if not llm.available or mapping.primary_sheet is None:
         return fallback
 
-    bench_keys = sorted({k for section in benchmarks.values() if isinstance(section, dict)
-                         for k in section.keys()
+    # Only the archetype-bearing benchmark sections define valid archetypes;
+    # meta/sensitivity sections (description, sources, ebitda_multiples, ...) must
+    # NOT leak into the whitelist offered to the LLM.
+    _ARCHETYPE_SECTIONS = ("ev_ebitda_multiple", "ev_revenue_multiple", "gross_margin_pct",
+                           "discount_rate")
+    bench_keys = sorted({k for name in _ARCHETYPE_SECTIONS
+                         for k in (benchmarks.get(name) or {}).keys()
                          if k not in ("low", "typical", "high")} | {"default"})
     system = _PLAN_SYSTEM.replace("BENCHMARK_KEYS", ", ".join(bench_keys)) \
                          .replace("METRIC_FAMILIES", ", ".join(METRIC_FAMILIES))
@@ -144,6 +149,7 @@ def build_analysis_plan(
     plan.priorities = [p for p in (raw.get("priorities") or []) if p in METRIC_FAMILIES][:5]
 
     items_by_token = {f"{it.sheet}!r{it.index}": it for it in mapping.items}
+    used_names: set[str] = set()
     for c in (raw.get("custom_computations") or [])[:5]:
         try:
             name = re.sub(r"[^a-z0-9_]+", "_", str(c.get("name", "ratio")).lower())[:40] or "ratio"
@@ -152,6 +158,13 @@ def build_analysis_plan(
             rationale = str(c.get("rationale", ""))[:300]
         except Exception:
             continue
+        # suffix colliding slugs so two computations don't share one metric_id
+        base_name = name
+        n = 2
+        while name in used_names:
+            name = f"{base_name}_{n}"
+            n += 1
+        used_names.add(name)
         comp = CustomComputation(
             name=name, metric_id=f"llm_directed::{name}",
             numerator_ref=num_tok, denominator_ref=den_tok, rationale=rationale)
@@ -174,9 +187,11 @@ def execute_plan_computations(plan: AnalysisPlan, mapping: MappingResult,
     out = []
     if mapping.primary_sheet is None:
         return out
-    axis = structure.primary_axis(mapping.primary_sheet)
-    periods = list(axis.periods) if axis else []
     items_by_token: dict[str, LineItem] = {f"{it.sheet}!r{it.index}": it for it in mapping.items}
+
+    def _scale(sheet: str) -> float:
+        u = structure.units.get(sheet)
+        return u.scale if u else 1.0
 
     for comp in plan.custom_computations:
         if not comp.executed:
@@ -187,23 +202,41 @@ def execute_plan_computations(plan: AnalysisPlan, mapping: MappingResult,
             comp.executed = False
             comp.skip_reason = "row disappeared between planning and execution"
             continue
+        # iterate the INTERSECTION of the two rows' own periods (they may live
+        # on sheets of different granularity); skip clearly if they don't overlap
+        common = [p for p in num.periods if p in set(den.periods)]
+        if not common:
+            comp.executed = False
+            comp.skip_reason = ("the two rows have no shared periods (different granularity sheets); "
+                                "not computed to avoid a misaligned ratio")
+            continue
+        # reconcile units across sheets so a $thousands ÷ $1 ratio isn't 1000x off
+        cross = num.sheet != den.sheet
+        ns, ds = _scale(num.sheet), _scale(den.sheet)
         series = {}
-        for p in (periods or num.periods):
+        for p in common:
             nv, dv = num.value_for(p), den.value_for(p)
-            series[p] = (nv / dv) if (nv is not None and dv is not None and abs(dv) > EPS) else None
+            if nv is not None and dv is not None and abs(dv * ds) > EPS:
+                series[p] = (nv * ns) / (dv * ds)
+            else:
+                series[p] = None
         if not any(v is not None for v in series.values()):
             comp.executed = False
             comp.skip_reason = "no overlapping numeric periods between the two rows"
             continue
+        note = comp.rationale
+        if cross:
+            note += f" [cross-sheet: {num.sheet}÷{den.sheet}, units reconciled]"
         out.append(mk(
             comp.metric_id,
             f"LLM-directed: {comp.name.replace('_', ' ')}",
             applicability=f"requested by the analysis planner: {comp.rationale[:160]}",
             inputs=(num.refs + den.refs)[:60],
             computation=f"{num.label.strip()[:40]!r}[t] / {den.label.strip()[:40]!r}[t] "
-                        "(LLM chose the ratio; Python computed it)",
+                        "(LLM chose the ratio; Python computed it"
+                        + (", cross-sheet units reconciled)" if cross else ")"),
             series=series,
             units="ratio",
-            notes=comp.rationale,
+            notes=note,
         ))
     return out

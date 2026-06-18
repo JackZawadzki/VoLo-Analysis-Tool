@@ -298,9 +298,19 @@ def _rule_financing_cliff(ctx: FCtx, cands: list[Candidate]) -> None:
     cliffs = [p for p in P if fwd.get(p) is not None and 0 <= fwd[p] < CLIFF_MONTHS]
     if not cliffs:
         return
-    p0 = cliffs[0]
-    same = ctx.metrics.series("runway_same_period_months")
+    # The decision-relevant cliff is the deepest trough, preferring one that sits
+    # just before a typed raise (the gap management must bridge) — not merely the
+    # earliest dip, which is often a seed-stage artifact.
     eq = ctx.item("equity_proceeds")
+
+    def _raise_soon_after(p: str) -> bool:
+        if eq is None:
+            return False
+        i = P.index(p)
+        return any((eq.value_for(q) or 0) > EPS for q in P[i + 1: i + 3])
+
+    p0 = min(cliffs, key=lambda p: (fwd[p], 0 if _raise_soon_after(p) else 1, P.index(p)))
+    same = ctx.metrics.series("runway_same_period_months")
     rescue = None
     if eq is not None:
         idx = P.index(p0)
@@ -1163,11 +1173,17 @@ def build_findings(ctx: FCtx) -> FindingsResult:
             trust_degraded=trust_degraded and cand.category != "arithmetic_integrity",
         ))
 
-    # clean checks from passing tie-outs
+    # clean checks from passing tie-outs (dedup by label — e.g. a "Balance
+    # Check: Ok" printed on two sheets should appear once)
+    seen_checks: set[str] = set()
     for t in ctx.integrity.tie_outs:
         if t.status == TieOutStatus.passed:
+            label = t.label or t.id
+            if label in seen_checks:
+                continue
+            seen_checks.add(label)
             res.clean_checks.append(CleanCheck(
-                check=t.label or t.id,
+                check=label,
                 result=t.detail or f"passes across {t.periods_checked} periods",
                 evidence=[e.ref for e in t.evidence][:6],
             ))

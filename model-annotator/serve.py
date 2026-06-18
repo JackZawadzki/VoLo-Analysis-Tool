@@ -124,6 +124,36 @@ details summary{cursor:pointer;font-weight:600;color:var(--muted)}
 .err{background:#fdecec;border:1px solid #f3b9b9;color:#7a1414;padding:14px 18px;border-radius:10px;white-space:pre-wrap;font-family:monospace;font-size:12.5px}
 .spin{display:none;margin-top:14px;color:var(--muted)}
 .fld{scroll-margin-top:14px}
+/* analyst worksheet tables */
+.fam{font-family:Georgia,serif;font-size:18px;font-weight:600;margin:26px 0 4px}
+.wk{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:12px 0;overflow:hidden}
+.wk-h{padding:13px 16px 11px;border-bottom:1px solid var(--line)}
+.wk-h .t{font-weight:600;font-size:15px}
+.wk-h .why{color:var(--muted);font-size:13px;margin-top:3px}
+.wk-h .comp{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;color:#7d756a;background:#f0ebe0;padding:1px 6px;border-radius:4px;display:inline-block;margin-top:6px}
+.wk-h .chip{display:inline-block;font-size:11px;color:#7a3d12;background:#f3e3d6;border:1px solid #e6cdba;border-radius:999px;padding:1px 8px;margin:6px 6px 0 0}
+.wk-h .chip.ll{color:#27506b;background:#dceaf3;border-color:#bcd7e6}
+.scroll{overflow-x:auto}
+table.grid{border-collapse:collapse;font-size:12.5px;min-width:100%}
+table.grid th,table.grid td{padding:5px 9px;text-align:right;white-space:nowrap;border-bottom:1px solid #f0ece2}
+table.grid th.lab,table.grid td.lab{text-align:left;position:sticky;left:0;background:var(--panel);min-width:210px;max-width:280px;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+table.grid thead th{position:sticky;top:0;background:#efe9dd;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;z-index:1}
+table.grid thead th.lab{z-index:2;background:#efe9dd}
+tr.src td{color:#5f574b}
+tr.src td.lab{color:#3a3128}
+tr.src td.lab::before{content:"model";float:right;font-size:9px;color:#a99;background:#f0ece2;border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:.04em}
+tr.der td{font-weight:600;color:var(--ink);border-top:2px solid #d8cfbe}
+tr.der td.lab{color:var(--accent)}
+tr.der td.lab::before{content:"NEW";float:right;font-size:9px;color:#fff;background:var(--accent);border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:.04em}
+td.inp{color:#1a5fb4}  /* typed input in the model */
+td.hl{border-radius:4px;cursor:help;position:relative;font-weight:700}
+td.hl.s-critical,td.hl.s-high{background:#fbe3dd;color:#9a2415;box-shadow:inset 0 0 0 1px #e8b3a6}
+td.hl.s-medium{background:#fbf0d5;color:#7a5a13;box-shadow:inset 0 0 0 1px #e8d6a6}
+td.hl .tip{visibility:hidden;opacity:0;transition:.12s;position:absolute;right:0;bottom:140%;width:260px;background:#26211b;color:#f4f1ea;font-weight:400;text-align:left;border-radius:8px;padding:9px 11px;font-size:12px;line-height:1.45;z-index:20;box-shadow:0 6px 22px rgba(0,0,0,.25);white-space:normal}
+td.hl .tip::after{content:"";position:absolute;right:14px;top:100%;border:6px solid transparent;border-top-color:#26211b}
+td.hl:hover .tip{visibility:visible;opacity:1}
+.legend{color:var(--muted);font-size:12px;margin:4px 0 0}
+.legend b{color:var(--accent)}
 """
 
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
@@ -163,6 +193,67 @@ def render_index(recent_html: str = "") -> str:
         llm_dis="" if USE_LLM else "disabled",
         llm_note="(enabled)" if USE_LLM else "(start with --llm + ANTHROPIC_API_KEY)",
     )
+
+
+def _cell_text(value, is_percent: bool) -> str:
+    if value is None:
+        return "·"
+    if is_percent:
+        return f"{value * 100:.0f}%" if abs(value) >= 0.1 else f"{value * 100:.1f}%"
+    if abs(value) >= 1000:
+        return f"{value:,.0f}"
+    if abs(value) >= 1:
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+    return f"{value:.3f}"
+
+
+def render_annotation_table(t) -> str:
+    o: list[str] = []
+    a = o.append
+    a("<div class=wk>")
+    a("<div class=wk-h>")
+    a(f"<div class=t>{e(t.title)}</div>")
+    if t.rationale:
+        a(f"<div class=why>{e(t.rationale)}</div>")
+    a(f"<div class=comp>{e(t.computation)}</div>")
+    if t.llm_directed:
+        a("<span class='chip ll'>LLM-directed</span>")
+    for fid in t.related_finding_ids:
+        a(f"<a class=chip href='#{e(fid)}'>see {e(fid)}</a>")
+    a("</div>")
+    a("<div class=scroll><table class=grid><thead><tr>")
+    a("<th class=lab>row</th>")
+    for p in t.periods:
+        a(f"<th>{e(p)}</th>")
+    a("</tr></thead><tbody>")
+    # source rows in full
+    for sr in t.source_rows:
+        a(f"<tr class=src><td class=lab title='{e(sr.sheet)} · {e(sr.label)}'>{e(sr.label)}</td>")
+        by_p = {c.period: c for c in sr.cells}
+        for p in t.periods:
+            c = by_p.get(p)
+            cls = " inp" if (c and c.is_input) else ""
+            a(f"<td class='v{cls}'>{_cell_text(c.value if c else None, sr.is_percent)}</td>")
+        a("</tr>")
+    # the new derived row
+    dr = t.derived_row
+    if dr is not None:
+        a(f"<tr class=der><td class=lab>{e(dr.label)}</td>")
+        by_p = {c.period: c for c in dr.cells}
+        for p in t.periods:
+            c = by_p.get(p)
+            if c is None:
+                a("<td>·</td>")
+                continue
+            txt = _cell_text(c.value, dr.is_percent)
+            if c.highlighted and c.comment:
+                sev = (c.severity.value if c.severity else "medium")
+                a(f"<td class='hl s-{sev}'>{txt}<span class=tip>{e(c.comment)}</span></td>")
+            else:
+                a(f"<td>{txt}</td>")
+        a("</tr>")
+    a("</tbody></table></div></div>")
+    return "\n".join(o)
 
 
 def render_report(report: Report, filename: str) -> str:
@@ -254,6 +345,21 @@ def render_report(report: Report, filename: str) -> str:
         if f.management_question:
             a(f"<div class=q>Q for management: {e(f.management_question)}</div>")
         a("</div>")
+
+    # analyst worksheet — derived rows with their source rows, in full
+    tables = report.annotation_tables
+    if tables:
+        a("<h2>Worksheet <span class=muted style='font-weight:400;font-size:14px'>"
+          "— each new calculation with the model's own rows, in full</span></h2>")
+        a("<p class=legend>Each block shows the company's <b style='color:#5f574b'>model rows</b> "
+          "and the <b>NEW</b> derived row beneath them. Highlighted cells are values that stand out — "
+          "<b>hover</b> for why. Blue numbers are typed inputs in the model.</p>")
+        last_fam = None
+        for t in tables:
+            if t.family != last_fam:
+                a(f"<div class=fam>{e(t.family)}</div>")
+                last_fam = t.family
+            a(render_annotation_table(t))
 
     # tie-outs
     a("<h2>Tie-outs</h2><div class=card><table><tr><th>Check</th><th>Status</th><th>Max residual</th><th>Detail</th></tr>")

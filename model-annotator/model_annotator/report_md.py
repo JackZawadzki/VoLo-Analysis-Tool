@@ -93,6 +93,53 @@ def render_markdown(report: Report) -> str:
             a(f"- **LLM-directed computation** `{c.metric_id}` ({status}): {c.rationale}")
         a("")
 
+    # ---- analyst worksheet ----
+    if report.annotation_tables:
+        a("## Worksheet — each new calculation with the model's own rows")
+        a("")
+        a("Each block shows the company's source rows in full, then the NEW derived row. "
+          "`*` marks a cell that stands out; the reason follows the table. Inputs are typed model cells.")
+        a("")
+        last_fam = None
+        for t in report.annotation_tables:
+            if t.family != last_fam:
+                a(f"### {t.family}")
+                a("")
+                last_fam = t.family
+            a(f"**{t.title}** — `{t.computation}`")
+            if t.rationale:
+                a(f"*{t.rationale}*")
+            a("")
+            per = t.periods
+            a("| row | " + " | ".join(per) + " |")
+            a("|" + "---|" * (len(per) + 1))
+            for sr in t.source_rows:
+                cells = {c.period: c for c in sr.cells}
+                vals = " | ".join(_fmt_v(cells[p].value) if p in cells and cells[p].value is not None else ""
+                                  for p in per)
+                a(f"| {sr.label[:40].replace('|', '/')} (model) | {vals} |")
+            dr = t.derived_row
+            notes = []
+            if dr is not None:
+                cells = {c.period: c for c in dr.cells}
+                row = []
+                for p in per:
+                    c = cells.get(p)
+                    if c is None or c.value is None:
+                        row.append("")
+                        continue
+                    txt = (f"{c.value * 100:.0f}%" if dr.is_percent else _fmt_v(c.value))
+                    if c.highlighted:
+                        txt = f"**{txt}***"
+                        notes.append(f"{p}: {c.comment}")
+                    row.append(txt)
+                a(f"| **{dr.label[:40].replace('|', '/')} (NEW)** | " + " | ".join(row) + " |")
+            a("")
+            for n in notes:
+                a(f"- *{n}*")
+            if notes:
+                a("")
+
     # ---- tie-outs ----
     a("## Tie-outs (the model's own arithmetic)")
     a("")

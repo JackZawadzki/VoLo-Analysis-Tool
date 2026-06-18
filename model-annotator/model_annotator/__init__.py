@@ -127,6 +127,10 @@ def annotate(
                 plan=plan)
     fres = build_findings(fctx)
 
+    # ---- Phase 7.5: annotation tables (analyst worksheet view) -------------
+    from .tables import build_annotation_tables
+    annotation_tables = build_annotation_tables(wbd, structure, mapping, metrics, fres)
+
     # ---- assemble the Report -----------------------------------------------
     wm = _build_workbook_map(wbd, structure, mapping, integrity)
     limitations = (list(wbd.limitations) + list(structure.limitations) +
@@ -148,6 +152,7 @@ def annotate(
         analyzed_at=_dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
         llm_used=llm.available,
         analysis_plan=plan,
+        annotation_tables=annotation_tables,
         workbook_map=wm,
         assumptions_census=census,
         tie_outs=integrity.tie_outs,

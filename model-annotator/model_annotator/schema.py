@@ -18,8 +18,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-SCHEMA_VERSION = "1.1"
-TOOL_VERSION = "0.2.0"
+SCHEMA_VERSION = "1.2"
+TOOL_VERSION = "0.3.0"
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +337,51 @@ class UnmappedRow(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Annotation tables — the analyst worksheet view
+# ---------------------------------------------------------------------------
+# This is the on-screen analogue of how an analyst annotates a model in Excel:
+# the company's own rows shown in full, the NEW derived row shown in full
+# directly beneath them, and the values that "jump out" highlighted with a
+# hover comment explaining why.
+
+class AnnotatedCell(BaseModel):
+    period: str
+    value: Optional[float] = None
+    ref: Optional[str] = None             # Sheet!A1 for source cells; None for a derived cell
+    is_input: bool = False                # typed input (vs formula/derived) in the source model
+    highlighted: bool = False
+    comment: Optional[str] = None         # WHY this value stands out (shown on hover)
+    severity: Optional[Severity] = None   # highlight color tier
+
+
+class AnnotatedRow(BaseModel):
+    label: str
+    sheet: Optional[str] = None
+    kind: str = "source"                  # "source" (from the model) | "derived" (the new calc)
+    canonical_id: Optional[str] = None
+    units: Optional[str] = None
+    is_percent: bool = False
+    cells: list[AnnotatedCell] = Field(default_factory=list)
+
+
+class AnnotationTable(BaseModel):
+    """One derived calculation, shown the way an analyst would lay it out:
+    source rows in full, then the new derived row, with standout cells flagged."""
+    id: str
+    title: str
+    metric_id: str
+    family: str = ""                      # grouping key for the report (growth, margins, ...)
+    rationale: str = ""                   # why this calculation matters here
+    computation: str = ""
+    periods: list[str] = Field(default_factory=list)
+    source_rows: list[AnnotatedRow] = Field(default_factory=list)
+    derived_row: Optional[AnnotatedRow] = None
+    related_finding_ids: list[str] = Field(default_factory=list)
+    llm_directed: bool = False
+    n_highlights: int = 0
+
+
+# ---------------------------------------------------------------------------
 # Analysis plan (the WHY layer)
 # ---------------------------------------------------------------------------
 
@@ -381,6 +426,7 @@ class Report(BaseModel):
     analyzed_at: str
     llm_used: bool = False
     analysis_plan: Optional[AnalysisPlan] = None
+    annotation_tables: list[AnnotationTable] = Field(default_factory=list)
     workbook_map: WorkbookMap
     assumptions_census: list[AssumptionEntry] = Field(default_factory=list)
     tie_outs: list[TieOut] = Field(default_factory=list)
