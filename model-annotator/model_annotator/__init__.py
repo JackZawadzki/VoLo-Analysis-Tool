@@ -131,6 +131,19 @@ def annotate(
     from .tables import build_annotation_tables
     annotation_tables = build_annotation_tables(wbd, structure, mapping, metrics, fres)
 
+    # ---- Phase 7.6: sensitivity / tornado (off the model's own input cells) -
+    from .sensitivity import build_sensitivities
+    ax = structure.primary_axis(mapping.primary_sheet) if mapping.primary_sheet else None
+    sens_periods = list(ax.periods) if ax else []
+    try:
+        sensitivities = build_sensitivities(
+            wbd, structure, mapping, benchmarks,
+            archetype=(plan.benchmark_archetype if plan else "default"),
+            periods=sens_periods)
+    except Exception:
+        log.exception("sensitivity build failed; skipping")
+        sensitivities = []
+
     # ---- assemble the Report -----------------------------------------------
     wm = _build_workbook_map(wbd, structure, mapping, integrity)
     limitations = (list(wbd.limitations) + list(structure.limitations) +
@@ -153,6 +166,7 @@ def annotate(
         llm_used=llm.available,
         analysis_plan=plan,
         annotation_tables=annotation_tables,
+        sensitivities=sensitivities,
         workbook_map=wm,
         assumptions_census=census,
         tie_outs=integrity.tie_outs,
@@ -164,7 +178,9 @@ def annotate(
         limitations=limitations,
     )
 
-    # ---- Phase 8: polish (verified), validate citations, emit --------------
+    # ---- Phase 8: executive summary, polish (verified), validate, emit -----
+    from .narrate import build_executive_summary
+    report.executive_summary = build_executive_summary(report, llm if llm.available else None)
     if llm.available:
         polish_report(report, llm)
 

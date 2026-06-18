@@ -11,6 +11,7 @@ import argparse
 import html
 import io
 import logging
+import re
 import tempfile
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -154,6 +155,28 @@ td.hl .tip::after{content:"";position:absolute;right:14px;top:100%;border:6px so
 td.hl:hover .tip{visibility:visible;opacity:1}
 .legend{color:var(--muted);font-size:12px;margin:4px 0 0}
 .legend b{color:var(--accent)}
+/* precise citations */
+.cite{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;color:#8a7f6f;background:#f0ece2;border-radius:3px;padding:0 5px;margin-left:8px;cursor:copy;white-space:nowrap}
+.cite:hover{color:var(--accent);background:#f3e3d6}
+/* executive summary */
+.exec{background:#fffdf8;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:16px 20px;margin:14px 0;font-size:15px;line-height:1.6}
+.exec .lab{font-family:Georgia,serif;font-weight:600;color:var(--accent);font-size:13px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+/* tornado */
+.torn{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0;padding:16px 18px}
+.torn h3{margin:0 0 2px}
+.torn .out{color:var(--muted);font-size:13px;margin-bottom:12px}
+.torn .out b{color:var(--ink);font-size:15px}
+.tbar{display:grid;grid-template-columns:200px 1fr 96px;gap:10px;align-items:center;margin:7px 0;font-size:13px}
+.tbar .nm{text-align:right;color:#3a3128}
+.tbar .track{position:relative;height:26px;background:#f4efe4;border-radius:5px;overflow:visible}
+.tbar .fill{position:absolute;top:4px;height:18px;border-radius:4px;background:linear-gradient(90deg,#c98a5e,#9c4221)}
+.tbar .mid{position:absolute;top:-3px;bottom:-3px;width:2px;background:#7d756a;z-index:2}
+.tbar .sw{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.ranges{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.ranges table{width:100%;font-size:12.5px}
+.ranges input[type=number]{width:62px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
+.ranges .rcite{font-family:"SF Mono",Menlo,monospace;font-size:10.5px;color:#8a7f6f}
+.ranges button{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px;margin-top:8px}
 """
 
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
@@ -226,14 +249,21 @@ def render_annotation_table(t) -> str:
     for p in t.periods:
         a(f"<th>{e(p)}</th>")
     a("</tr></thead><tbody>")
-    # source rows in full
+    # source rows in full, each with a precise navigable citation ("Sheet · row N")
     for sr in t.source_rows:
-        a(f"<tr class=src><td class=lab title='{e(sr.sheet)} · {e(sr.label)}'>{e(sr.label)}</td>")
+        cite = ""
+        if sr.sheet and sr.row_index:
+            short = sr.sheet if len(sr.sheet) <= 16 else sr.sheet[:15] + "…"
+            cite = (f"<span class=cite title='click to copy {e(sr.sheet)}!{sr.row_index}' "
+                    f"data-copy='{e(sr.sheet)}!{sr.row_index}'>{e(short)} · r{sr.row_index}</span>")
+        a(f"<tr class=src><td class=lab title='{e(sr.sheet)} · row {sr.row_index} · {e(sr.label)}'>"
+          f"{e(sr.label)}{cite}</td>")
         by_p = {c.period: c for c in sr.cells}
         for p in t.periods:
             c = by_p.get(p)
             cls = " inp" if (c and c.is_input) else ""
-            a(f"<td class='v{cls}'>{_cell_text(c.value if c else None, sr.is_percent)}</td>")
+            tip = f" title='{e(c.ref)}'" if (c and c.ref) else ""
+            a(f"<td class='v{cls}'{tip}>{_cell_text(c.value if c else None, sr.is_percent)}</td>")
         a("</tr>")
     # the new derived row
     dr = t.derived_row
@@ -254,6 +284,113 @@ def render_annotation_table(t) -> str:
         a("</tr>")
     a("</tbody></table></div></div>")
     return "\n".join(o)
+
+
+def render_tornado(t, idx: int) -> str:
+    """Static tornado + an editable range table; live recompute via JS (the
+    formula mirrors the server-side closed form)."""
+    o: list[str] = []
+    a = o.append
+    tid = f"torn{idx}"
+    a(f"<div class=torn id={tid}>")
+    a(f"<h3>{e(t.output_label)}</h3>")
+    a(f"<div class=out>{e(t.formula_note)} — base <b class=base>{_cell_text(t.output_base, False)}</b> "
+      f"<span class=muted>{e(t.output_unit)}</span></div>")
+    a("<div class=bars>")
+    for d in t.drivers:
+        a(f"<div class=tbar data-key='{e(d.key)}'>"
+          f"<div class=nm>{e(d.label)}</div>"
+          f"<div class=track><div class=fill></div><div class=mid></div></div>"
+          f"<div class=sw>±<span class=swv></span></div></div>")
+    a("</div>")
+    # editable ranges
+    a("<div class=ranges><table><tr><th style='text-align:left'>driver</th><th>cell</th>"
+      "<th>base</th><th>low</th><th>high</th></tr>")
+    for d in t.drivers:
+        refs = ", ".join(d.input_refs)
+        a(f"<tr data-key='{e(d.key)}'>"
+          f"<td style='text-align:left'>{e(d.label)}</td>"
+          f"<td class=rcite>{e(refs)}</td>"
+          f"<td style='text-align:right'>{_cell_text(d.base, d.unit=='fraction')}</td>"
+          f"<td><input type=number class=lo step=any value='{round(d.low,6)}'></td>"
+          f"<td><input type=number class=hi step=any value='{round(d.high,6)}'></td></tr>")
+    a("</table><button class=reset>Reset ranges to ±20% / benchmark</button>"
+      "<div class=muted style='font-size:11.5px;margin-top:6px'>Edit a low/high and the tornado updates live. "
+      "Values are the model's own input cells.</div></div>")
+    # data for JS
+    import json as _json
+    spec = {"formula": t.formula, "base": t.output_base,
+            "drivers": [{"key": d.key, "base": d.base, "low": d.low, "high": d.high,
+                         "coef": 0.0} for d in t.drivers]}
+    # linear_sum needs coefficients (sign); recover from output deltas
+    if t.formula == "linear_sum":
+        for sd, d in zip(spec["drivers"], t.drivers):
+            sd["coef"] = 1.0 if d.output_high > d.output_low else -1.0
+    if t.formula == "valuation_pv":
+        m = re.search(r"\^(\d+(?:\.\d+)?)", t.formula_note)
+        spec["horizon"] = float(m.group(1)) if m else 0.0
+    a(f"<script type=application/json id={tid}-data>{_json.dumps(spec)}</script>")
+    a("</div>")
+    return "\n".join(o)
+
+
+TORNADO_JS = """
+function maFmt(v){const a=Math.abs(v);if(a>=1000)return v.toLocaleString(undefined,{maximumFractionDigits:0});if(a>=1)return v.toFixed(2).replace(/\\.?0+$/,'');return v.toFixed(3);}
+function maEval(spec, vals){
+  const get=(k)=>{ if(k in vals) return vals[k]; const d=spec.drivers.find(x=>x.key===k); return d?d.base:0; };
+  if(spec.formula==='valuation_pv'){
+    const rateD=spec.drivers.find(d=>d.key==='rate');
+    const rate=rateD?get('rate'):0;
+    return get('multiple')*get('metric')/Math.pow(1+rate, spec.horizon||0);
+  }
+  let s=0; spec.drivers.forEach(d=>{ s += d.coef * get(d.key); });
+  return s;
+}
+function maBase(spec){ let v={}; spec.drivers.forEach(d=>v[d.key]=d.base); return maEval(spec, v); }
+function maRender(torn){
+  const spec=JSON.parse(torn.querySelector('script[type="application/json"]').textContent);
+  const rows=[...torn.querySelectorAll('.ranges tr[data-key]')];
+  const cur={};
+  rows.forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value), hi:parseFloat(r.querySelector('.hi').value)};});
+  const base=maBase(spec);
+  torn.querySelector('.base').textContent=maFmt(base);
+  // compute each driver's output at lo/hi (others at base)
+  let res=spec.drivers.map(d=>{
+    const lo=maEval(spec, Object.assign(maVals(spec), {[d.key]:cur[d.key].lo}));
+    const hi=maEval(spec, Object.assign(maVals(spec), {[d.key]:cur[d.key].hi}));
+    return {key:d.key, lo, hi, swing:Math.abs(hi-lo)};
+  });
+  const maxsw=Math.max(...res.map(r=>r.swing),1e-9);
+  // sort bars by swing desc by reordering
+  res.sort((a,b)=>b.swing-a.swing);
+  const barbox=torn.querySelector('.bars');
+  res.forEach(r=>{
+    const bar=barbox.querySelector(`.tbar[data-key="${r.key}"]`);
+    barbox.appendChild(bar);
+    const lo=Math.min(r.lo,r.hi), hi=Math.max(r.lo,r.hi);
+    const span=hi-lo; const track=bar.querySelector('.track'); const W=track.clientWidth||600;
+    // scale: map [base-maxsw, base+maxsw] to track
+    const left=(x)=>Math.max(0,Math.min(1,(x-(base-maxsw))/(2*maxsw)))*100;
+    const fill=bar.querySelector('.fill');
+    fill.style.left=left(lo)+'%'; fill.style.width=Math.max(1,left(hi)-left(lo))+'%';
+    bar.querySelector('.mid').style.left=left(base)+'%';
+    bar.querySelector('.swv').textContent=maFmt(r.swing);
+  });
+}
+function maVals(spec){ let v={}; spec.drivers.forEach(d=>v[d.key]=d.base); return v; }
+document.querySelectorAll('.torn').forEach(t=>{
+  t.addEventListener('input', ()=>maRender(t));
+  t.querySelector('.reset')?.addEventListener('click', ()=>{
+    const spec=JSON.parse(t.querySelector('script[type="application/json"]').textContent);
+    t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{
+      const d=spec.drivers.find(x=>x.key===r.dataset.key);
+      r.querySelector('.lo').value=d.low; r.querySelector('.hi').value=d.high;
+    });
+    maRender(t);
+  });
+  maRender(t);
+});
+"""
 
 
 def render_report(report: Report, filename: str) -> str:
@@ -290,6 +427,12 @@ def render_report(report: Report, filename: str) -> str:
       f"periods {span} ({e(wm.period_axis.granularity.value) if wm.period_axis else '–'}, {len(periods)}) · "
       f"units {units or 'unknown'} · LLM {'used' if report.llm_used else 'off'}</div>")
     a("</div>")
+
+    # executive summary
+    es = report.executive_summary
+    if es and es.text:
+        a("<div class=exec><div class=lab>Executive summary</div>")
+        a(f"<div>{e(es.text)}</div></div>")
 
     # read this first
     a("<h2>Read this first</h2>")
@@ -361,6 +504,18 @@ def render_report(report: Report, filename: str) -> str:
                 last_fam = t.family
             a(render_annotation_table(t))
 
+    # sensitivity / tornado — off the model's own input cells
+    if report.sensitivities:
+        a("<h2>Sensitivity <span class=muted style='font-weight:400;font-size:14px'>"
+          "— move the model's own inputs, see the effect</span></h2>")
+        a("<p class=legend>Each bar is one of the model's input cells flexed across its range; "
+          "the bar length is the swing it creates in the output. <b>Edit the low/high</b> below a chart "
+          "and it updates live. The center line is the base case.</p>")
+        for i, t in enumerate(report.sensitivities):
+            a(render_tornado(t, i))
+            for cav in t.caveats:
+                a(f"<p class=muted style='font-size:11.5px;margin:2px 0 0'>{e(cav)}</p>")
+
     # tie-outs
     a("<h2>Tie-outs</h2><div class=card><table><tr><th>Check</th><th>Status</th><th>Max residual</th><th>Detail</th></tr>")
     for t in report.tie_outs:
@@ -412,7 +567,14 @@ def render_report(report: Report, filename: str) -> str:
             a(f"<li{warn}>{e(lim)}</li>")
         a("</ul></details>")
 
-    a("</div></body></html>")
+    a("</div>")
+    a("<script>" + TORNADO_JS + """
+document.querySelectorAll('.cite[data-copy]').forEach(c=>c.addEventListener('click',()=>{
+  navigator.clipboard&&navigator.clipboard.writeText(c.dataset.copy);
+  const o=c.textContent;c.textContent='copied '+c.dataset.copy;setTimeout(()=>c.textContent=o,1100);
+}));
+</script>""")
+    a("</body></html>")
     return "\n".join(o)
 
 

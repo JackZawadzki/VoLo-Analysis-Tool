@@ -132,7 +132,9 @@ def _source_row(it: LineItem, periods: list[str], is_input) -> AnnotatedRow:
                                        is_input=is_input(it.sheet, r, c)))
         else:
             cells.append(AnnotatedCell(period=p, value=None, ref=None))
-    return AnnotatedRow(label=it.label.strip(), sheet=it.sheet, kind="source",
+    # precise, navigable citation: sheet + Excel row number (e.g. "Lithios_TopCo · row 31")
+    return AnnotatedRow(label=it.label.strip(), sheet=it.sheet, row_index=it.index,
+                        coordinate=format_ref(it.sheet, f"{it.index}:{it.index}"), kind="source",
                         canonical_id=it.canonical_id, units=None,
                         is_percent=it.percentish, cells=cells)
 

@@ -107,6 +107,72 @@ def trust_sentence(report: Report) -> str:
     return f"Trust score {score:.2f}."
 
 
+_SUMMARY_SYSTEM = (
+    "You write the one-paragraph executive summary at the top of a venture analyst's "
+    "model-diligence report. You are given the computed facts (business read, the flagged "
+    "issues with severity, and key trends). Write 3-5 sentences: what the model is, the most "
+    "important flags (lead with the worst), and the general trajectory. Neutral, specific, "
+    "investor-facing. Keep every number/percentage EXACTLY as given; introduce no new numbers. "
+    "Reply with the paragraph only.")
+
+
+def build_executive_summary(report: Report, llm: Optional[LLMClient] = None):
+    """A short summary of the model + flags + trends. LLM-polished if available,
+    deterministic template otherwise (numbers always come from computed facts)."""
+    from .schema import ExecutiveSummary, Severity
+
+    wm = report.workbook_map
+    plan = report.analysis_plan
+    periods = wm.period_axis.periods if wm.period_axis else []
+    span = f"{periods[0]}–{periods[-1]}" if periods else "an unspecified horizon"
+    gran = wm.period_axis.granularity.value if wm.period_axis else ""
+    what = (plan.archetype if plan and plan.archetype and plan.source == "llm"
+            else (f"{gran} model".strip() or "model"))
+
+    ranked = report.sorted_findings()
+    flags = [f"{f.title}" for f in ranked if f.severity in (Severity.critical, Severity.high)][:4]
+
+    # trends from the metrics
+    by = {m.metric_id: m for m in report.derived_metrics}
+    trends: list[str] = []
+    cagr = by.get("revenue_cagr")
+    if cagr and cagr.scalar is not None:
+        trends.append(f"revenue compounds at {cagr.scalar:.0%} over the horizon")
+    gm = by.get("gross_margin")
+    if gm and gm.series:
+        vals = [v for v in gm.series.values() if v is not None]
+        if vals:
+            trends.append(f"gross margin ends near {vals[-1]:.0%}")
+    grant = by.get("grant_share_of_revenue")
+    if grant and grant.series:
+        peak = max((v for v in grant.series.values() if v is not None), default=None)
+        if peak and peak > 0.30:
+            trends.append(f"grants supply up to {peak:.0%} of revenue")
+
+    # deterministic template
+    article = "an" if what[:1].lower() in "aeiou" else "a"
+    parts = [f"This is {article} {what} spanning {span} (trust score {wm.trust_score:.2f})."]
+    if flags:
+        parts.append("Key flags: " + "; ".join(flags) + ".")
+    else:
+        parts.append("No critical or high-severity flags surfaced.")
+    if trends:
+        parts.append("Trajectory: " + "; ".join(trends) + ".")
+    template = " ".join(parts)
+
+    summary = ExecutiveSummary(text=template, source="template", headline_flags=flags)
+
+    if llm is not None and llm.available:
+        facts = (f"Business: {what}\nHorizon: {span}\nTrust score: {wm.trust_score:.2f}\n"
+                 f"Flags (worst first): {flags or 'none'}\nTrends: {trends or 'n/a'}")
+        polished = llm._call(_SUMMARY_SYSTEM, facts, max_tokens=400, effort="low")
+        from .llm import numerals_consistent
+        if polished and numerals_consistent(polished, facts + " " + template):
+            summary.text = polished.strip()
+            summary.source = "llm"
+    return summary
+
+
 def polish_report(report: Report, llm: LLMClient) -> int:
     """Optionally polish finding narratives in place. Returns count polished.
 

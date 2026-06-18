@@ -357,6 +357,8 @@ class AnnotatedCell(BaseModel):
 class AnnotatedRow(BaseModel):
     label: str
     sheet: Optional[str] = None
+    row_index: Optional[int] = None       # 1-based Excel row (or column, for transposed models)
+    coordinate: Optional[str] = None      # precise location, e.g. "Lithios_TopCo!B31" (label cell)
     kind: str = "source"                  # "source" (from the model) | "derived" (the new calc)
     canonical_id: Optional[str] = None
     units: Optional[str] = None
@@ -379,6 +381,51 @@ class AnnotationTable(BaseModel):
     related_finding_ids: list[str] = Field(default_factory=list)
     llm_directed: bool = False
     n_highlights: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Sensitivity / tornado
+# ---------------------------------------------------------------------------
+# Perturb the model's OWN input cells within (analyst-adjustable) ranges and
+# recompute an output the tool owns the closed-form for. The JS in the report
+# mirrors `formula` so the analyst can drag the ranges and watch the tornado
+# update live.
+
+class SensitivityDriver(BaseModel):
+    key: str                              # stable id used by the live JS
+    label: str
+    input_refs: list[str] = Field(default_factory=list)   # the model cell(s) this driver perturbs
+    base: float
+    low: float                            # value at the low end of the range
+    high: float                           # value at the high end
+    low_pct: float                        # range as a fraction of base (e.g. -0.20)
+    high_pct: float
+    output_low: float                     # output when this driver = low (others at base)
+    output_high: float
+    swing: float                          # |output_high - output_low|
+    unit: str = ""
+    editable: bool = True
+
+
+class Tornado(BaseModel):
+    output_key: str
+    output_label: str
+    output_unit: str = ""
+    output_base: float
+    formula: str                          # one of: "valuation_pv" | "linear_sum" | "ratio"
+    formula_note: str = ""                # human description of the closed form
+    drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by swing desc
+    caveats: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Executive summary
+# ---------------------------------------------------------------------------
+
+class ExecutiveSummary(BaseModel):
+    text: str = ""                        # 2-4 sentences: what it is, the flags, the trends
+    source: str = "template"              # "llm" | "template"
+    headline_flags: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -425,8 +472,10 @@ class Report(BaseModel):
     sha256: str
     analyzed_at: str
     llm_used: bool = False
+    executive_summary: Optional[ExecutiveSummary] = None
     analysis_plan: Optional[AnalysisPlan] = None
     annotation_tables: list[AnnotationTable] = Field(default_factory=list)
+    sensitivities: list[Tornado] = Field(default_factory=list)
     workbook_map: WorkbookMap
     assumptions_census: list[AssumptionEntry] = Field(default_factory=list)
     tie_outs: list[TieOut] = Field(default_factory=list)
