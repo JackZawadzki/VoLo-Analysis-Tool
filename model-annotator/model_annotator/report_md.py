@@ -179,19 +179,19 @@ def render_markdown(report: Report) -> str:
             if notes:
                 a("")
 
-    # ---- sensitivity / tornado ----
+    # ---- sensitivity ----
     if report.sensitivities:
-        a("## Sensitivity — move the model's own inputs, see the effect")
+        a("## Sensitivity — what moves the output (Shapley), off the model's own inputs")
         a("")
         for t in report.sensitivities:
-            a(f"**{t.title if hasattr(t, 'title') else t.output_label}** — base "
-              f"{_fmt_v(t.output_base)} {t.output_unit}. `{t.formula_note}`")
+            a(f"**{t.output_label}** — base {_fmt_v(t.output_base)} {t.output_unit}; "
+              f"all-adverse {_fmt_v(t.downside)}, all-favorable {_fmt_v(t.upside)}. `{t.formula_note}`")
             a("")
-            a("| Driver | Model cell(s) | Base | Low | High | Output swing |")
-            a("|---|---|---|---|---|---|")
+            a("| Input (model cell) | Base | Range low → high | Shapley contribution to downside |")
+            a("|---|---|---|---|")
             for d in t.drivers:
-                a(f"| {d.label} | {', '.join(d.input_refs)} | {_fmt_v(d.base)} | "
-                  f"{_fmt_v(d.low)} | {_fmt_v(d.high)} | {_fmt_v(d.swing)} |")
+                a(f"| {d.label} ({', '.join(d.input_refs)}) | {_fmt_v(d.base)} | "
+                  f"{_fmt_v(d.low)} → {_fmt_v(d.high)} | {_fmt_v(d.shapley)} |")
             a("")
             for cav in t.caveats:
                 a(f"- *{cav}*")

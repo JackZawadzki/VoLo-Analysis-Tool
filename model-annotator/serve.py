@@ -165,22 +165,39 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 /* executive summary */
 .exec{background:#fffdf8;border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:16px 20px;margin:14px 0;font-size:15px;line-height:1.6}
 .exec .lab{font-family:Georgia,serif;font-weight:600;color:var(--accent);font-size:13px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
-/* tornado */
+/* sensitivity */
 .torn{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:14px 0;padding:16px 18px}
 .torn h3{margin:0 0 2px}
-.torn .out{color:var(--muted);font-size:13px;margin-bottom:12px}
+.torn .out{color:var(--muted);font-size:13px;margin-bottom:6px}
 .torn .out b{color:var(--ink);font-size:15px}
-.tbar{display:grid;grid-template-columns:200px 1fr 96px;gap:10px;align-items:center;margin:7px 0;font-size:13px}
-.tbar .nm{text-align:right;color:#3a3128}
-.tbar .track{position:relative;height:26px;background:#f4efe4;border-radius:5px;overflow:visible}
-.tbar .fill{position:absolute;top:4px;height:18px;border-radius:4px;background:linear-gradient(90deg,#c98a5e,#9c4221)}
-.tbar .mid{position:absolute;top:-3px;bottom:-3px;width:2px;background:#7d756a;z-index:2}
-.tbar .sw{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.torn .duo{display:flex;gap:18px;color:var(--muted);font-size:12.5px;margin-bottom:12px}
+.torn .duo .dn{color:#b11226}
+.torn .duo .up{color:#1a7f4b}
+.subh{font-family:Georgia,serif;font-size:14px;font-weight:600;margin:14px 0 8px;color:#3a3128}
+/* shapley bars: zero line in the middle, negative left (red), positive right (green) */
+.shap{display:grid;grid-template-columns:190px 1fr 110px;gap:8px;align-items:center;margin:5px 0;font-size:12.5px}
+.shap .nm{text-align:right;color:#3a3128;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shap .tk{position:relative;height:20px;background:#f4efe4;border-radius:4px}
+.shap .zero{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#b3a892}
+.shap .bar{position:absolute;top:3px;height:14px;border-radius:3px}
+.shap .bar.neg{background:linear-gradient(90deg,#b11226,#d9730d)}
+.shap .bar.pos{background:linear-gradient(90deg,#5fae7f,#1a7f4b)}
+.shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+/* two-way grid */
+.twoway{margin-top:6px}
+.twoway .sel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;color:var(--muted)}
+.twoway select{font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:6px;padding:3px 6px;background:#fff;max-width:240px}
+.grid2{border-collapse:collapse;font-size:11px}
+.grid2 td,.grid2 th{border:1px solid #fff;padding:5px 7px;text-align:center;font-variant-numeric:tabular-nums;min-width:52px}
+.grid2 th{background:#efe9dd;color:var(--muted);font-weight:600}
+.grid2 .axl{background:#efe9dd;color:var(--muted);font-weight:600;white-space:nowrap}
+.grid2 .cap{font-size:11px;color:var(--muted);margin:6px 0 2px}
 .ranges{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .ranges table{width:100%;font-size:12.5px}
-.ranges input[type=number]{width:62px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
+.ranges input[type=number]{width:64px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
 .ranges .rcite{font-family:"SF Mono",Menlo,monospace;font-size:10.5px;color:#8a7f6f}
 .ranges button{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px;margin-top:8px}
+.ranges details summary{cursor:pointer;color:var(--muted);font-size:12.5px;margin-top:8px}
 /* progress bar */
 .prog{display:none;margin-top:22px}
 .prog .bartrack{height:12px;background:#e7e0d2;border-radius:8px;overflow:hidden}
@@ -363,8 +380,8 @@ def render_annotation_table(t, findings_by_id=None) -> str:
 
 
 def render_tornado(t, idx: int) -> str:
-    """Static tornado + an editable range table; live recompute via JS (the
-    formula mirrors the server-side closed form)."""
+    """Shapley contribution bars + an interactive two-way grid, both driven live
+    by JS that mirrors the server-side closed form. Ranges are editable."""
     o: list[str] = []
     a = o.append
     tid = f"torn{idx}"
@@ -372,98 +389,130 @@ def render_tornado(t, idx: int) -> str:
     a(f"<h3>{e(t.output_label)}</h3>")
     a(f"<div class=out>{e(t.formula_note)} — base <b class=base>{_cell_text(t.output_base, False)}</b> "
       f"<span class=muted>{e(t.output_unit)}</span></div>")
-    a("<div class=bars>")
+    a(f"<div class=duo><span class=dn>▼ all-adverse: <b class=dnv>{_cell_text(t.downside, False)}</b></span>"
+      f"<span class=up>▲ all-favorable: <b class=upv>{_cell_text(t.upside, False)}</b></span></div>")
+
+    # Shapley contribution bars (signed: red = pulls the output down)
+    a("<div class=subh>Contribution to the downside (Shapley)</div>")
+    a("<div class=shapbars>")
     for d in t.drivers:
-        a(f"<div class=tbar data-key='{e(d.key)}'>"
-          f"<div class=nm>{e(d.label)}</div>"
-          f"<div class=track><div class=fill></div><div class=mid></div></div>"
-          f"<div class=sw>±<span class=swv></span></div></div>")
+        a(f"<div class=shap data-key='{e(d.key)}'><div class=nm title='{e(', '.join(d.input_refs))}'>{e(d.label)}</div>"
+          f"<div class=tk><div class=zero></div><div class=bar></div></div><div class=vv></div></div>")
     a("</div>")
-    # editable ranges
-    a("<div class=ranges><table><tr><th style='text-align:left'>driver</th><th>cell</th>"
+
+    # Two-way grid
+    a("<div class=twoway><div class=subh>Two-way sensitivity — pick any two inputs</div>")
+    opts = "".join(f"<option value='{e(d.key)}'>{e(d.label)}</option>" for d in t.drivers)
+    keyA = t.drivers[0].key if t.drivers else ""
+    keyB = t.drivers[1].key if len(t.drivers) > 1 else keyA
+    a(f"<div class=sel>rows: <select class=selA>{opts}</select> "
+      f"columns: <select class=selB>{opts}</select> "
+      f"<span class=muted>green = higher {e(t.output_label.lower())}, red = lower</span></div>")
+    a("<div class=gridbox></div></div>")
+
+    # editable ranges (drives both views)
+    a("<div class=ranges><details><summary>Edit input ranges (defaults: ±20% / benchmark)</summary>"
+      "<table><tr><th style='text-align:left'>input</th><th>cell</th>"
       "<th>base</th><th>low</th><th>high</th></tr>")
     for d in t.drivers:
-        refs = ", ".join(d.input_refs)
         a(f"<tr data-key='{e(d.key)}'>"
           f"<td style='text-align:left'>{e(d.label)}</td>"
-          f"<td class=rcite>{e(refs)}</td>"
+          f"<td class=rcite>{e(', '.join(d.input_refs))}</td>"
           f"<td style='text-align:right'>{_cell_text(d.base, d.unit=='fraction')}</td>"
           f"<td><input type=number class=lo step=any value='{round(d.low,6)}'></td>"
           f"<td><input type=number class=hi step=any value='{round(d.high,6)}'></td></tr>")
-    a("</table><button class=reset>Reset ranges to ±20% / benchmark</button>"
-      "<div class=muted style='font-size:11.5px;margin-top:6px'>Edit a low/high and the tornado updates live. "
-      "Values are the model's own input cells.</div></div>")
-    # data for JS
-    import json as _json
-    spec = {"formula": t.formula, "base": t.output_base,
-            "drivers": [{"key": d.key, "base": d.base, "low": d.low, "high": d.high,
-                         "coef": 0.0} for d in t.drivers]}
-    # linear_sum needs coefficients (sign); recover from output deltas
-    if t.formula == "linear_sum":
-        for sd, d in zip(spec["drivers"], t.drivers):
-            sd["coef"] = 1.0 if d.output_high > d.output_low else -1.0
-    if t.formula == "valuation_pv":
-        m = re.search(r"\^(\d+(?:\.\d+)?)", t.formula_note)
-        spec["horizon"] = float(m.group(1)) if m else 0.0
-    a(f"<script type=application/json id={tid}-data>{_json.dumps(spec)}</script>")
+    a("</table><button class=reset>Reset ranges</button></details></div>")
+
+    spec = {
+        "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
+        "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
+                     "coef": d.coef,
+                     "adverse": ("high" if (t.formula == "valuation_pv" and d.key == "rate")
+                                 or (t.formula == "linear_sum" and d.coef < 0) else "low")}
+                    for d in t.drivers],
+        "defaults": {d.key: {"low": d.low, "high": d.high} for d in t.drivers},
+        "selA": keyA, "selB": keyB,
+    }
+    a(f"<script type=application/json class=spec>{json.dumps(spec)}</script>")
     a("</div>")
     return "\n".join(o)
 
 
-TORNADO_JS = """
-function maFmt(v){const a=Math.abs(v);if(a>=1000)return v.toLocaleString(undefined,{maximumFractionDigits:0});if(a>=1)return v.toFixed(2).replace(/\\.?0+$/,'');return v.toFixed(3);}
-function maEval(spec, vals){
-  const get=(k)=>{ if(k in vals) return vals[k]; const d=spec.drivers.find(x=>x.key===k); return d?d.base:0; };
+TORNADO_JS = r"""
+function maFmt(v){const a=Math.abs(v);if(a>=1e9)return (v/1e9).toFixed(1)+'B';if(a>=1e6)return (v/1e6).toFixed(1)+'M';if(a>=1000)return v.toLocaleString(undefined,{maximumFractionDigits:0});if(a>=1)return v.toFixed(2).replace(/\.?0+$/,'');return v.toFixed(3);}
+function maGet(spec,vals,k){if(k in vals)return vals[k];const d=spec.drivers.find(x=>x.key===k);return d?d.base:0;}
+function maEval(spec,vals){
   if(spec.formula==='valuation_pv'){
-    const rateD=spec.drivers.find(d=>d.key==='rate');
-    const rate=rateD?get('rate'):0;
-    return get('multiple')*get('metric')/Math.pow(1+rate, spec.horizon||0);
+    const rate=spec.drivers.find(d=>d.key==='rate')?maGet(spec,vals,'rate'):0;
+    return maGet(spec,vals,'multiple')*maGet(spec,vals,'metric')/Math.pow(1+rate,spec.horizon||0);
   }
-  let s=0; spec.drivers.forEach(d=>{ s += d.coef * get(d.key); });
-  return s;
+  let s=0;spec.drivers.forEach(d=>{s+=d.coef*maGet(spec,vals,d.key);});return s;
 }
-function maBase(spec){ let v={}; spec.drivers.forEach(d=>v[d.key]=d.base); return maEval(spec, v); }
+function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
+function maAdv(d,cur){return d.adverse==='high'?cur[d.key].hi:cur[d.key].lo;}
+function maFav(d,cur){return d.adverse==='high'?cur[d.key].lo:cur[d.key].hi;}
+function maShapley(spec,cur){
+  // linear: contribution = coef*(adverse-base), exact. nonlinear & small: exact Shapley over subsets.
+  const ds=spec.drivers;
+  if(spec.formula==='linear_sum'||ds.length>12){
+    const out={};ds.forEach(d=>{out[d.key]=d.coef*(maAdv(d,cur)-d.base);});return out;
+  }
+  const base={},adv={};ds.forEach(d=>{base[d.key]=d.base;adv[d.key]=maAdv(d,cur);});
+  const fact=n=>{let f=1;for(let i=2;i<=n;i++)f*=i;return f;};
+  const cache={};const f=(S)=>{const key=[...S].sort().join(',');if(key in cache)return cache[key];const ov=Object.assign({},base);S.forEach(k=>ov[k]=adv[k]);const v=maEval(spec,ov);cache[key]=v;return v;};
+  const n=ds.length,phi={};const keys=ds.map(d=>d.key);
+  keys.forEach(k=>{phi[k]=0;const rest=keys.filter(x=>x!==k);
+    const subs=(arr)=>{const res=[[]];for(const x of arr){const cp=res.map(s=>s.concat(x));res.push(...cp);}return res;};
+    subs(rest).forEach(S=>{const w=fact(S.length)*fact(n-S.length-1)/fact(n);phi[k]+=w*(f(S.concat(k))-f(S));});});
+  return phi;
+}
+function maDownUp(spec,cur){const dn={},up={};spec.drivers.forEach(d=>{dn[d.key]=maAdv(d,cur);up[d.key]=maFav(d,cur);});return {dn:maEval(spec,dn),up:maEval(spec,up)};}
+function maColor(t){ // 0=red .. 1=green
+  const r=t<0.5?210:Math.round(210-(t-0.5)*2*180), g=t<0.5?Math.round(60+t*2*130):190, b=70;
+  return `rgb(${r},${g},${b})`;
+}
 function maRender(torn){
-  const spec=JSON.parse(torn.querySelector('script[type="application/json"]').textContent);
-  const rows=[...torn.querySelectorAll('.ranges tr[data-key]')];
-  const cur={};
-  rows.forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value), hi:parseFloat(r.querySelector('.hi').value)};});
-  const base=maBase(spec);
+  const spec=JSON.parse(torn.querySelector('script.spec').textContent);
+  const cur=maRanges(torn);
+  const base=maEval(spec,{});
   torn.querySelector('.base').textContent=maFmt(base);
-  // compute each driver's output at lo/hi (others at base)
-  let res=spec.drivers.map(d=>{
-    const lo=maEval(spec, Object.assign(maVals(spec), {[d.key]:cur[d.key].lo}));
-    const hi=maEval(spec, Object.assign(maVals(spec), {[d.key]:cur[d.key].hi}));
-    return {key:d.key, lo, hi, swing:Math.abs(hi-lo)};
-  });
-  const maxsw=Math.max(...res.map(r=>r.swing),1e-9);
-  // sort bars by swing desc by reordering
-  res.sort((a,b)=>b.swing-a.swing);
-  const barbox=torn.querySelector('.bars');
-  res.forEach(r=>{
-    const bar=barbox.querySelector(`.tbar[data-key="${r.key}"]`);
-    barbox.appendChild(bar);
-    const lo=Math.min(r.lo,r.hi), hi=Math.max(r.lo,r.hi);
-    const span=hi-lo; const track=bar.querySelector('.track'); const W=track.clientWidth||600;
-    // scale: map [base-maxsw, base+maxsw] to track
-    const left=(x)=>Math.max(0,Math.min(1,(x-(base-maxsw))/(2*maxsw)))*100;
-    const fill=bar.querySelector('.fill');
-    fill.style.left=left(lo)+'%'; fill.style.width=Math.max(1,left(hi)-left(lo))+'%';
-    bar.querySelector('.mid').style.left=left(base)+'%';
-    bar.querySelector('.swv').textContent=maFmt(r.swing);
-  });
+  const du=maDownUp(spec,cur);
+  torn.querySelector('.dnv').textContent=maFmt(du.dn);
+  torn.querySelector('.upv').textContent=maFmt(du.up);
+  // shapley bars
+  const phi=maShapley(spec,cur);
+  const maxabs=Math.max(...Object.values(phi).map(Math.abs),1e-9);
+  const box=torn.querySelector('.shapbars');
+  const sorted=spec.drivers.slice().sort((a,b)=>Math.abs(phi[b.key])-Math.abs(phi[a.key]));
+  sorted.forEach(d=>{const row=box.querySelector(`.shap[data-key="${CSS.escape(d.key)}"]`);box.appendChild(row);
+    const v=phi[d.key];const bar=row.querySelector('.bar');const frac=Math.abs(v)/maxabs*50;
+    if(v<0){bar.className='bar neg';bar.style.right='50%';bar.style.left='';bar.style.width=frac+'%';}
+    else{bar.className='bar pos';bar.style.left='50%';bar.style.right='';bar.style.width=frac+'%';}
+    row.querySelector('.vv').textContent=maFmt(v);});
+  // two-way grid
+  const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
+  const B=spec.drivers.find(d=>d.key===torn.querySelector('.selB').value)||spec.drivers[0];
+  const N=5;const av=[],bv=[];
+  for(let i=0;i<N;i++){av.push(cur[A.key].lo+(cur[A.key].hi-cur[A.key].lo)*i/(N-1));bv.push(cur[B.key].lo+(cur[B.key].hi-cur[B.key].lo)*i/(N-1));}
+  let cells=[],mn=Infinity,mx=-Infinity;
+  for(let i=0;i<N;i++){cells.push([]);for(let j=0;j<N;j++){const ov={};ov[A.key]=av[i];ov[B.key]=bv[j];const v=maEval(spec,ov);cells[i].push(v);if(v<mn)mn=v;if(v>mx)mx=v;}}
+  const fp=(d,x)=>(d.unit==='fraction'?(x*100).toFixed(0)+'%':maFmt(x));
+  let h='<div class=cap>columns: '+B.label+' · rows: '+A.label+'</div><table class=grid2><tr><th></th>';
+  for(let j=0;j<N;j++)h+='<th>'+fp(B,bv[j])+'</th>';h+='</tr>';
+  for(let i=0;i<N;i++){h+='<tr><td class=axl>'+fp(A,av[i])+'</td>';for(let j=0;j<N;j++){const v=cells[i][j];const tnorm=mx>mn?(v-mn)/(mx-mn):0.5;h+='<td style="background:'+maColor(tnorm)+';color:#fff">'+maFmt(v)+'</td>';}h+='</tr>';}
+  h+='</table>';
+  torn.querySelector('.gridbox').innerHTML=h;
 }
-function maVals(spec){ let v={}; spec.drivers.forEach(d=>v[d.key]=d.base); return v; }
 document.querySelectorAll('.torn').forEach(t=>{
-  t.addEventListener('input', ()=>maRender(t));
-  t.querySelector('.reset')?.addEventListener('click', ()=>{
-    const spec=JSON.parse(t.querySelector('script[type="application/json"]').textContent);
-    t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{
-      const d=spec.drivers.find(x=>x.key===r.dataset.key);
-      r.querySelector('.lo').value=d.low; r.querySelector('.hi').value=d.high;
-    });
+  t.addEventListener('input',()=>maRender(t));
+  t.addEventListener('change',()=>maRender(t));
+  t.querySelector('.reset')?.addEventListener('click',()=>{
+    const spec=JSON.parse(t.querySelector('script.spec').textContent);
+    t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{const d=spec.defaults[r.dataset.key];r.querySelector('.lo').value=d.low;r.querySelector('.hi').value=d.high;});
     maRender(t);
   });
+  const spec=JSON.parse(t.querySelector('script.spec').textContent);
+  t.querySelector('.selA').value=spec.selA;t.querySelector('.selB').value=spec.selB;
   maRender(t);
 });
 """
@@ -559,13 +608,14 @@ def render_report(report: Report, filename: str) -> str:
                 last_fam = t.family
             a(render_annotation_table(t, findings_by_id))
 
-    # sensitivity / tornado — off the model's own input cells
+    # sensitivity — Shapley contribution bars + two-way grid, off the model's own inputs
     if report.sensitivities:
         a("<h2>Sensitivity <span class=muted style='font-weight:400;font-size:14px'>"
-          "— move the model's own inputs, see the effect</span></h2>")
-        a("<p class=legend>Each bar is one of the model's input cells flexed across its range; "
-          "the bar length is the swing it creates in the output. <b>Edit the low/high</b> below a chart "
-          "and it updates live. The center line is the base case.</p>")
+          "— what moves the output, and what happens if two inputs move together</span></h2>")
+        a("<p class=legend>Drivers are the model's <b>own input cells</b>, decomposed to every line item. "
+          "The <b>Shapley bars</b> attribute the swing from the base case to an all-adverse case across the "
+          "inputs (red pulls the output down). The <b>two-way grid</b> lets you flex any two at once. "
+          "Edit the input ranges to re-run it live.</p>")
         for i, t in enumerate(report.sensitivities):
             a(render_tornado(t, i))
             for cav in t.caveats:

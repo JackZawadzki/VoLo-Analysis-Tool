@@ -403,6 +403,8 @@ class SensitivityDriver(BaseModel):
     output_low: float                     # output when this driver = low (others at base)
     output_high: float
     swing: float                          # |output_high - output_low|
+    shapley: float = 0.0                  # signed contribution to the base→downside move
+    coef: float = 0.0                     # weight in a linear_sum output (+rev / -cost)
     unit: str = ""
     editable: bool = True
 
@@ -414,7 +416,10 @@ class Tornado(BaseModel):
     output_base: float
     formula: str                          # one of: "valuation_pv" | "linear_sum" | "ratio"
     formula_note: str = ""                # human description of the closed form
-    drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by swing desc
+    horizon: float = 0.0                  # discount horizon for valuation_pv
+    drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by |shapley| desc
+    downside: float = 0.0                 # output with every driver at its adverse end
+    upside: float = 0.0                   # output with every driver at its favorable end
     caveats: list[str] = Field(default_factory=list)
 
 
