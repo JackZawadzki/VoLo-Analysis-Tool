@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import html
 import io
+import json
 import logging
 import re
 import tempfile
@@ -180,6 +181,12 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .ranges input[type=number]{width:62px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
 .ranges .rcite{font-family:"SF Mono",Menlo,monospace;font-size:10.5px;color:#8a7f6f}
 .ranges button{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px;margin-top:8px}
+/* progress bar */
+.prog{display:none;margin-top:22px}
+.prog .bartrack{height:12px;background:#e7e0d2;border-radius:8px;overflow:hidden}
+.prog .barfill{height:100%;width:0;background:linear-gradient(90deg,#c98a5e,#9c4221);border-radius:8px;transition:width .35s ease}
+.prog .plabel{margin-top:10px;color:#3a3128;font-size:14px}
+.prog .ppct{color:var(--muted);font-variant-numeric:tabular-nums}
 """
 
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
@@ -194,10 +201,13 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
     <div class=muted id=fname style="margin-top:8px">or click to choose a file</div>
   </label>
   <div class=row style="margin-top:16px">
-    <button class=btn type=submit>Annotate model</button>
+    <button class=btn type=submit id=go>Annotate model</button>
     <label class=muted style="font-size:13.5px"><input type=checkbox name=llm {llm_checked} {llm_dis}> LLM polish {llm_note}</label>
   </div>
-  <div class=spin id=spin>Running the pipeline — ingest → tie-outs → metrics → findings…</div>
+  <div class=prog id=prog>
+    <div class=bartrack><div class=barfill id=barfill></div></div>
+    <div class=plabel><span id=plabel>Starting…</span> <span class=ppct id=ppct></span></div>
+  </div>
 </form>
 {recent}
 <script>
@@ -206,7 +216,26 @@ const drop=document.getElementById('drop'),file=document.getElementById('file'),
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{{e.preventDefault();drop.classList.remove('hover')}}));
 drop.addEventListener('drop',e=>{{file.files=e.dataTransfer.files;fn.textContent=file.files[0]?.name||''}});
 file.addEventListener('change',()=>fn.textContent=file.files[0]?.name||'or click to choose a file');
-document.getElementById('f').addEventListener('submit',()=>{{document.getElementById('spin').style.display='block'}});
+const fill=document.getElementById('barfill'),plabel=document.getElementById('plabel'),ppct=document.getElementById('ppct');
+function setProg(frac,label){{fill.style.width=Math.round(frac*100)+'%';ppct.textContent=Math.round(frac*100)+'%';if(label)plabel.textContent=label;}}
+document.getElementById('f').addEventListener('submit',async (e)=>{{
+  e.preventDefault();
+  if(!file.files[0])return;
+  document.getElementById('go').disabled=true;
+  document.getElementById('prog').style.display='block';
+  setProg(0.02,'Uploading…');
+  const fd=new FormData(); fd.append('model',file.files[0]);
+  if(document.querySelector('input[name=llm]')?.checked) fd.append('llm','on');
+  let job;
+  try{{ const r=await fetch('/start',{{method:'POST',body:fd}}); job=(await r.json()).job; }}
+  catch(err){{ plabel.textContent='Upload failed: '+err; return; }}
+  const poll=setInterval(async ()=>{{
+    let s; try{{ s=await (await fetch('/progress?job='+job)).json(); }}catch(e){{return;}}
+    setProg(s.frac||0, s.phase||'Working…');
+    if(s.status==='done'){{ clearInterval(poll); setProg(1,'Done'); window.location.href='/result?job='+job; }}
+    else if(s.status==='error'){{ clearInterval(poll); plabel.textContent='Error: '+(s.error||'unknown'); plabel.style.color='#b11226'; }}
+  }}, 400);
+}});
 </script>
 </div></body></html>"""
 
@@ -639,65 +668,105 @@ def parse_multipart(body: bytes, content_type: str) -> dict[str, tuple[str, byte
 
 
 # ---------------------------------------------------------------------------
-# HTTP handler
+# HTTP handler + job registry (async progress)
 # ---------------------------------------------------------------------------
 
 OUT_ROOT = Path(tempfile.gettempdir()) / "model_annotator_web"
+import threading
+import uuid
+
+_JOBS: dict[str, dict] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+def _run_job(job_id: str, tmp_path: str, filename: str, use_llm: bool):
+    def prog(label: str, frac: float):
+        with _JOBS_LOCK:
+            j = _JOBS.get(job_id)
+            if j is not None:
+                j["phase"], j["frac"] = label, frac
+    try:
+        report = annotate(tmp_path, out_dir=str(OUT_ROOT / Path(filename).stem),
+                          no_llm=not use_llm, write_outputs=True, progress=prog)
+        html = render_report(report, filename)
+        with _JOBS_LOCK:
+            _JOBS[job_id].update(status="done", frac=1.0, phase="Done", html=html)
+    except Exception as exc:
+        log.error("annotation failed: %s", exc)
+        with _JOBS_LOCK:
+            _JOBS[job_id].update(status="error", error=f"{exc}")
+    finally:
+        try:
+            Path(tmp_path).unlink()
+        except OSError:
+            pass
 
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # quiet
         pass
 
-    def _send(self, body: str, code: int = 200):
+    def _send(self, body: str, code: int = 200, ctype: str = "text/html; charset=utf-8"):
         data = body.encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        from urllib.parse import urlparse, parse_qs
+        u = urlparse(self.path)
+        if u.path in ("/", "/index.html"):
             self._send(render_index())
-        elif self.path == "/health":
+        elif u.path == "/health":
             self._send("ok")
+        elif u.path == "/progress":
+            job = parse_qs(u.query).get("job", [""])[0]
+            with _JOBS_LOCK:
+                j = _JOBS.get(job)
+                payload = ({"status": "error", "error": "unknown job"} if j is None
+                           else {"status": j["status"], "phase": j.get("phase", ""),
+                                 "frac": j.get("frac", 0.0), "error": j.get("error", "")})
+            self._send(json.dumps(payload), ctype="application/json")
+        elif u.path == "/result":
+            job = parse_qs(u.query).get("job", [""])[0]
+            with _JOBS_LOCK:
+                j = _JOBS.get(job)
+                html = j.get("html") if j else None
+            if html:
+                self._send(html)
+            else:
+                self._send(render_index("<div class=err>Result not ready or expired.</div>"), 404)
         else:
             self._send("<div class=wrap>Not found. <a href=/>Home</a></div>", 404)
 
     def do_POST(self):
-        if self.path != "/annotate":
+        if self.path != "/start":
             self._send("Not found", 404)
             return
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         fields = parse_multipart(body, self.headers.get("Content-Type", ""))
         if "model" not in fields or not fields["model"][0]:
-            self._send(render_index("<div class=err>No file was uploaded.</div>"))
+            self._send(json.dumps({"error": "no file"}), 400, "application/json")
             return
         filename, data = fields["model"]
         if not filename.lower().endswith((".xlsx", ".xlsm")):
-            self._send(render_index("<div class=err>Please upload an .xlsx or .xlsm file.</div>"))
+            self._send(json.dumps({"error": "not an .xlsx/.xlsm file"}), 400, "application/json")
             return
         OUT_ROOT.mkdir(parents=True, exist_ok=True)
         tmp = tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False, dir=OUT_ROOT)
         tmp.write(data)
         tmp.close()
         use_llm = USE_LLM and "llm" in fields
-        try:
-            report = annotate(tmp.name, out_dir=str(OUT_ROOT / Path(filename).stem),
-                              no_llm=not use_llm, write_outputs=True)
-            self._send(render_report(report, filename))
-        except Exception as exc:
-            tb = traceback.format_exc()
-            log.error("annotation failed: %s", exc)
-            self._send(render_index(
-                f"<div class=err><b>Annotation failed:</b> {e(exc)}\n\n{e(tb)}</div>"), 500)
-        finally:
-            try:
-                Path(tmp.name).unlink()
-            except OSError:
-                pass
+        job_id = uuid.uuid4().hex[:12]
+        with _JOBS_LOCK:
+            _JOBS[job_id] = {"status": "running", "phase": "Starting…", "frac": 0.0,
+                             "html": None, "error": ""}
+        threading.Thread(target=_run_job, args=(job_id, tmp.name, filename, use_llm),
+                         daemon=True).start()
+        self._send(json.dumps({"job": job_id}), ctype="application/json")
 
 
 def main(argv=None):

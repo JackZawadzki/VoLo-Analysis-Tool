@@ -57,13 +57,24 @@ def annotate(
     json_only: bool = False,
     workbook_map: Optional[WorkbookMap] = None,
     llm_model: Optional[str] = None,
+    progress=None,
 ) -> Report:
     """Run the full diligence pipeline on one workbook.
 
     ``workbook_map`` may carry a previously computed map (from a prior run's
     ``workbook_map.json``); its row mappings are reused instead of re-scored,
     so a host engine can parse once and analyze many ways.
+
+    ``progress`` is an optional callback ``(phase_label: str, fraction: float)``
+    invoked at each phase boundary so a UI can show real progress.
     """
+    def _p(label: str, frac: float) -> None:
+        if progress is not None:
+            try:
+                progress(label, frac)
+            except Exception:
+                pass
+
     from .ingest import load_workbook_dual
     from .structure import build_structure
     from .graph import build_graph, build_assumptions_census
@@ -88,11 +99,15 @@ def annotate(
         log.info("LLM disabled: %s", llm.disabled_reason)
 
     # ---- Phase 0-1: ingest + structure + graph -----------------------------
+    _p("Reading the workbook", 0.05)
     wbd = load_workbook_dual(str(src), max_cells=max_cells)
+    _p("Mapping structure, periods, units", 0.15)
     structure = build_structure(wbd)
+    _p("Building the formula dependency graph", 0.25)
     graph = build_graph(wbd)
 
     # ---- mapping (heuristics + optional LLM label assist) ------------------
+    _p("Mapping rows to the financial ontology", 0.38)
     if workbook_map is not None and workbook_map.row_mappings:
         mapping = mapping_from_workbook_map(wbd, structure, workbook_map)
     else:
@@ -108,30 +123,37 @@ def annotate(
     # LLM-guided when available: reads structure (labels only, never values),
     # decides the business archetype and which extra relationships to compute.
     # Deterministic heuristic plan in --no-llm runs.
+    _p("Planning the analysis (business read)", 0.48)
     from .planner import build_analysis_plan, execute_plan_computations
     plan = build_analysis_plan(wbd, structure, mapping, llm, benchmarks)
 
     # ---- Phase 2: assumptions census ---------------------------------------
+    _p("Ranking the assumptions that drive the model", 0.56)
     census = build_assumptions_census(graph, stmt_sheets)
 
     # ---- Phase 3: integrity tie-outs (the trust gate) ----------------------
+    _p("Checking the model's internal arithmetic", 0.64)
     integrity = run_tie_outs(wbd, mapping, graph)
 
     # ---- Phase 4: derived metrics ------------------------------------------
+    _p("Computing derived analyst metrics", 0.74)
     metrics = compute_metrics(wbd, structure, mapping, benchmarks)
     metrics.metrics.extend(execute_plan_computations(plan, mapping, structure))
 
     # ---- Phases 5-7: findings / acquittals / severity-dedup ----------------
+    _p("Surfacing flags and acquittals", 0.84)
     fctx = FCtx(wbd=wbd, structure=structure, mapping=mapping, graph=graph,
                 integrity=integrity, metrics=metrics, census=census, benchmarks=benchmarks,
                 plan=plan)
     fres = build_findings(fctx)
 
     # ---- Phase 7.5: annotation tables (analyst worksheet view) -------------
+    _p("Building the worksheet view", 0.90)
     from .tables import build_annotation_tables
     annotation_tables = build_annotation_tables(wbd, structure, mapping, metrics, fres)
 
     # ---- Phase 7.6: sensitivity / tornado (off the model's own input cells) -
+    _p("Building sensitivity / tornado", 0.93)
     from .sensitivity import build_sensitivities
     ax = structure.primary_axis(mapping.primary_sheet) if mapping.primary_sheet else None
     sens_periods = list(ax.periods) if ax else []
@@ -179,6 +201,7 @@ def annotate(
     )
 
     # ---- Phase 8: executive summary, polish (verified), validate, emit -----
+    _p("Writing the summary" + (" (LLM)" if llm.available else ""), 0.96)
     from .narrate import build_executive_summary
     report.executive_summary = build_executive_summary(report, llm if llm.available else None)
     if llm.available:
@@ -193,6 +216,7 @@ def annotate(
     if write_outputs and out is not None:
         _emit_outputs(report, mapping, metrics, out, json_only=json_only,
                       render_markdown=render_markdown)
+    _p("Done", 1.0)
     return report
 
 
