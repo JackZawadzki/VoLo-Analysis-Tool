@@ -272,12 +272,21 @@ def _axis_from_run(sd: SheetData, run: list[PeriodToken], orientation: Orientati
 # ---------------------------------------------------------------------------
 
 _EXPLICIT_UNITS = [
-    # Thousands. The lookbehinds keep "5,000 tpa" / "60000" from matching.
-    (re.compile(r"\bin\s+thousands\b|\$\s*000s?\b|(?<![\d,.])'000s?\b|\(\s*\$\s*k\s*\)|\$k\b|US\$\s*thousands", re.I),
+    # Thousands. The lookbehinds keep "5,000 tpa" / "60000" from matching;
+    # the grouped-digit form catches captions like "Summary Financials ($1,000s)".
+    (re.compile(r"\bin\s+thousands\b|\$\s*000s?\b|(?<![\d,.])'000s?\b|\(\s*\$\s*k\s*\)|\$k\b"
+                r"|US\$\s*thousands|\(\s*\$?\s*1?[,\s]?000s?\s*\)|\bin\s+\$\s*000s?\b", re.I),
      1_000.0, "$ thousands"),
-    (re.compile(r"\bin\s+millions\b|\(\s*\$\s*mm?\s*\)|\$\s*mm\b|(?<![\d,.])\$m\b|US\$\s*millions", re.I),
+    # Millions, incl. grouped "($1,000,000s)" and "($M)"/"($MM)".
+    (re.compile(r"\bin\s+millions\b|\(\s*\$\s*mm?\s*\)|\$\s*mm\b|(?<![\d,.])\$m\b|US\$\s*millions"
+                r"|\(\s*\$?\s*1?[,\s]?000[,\s]?000s?\s*\)", re.I),
      1_000_000.0, "$ millions"),
 ]
+
+# A units marker in the left label/title columns that reads like a sheet caption
+# ("Summary Financials ($1,000s)") applies to the whole sheet even if it appears
+# only once and below the title band.
+_CAPTION = re.compile(r"summary|financ|model|statement|projection|pro\s*forma|forecast|in\s*\$", re.I)
 
 
 def detect_units(sd: SheetData) -> UnitsInfo:
@@ -290,7 +299,7 @@ def detect_units(sd: SheetData) -> UnitsInfo:
     # half-way down the sheet describes that row, not the sheet (mixed-unit
     # sheets are a real trap). Accept a marker as sheet-wide only if it sits in
     # the title area (rows 1-4, cols 1-6) or recurs 3+ times in the header band.
-    band = min(sd.max_row, 10)
+    band = min(sd.max_row, 24)     # widened: real models caption units at row ~12
     hits: list[tuple[int, int, str, float, str]] = []
     for row in range(1, band + 1):
         for col in range(1, min(sd.max_col, 30) + 1):
@@ -306,7 +315,8 @@ def detect_units(sd: SheetData) -> UnitsInfo:
         # recurring markers must span 3+ distinct rows — markers repeated on a
         # single header row are per-column units (e.g. several "NPV ($M)" cols)
         rows_with_scale = {h[0] for h in hits if h[3] == scale}
-        if (row <= 4 and col <= 6) or len(rows_with_scale) >= 3:
+        caption = col <= 3 and bool(_CAPTION.search(text))
+        if (row <= 4 and col <= 6) or len(rows_with_scale) >= 3 or caption:
             return UnitsInfo(
                 scale=scale, label=label, confidence=0.95, explicit=True,
                 evidence=f"{format_ref(sd.name, a1(row, col))} = {text!r}",

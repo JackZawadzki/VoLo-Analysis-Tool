@@ -122,9 +122,15 @@ def render_markdown(report: Report) -> str:
             a("|" + "---|" * (len(per) + 1))
             for sr in t.source_rows:
                 cells = {c.period: c for c in sr.cells}
-                vals = " | ".join(_fmt_v(cells[p].value) if p in cells and cells[p].value is not None else ""
-                                  for p in per)
-                a(f"| {sr.label[:40].replace('|', '/')} (model) | {vals} |")
+
+                def _sv(p):
+                    if p not in cells or cells[p].value is None:
+                        return ""
+                    v = cells[p].value
+                    return f"{v * 100:.0f}%" if sr.is_percent else _fmt_v(v)
+                vals = " | ".join(_sv(p) for p in per)
+                cite = f"{sr.sheet} r{sr.row_index}" if sr.sheet and sr.row_index else ""
+                a(f"| {sr.label[:40].replace('|', '/')} ({cite}) | {vals} |")
             dr = t.derived_row
             notes = []
             if dr is not None:

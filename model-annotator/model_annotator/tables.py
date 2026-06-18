@@ -121,7 +121,7 @@ def _kind_lookup(structure: StructureResult):
     return is_input
 
 
-def _source_row(it: LineItem, periods: list[str], is_input) -> AnnotatedRow:
+def _source_row(it: LineItem, periods: list[str], is_input, transposed: bool = False) -> AnnotatedRow:
     from openpyxl.utils.cell import column_index_from_string, coordinate_from_string
     own = {p: (it.coords[i], it.values[i]) for i, p in enumerate(it.periods)}
     cells: list[AnnotatedCell] = []
@@ -132,9 +132,17 @@ def _source_row(it: LineItem, periods: list[str], is_input) -> AnnotatedRow:
                                        is_input=is_input(it.sheet, r, c)))
         else:
             cells.append(AnnotatedCell(period=p, value=None, ref=None))
-    # precise, navigable citation: sheet + Excel row number (e.g. "Lithios_TopCo · row 31")
+    # precise, navigable citation: sheet + Excel row (e.g. "Lithios_TopCo · row 31").
+    # For transposed (periods-in-rows) models, it.index is a COLUMN, so cite the
+    # column span instead of a row span.
+    if transposed:
+        from openpyxl.utils import get_column_letter
+        col = get_column_letter(it.index)
+        coord = format_ref(it.sheet, f"{col}:{col}")
+    else:
+        coord = format_ref(it.sheet, f"{it.index}:{it.index}")
     return AnnotatedRow(label=it.label.strip(), sheet=it.sheet, row_index=it.index,
-                        coordinate=format_ref(it.sheet, f"{it.index}:{it.index}"), kind="source",
+                        coordinate=coord, kind="source",
                         canonical_id=it.canonical_id, units=None,
                         is_percent=it.percentish, cells=cells)
 
@@ -184,7 +192,9 @@ def build_annotation_tables(
         if not source_items and m.scalar is None and not m.series:
             continue
 
-        src_rows = [_source_row(it, periods, is_input) for it in source_items[:6]]
+        from .schema import Orientation
+        transposed = axis.orientation == Orientation.periods_in_rows
+        src_rows = [_source_row(it, periods, is_input, transposed) for it in source_items[:6]]
 
         # derived row
         is_pct = _is_percentish(m)

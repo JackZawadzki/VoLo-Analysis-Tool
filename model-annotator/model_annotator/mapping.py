@@ -104,16 +104,23 @@ def extract_line_items(sd: SheetData, axis: PeriodAxis) -> list[LineItem]:
     items: list[LineItem] = []
     section = ""
 
+    # the line index sitting ON the period-header axis is the header itself; its
+    # "values" are the period labels (years), never a data row — exclude it so a
+    # row like "Revenue Stream" headering the year row isn't mapped as a segment
     if axis.orientation == Orientation.periods_in_columns:
         period_cols = [c for _, c in header_coords]
         first_period_col = min(period_cols)
         line_indices = range(1, sd.max_row + 1)
+        header_idx = {r for r, _ in header_coords}
     else:
         period_rows = [r for r, _ in header_coords]
         first_period_row = min(period_rows)
         line_indices = range(1, sd.max_col + 1)
+        header_idx = {c for _, c in header_coords}
 
     for idx in line_indices:
+        if idx in header_idx:
+            continue
         if axis.orientation == Orientation.periods_in_columns:
             coords = [(idx, c) for c in period_cols]
             label_cells = [(idx, c) for c in range(1, first_period_col)]
@@ -121,13 +128,19 @@ def extract_line_items(sd: SheetData, axis: PeriodAxis) -> list[LineItem]:
             coords = [(r, idx) for r in period_rows]
             label_cells = [(r, idx) for r in range(1, first_period_row)]
 
-        raw_label = ""
+        # Choose the most-specific label. Multi-column label blocks put the line
+        # name in the left column and a generic category to its right
+        # ("6010 PR & Marketing" in A, "Marketing" in C) — keep the leftmost
+        # descriptive cell (has letters, not prose), not the rightmost generic.
+        candidates = []
         for (lr, lc) in label_cells:
             rec = sd.cell(lr, lc)
             if rec is not None and isinstance(rec.value, str) and rec.value.strip():
-                raw_label = rec.value
-        if not raw_label:
+                candidates.append(rec.value)
+        if not candidates:
             continue
+        raw_label = next((c for c in candidates if re.search(r"[A-Za-z]", c) and len(c) <= 80),
+                         candidates[0])
         depth = len(raw_label) - len(raw_label.lstrip())
         label = raw_label.strip()
 
@@ -692,6 +705,19 @@ def build_mapping(
 
     res.primary_sheet = _pick_primary_sheet(res, structure)
     _verify_and_demote(res)
+
+    # surface any row whose own unit marker ("Revenue ($M)") conflicts with its
+    # sheet scale — otherwise that row's magnitude is silently off by the ratio
+    for it in res.items:
+        if it.canonical_id and it.unit_scale_override is not None:
+            su = structure.units.get(it.sheet)
+            sheet_scale = su.scale if su else 1.0
+            if abs(it.unit_scale_override - sheet_scale) > 1e-6:
+                res.notes.append(
+                    f"Row {it.sheet}!{it.index} {it.label.strip()!r} carries its own unit marker "
+                    f"(scale {it.unit_scale_override:g}) different from the sheet scale "
+                    f"({sheet_scale:g}); its absolute magnitude may be off by "
+                    f"{it.unit_scale_override / sheet_scale:g}x — verify before relying on it.")
     return res
 
 
