@@ -109,19 +109,31 @@ class FCtx:
 # Phase 5 — candidate rules
 # ===========================================================================
 
+# Only these identities MUST hold by construction; a failure here is a genuine
+# model-arithmetic error. Cross-sheet mirrors and "sum of mapped components =
+# total" are NOT in this set: a mismatch there almost always means two rows
+# represent different things, or the tool didn't map every component — an
+# analysis/representation issue, never grounds for "the model is broken."
+_CORE_IDENTITIES = frozenset({
+    "cash_roll", "beginning_cash_continuity", "net_change_sum", "gp_identity",
+})
+
+
 def _rule_tie_out_failures(ctx: FCtx, cands: list[Candidate]) -> None:
     for t in ctx.integrity.tie_outs:
-        if t.status == TieOutStatus.failed and t.material:
+        if t.status == TieOutStatus.failed and t.material and t.id in _CORE_IDENTITIES:
             cands.append(Candidate(
                 category="arithmetic_integrity",
                 severity=Severity.critical,
                 title=f"The model violates its own arithmetic: {t.label}",
-                narrative=(f"Tie-out '{t.id}' fails: {t.detail} A model that breaks its own identities "
-                           "cannot be trusted on anything downstream of the broken rows."),
-                management_question=("Can you walk us through the cash build in the failing periods? "
+                narrative=(f"Tie-out '{t.id}' fails: {t.detail} This is an identity that must hold by "
+                           "construction (e.g. ending cash = prior cash + net change), so a real break "
+                           "here means a downstream number cannot be trusted — confirm it is not a "
+                           "mapping artifact first."),
+                management_question=("Can you walk us through the build in the failing periods? "
                                      "We want to make sure we are reading the statement structure as intended."),
                 evidence=t.evidence,
-                confidence=0.95,
+                confidence=0.8,
             ))
         elif t.status == TieOutStatus.unfalsifiable:
             cands.append(Candidate(

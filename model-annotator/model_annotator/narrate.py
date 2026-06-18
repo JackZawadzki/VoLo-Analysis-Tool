@@ -151,7 +151,7 @@ def build_executive_summary(report: Report, llm: Optional[LLMClient] = None):
 
     # deterministic template
     article = "an" if what[:1].lower() in "aeiou" else "a"
-    parts = [f"This is {article} {what} spanning {span} (trust score {wm.trust_score:.2f})."]
+    parts = [f"This is {article} {what} spanning {span}."]
     if flags:
         parts.append("Key flags: " + "; ".join(flags) + ".")
     else:

@@ -63,6 +63,7 @@ _SEV_COLOR = {
     Severity.medium: "#b8860b",
     Severity.info: "#5a6b7b",
 }
+_SEV_COLOR_STR = {k.value: v for k, v in _SEV_COLOR.items()}
 _STATUS_BADGE = {
     TieOutStatus.passed: ("✓ pass", "#1a7f4b"),
     TieOutStatus.failed: ("✗ FAIL", "#b11226"),
@@ -155,6 +156,8 @@ td.hl .tip::after{content:"";position:absolute;right:14px;top:100%;border:6px so
 td.hl:hover .tip{visibility:visible;opacity:1}
 .legend{color:var(--muted);font-size:12px;margin:4px 0 0}
 .legend b{color:var(--accent)}
+.wkflag{font-size:13px;padding:9px 14px;margin:0 16px 14px;background:#faf6ef;border-left:3px solid #b8860b;border-radius:0 6px 6px 0;line-height:1.5}
+.wkflag b{font-size:11px;letter-spacing:.03em;margin-right:6px}
 /* precise citations */
 .cite{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;color:#8a7f6f;background:#f0ece2;border-radius:3px;padding:0 5px;margin-left:8px;cursor:copy;white-space:nowrap}
 .cite:hover{color:var(--accent);background:#f3e3d6}
@@ -230,7 +233,41 @@ def _cell_text(value, is_percent: bool) -> str:
     return f"{value:.3f}"
 
 
-def render_annotation_table(t) -> str:
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+
+
+def _table_flag(t, findings_by_id):
+    """One-sentence flag summary for a worksheet calculation: (text, severity|None)."""
+    related = [findings_by_id[i] for i in t.related_finding_ids if i in findings_by_id]
+    related.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
+    if related:
+        f = related[0]
+        q = f" — {f.management_question}" if f.management_question else ""
+        return (f"{f.title}{q}", f.severity.value)
+    # else summarize the standout cells on the derived row
+    if t.derived_row:
+        hl = [c for c in t.derived_row.cells if c.highlighted and c.comment]
+        if hl:
+            order = {"critical": 0, "high": 1, "medium": 2, None: 3}
+            hl.sort(key=lambda c: order.get(c.severity.value if c.severity else None, 3))
+            sev = hl[0].severity.value if hl[0].severity else "medium"
+            extra = f" (+{len(hl) - 1} more period{'s' if len(hl) > 2 else ''})" if len(hl) > 1 else ""
+            return (hl[0].comment + extra, sev)
+    return ("No flags — this calculation looks clean.", None)
+
+
+def _model_level_flags(report):
+    """Findings not attached to any worksheet calculation (structural ones), >= medium."""
+    attached = set()
+    for t in report.annotation_tables:
+        attached.update(t.related_finding_ids)
+    out = [f for f in report.findings
+           if f.id not in attached and f.severity.value in ("critical", "high", "medium")]
+    out.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
+    return out
+
+
+def render_annotation_table(t, findings_by_id=None) -> str:
     o: list[str] = []
     a = o.append
     a("<div class=wk>")
@@ -282,7 +319,17 @@ def render_annotation_table(t) -> str:
             else:
                 a(f"<td>{txt}</td>")
         a("</tr>")
-    a("</tbody></table></div></div>")
+    a("</tbody></table></div>")
+    # one-sentence flag summary for this calculation
+    flag_text, flag_sev = _table_flag(t, findings_by_id or {})
+    if flag_sev:
+        color = _SEV_COLOR_STR.get(flag_sev, "#7a5a13")
+        a(f"<div class=wkflag style='border-left-color:{color}'>"
+          f"<b style='color:{color}'>⚑ {flag_sev.upper()}</b> {e(flag_text)}</div>")
+    else:
+        a(f"<div class=wkflag class=clean style='border-left-color:#1a7f4b'>"
+          f"<b style='color:#1a7f4b'>✓</b> <span class=muted>{e(flag_text)}</span></div>")
+    a("</div>")
     return "\n".join(o)
 
 
@@ -415,16 +462,15 @@ def render_report(report: Report, filename: str) -> str:
     periods = wm.period_axis.periods if wm.period_axis else []
     span = f"{e(periods[0])} – {e(periods[-1])}" if periods else "none"
 
-    a("<div class=card><div class=row style='justify-content:space-between;align-items:flex-start'>")
-    a(f"<div><span class=muted>Trust score</span><div class=trust style='color:{'#1a7f4b' if wm.trust_score>=0.95 else ('#d9730d' if wm.trust_score>=0.7 else '#b11226')}'>{wm.trust_score:.2f}</div></div>")
+    n_flags = sum(1 for f in report.findings if f.severity.value in ("critical", "high", "medium"))
+    a("<div class=card><div class=row style='justify-content:flex-start;gap:30px;align-items:flex-start'>")
     a("<div class=kpis>")
-    a(f"<div class=kpi><b>{len(report.findings)}</b><span>findings</span></div>")
-    a(f"<div class=kpi><b>{len(report.acquittals)}</b><span>acquittals</span></div>")
-    a(f"<div class=kpi><b>{len(report.clean_checks)}</b><span>clean checks</span></div>")
-    a(f"<div class=kpi><b>{len(report.derived_metrics)}</b><span>metrics</span></div>")
+    a(f"<div class=kpi><b>{n_flags}</b><span>flags</span></div>")
+    a(f"<div class=kpi><b>{len([t for t in report.annotation_tables])}</b><span>calculations</span></div>")
+    a(f"<div class=kpi><b>{len(periods)}</b><span>periods</span></div>")
     a("</div></div>")
     a(f"<div class=muted style='margin-top:12px'>Primary statements <b>{e(wm.primary_statement_sheet)}</b> · "
-      f"periods {span} ({e(wm.period_axis.granularity.value) if wm.period_axis else '–'}, {len(periods)}) · "
+      f"periods {span} ({e(wm.period_axis.granularity.value) if wm.period_axis else '–'}) · "
       f"units {units or 'unknown'} · LLM {'used' if report.llm_used else 'off'}</div>")
     a("</div>")
 
@@ -434,9 +480,18 @@ def render_report(report: Report, filename: str) -> str:
         a("<div class=exec><div class=lab>Executive summary</div>")
         a(f"<div>{e(es.text)}</div></div>")
 
-    # read this first
-    a("<h2>Read this first</h2>")
-    a(f"<div class=card>{e(read_this_first(report))}<p class=muted style='margin:10px 0 0'>{e(trust_sentence(report))}</p></div>")
+    # model-level flags that aren't tied to a single calculation
+    model_flags = _model_level_flags(report)
+    if model_flags:
+        a("<h2>Model-level flags <span class=muted style='font-weight:400;font-size:14px'>"
+          "— not tied to one calculation</span></h2>")
+        a("<div class=card><ul class=ev>")
+        for f in model_flags:
+            color = _SEV_COLOR[f.severity]
+            q = f" <span class=muted>{e(f.management_question)}</span>" if f.management_question else ""
+            a(f"<li><span class=pill style='background:{color};font-size:10px'>{f.severity.value.upper()}</span> "
+              f"{e(f.title)}{q}</li>")
+        a("</ul></div>")
 
     # analysis plan — why these calculations
     plan = report.analysis_plan
@@ -459,50 +514,21 @@ def render_report(report: Report, filename: str) -> str:
             a("</ul>")
         a("</div>")
 
-    # findings
-    a("<h2>Findings</h2>")
-    if not report.findings:
-        a("<div class=card class=muted>No findings above the reporting threshold.</div>")
-    for f in report.sorted_findings():
-        color = _SEV_COLOR[f.severity]
-        a(f"<div class='card fld' id={e(f.id)}>")
-        a(f"<div class=row style='justify-content:space-between'><h3 style='margin:0'>{e(f.title)}</h3>"
-          f"<span class=pill style='background:{color}'>{f.severity.value.upper()}</span></div>")
-        a(f"<div class=muted style='margin:2px 0 8px'>{e(f.id)} · {e(f.category)} · confidence {f.confidence:.2f}"
-          + (" · <span style='color:#b11226'>trust degraded</span>" if f.trust_degraded else "") + "</div>")
-        a(f"<div>{e(f.narrative)}</div>")
-        if f.evidence_values:
-            a("<ul class=ev>")
-            for ev in f.evidence_values[:8]:
-                val = f" = {fmt(ev.value)}" if ev.value is not None else ""
-                lbl = f" <span class=muted>— {e(ev.label)}</span>" if ev.label else ""
-                a(f"<li><code>{e(ev.ref)}</code>{val}{lbl}</li>")
-            a("</ul>")
-        elif f.evidence_cells:
-            a("<div style='margin-top:6px'>" + " ".join(f"<code>{e(c)}</code>" for c in f.evidence_cells[:10]) + "</div>")
-        qi = f.quantified_impact
-        if qi and (qi.as_modeled is not None or qi.as_corrected is not None):
-            a(f"<div style='margin-top:8px'><b>Quantified impact</b> ({e(qi.metric)}): "
-              f"as modeled <b>{fmt(qi.as_modeled)}</b> → as corrected <b>{fmt(qi.as_corrected)}</b>. "
-              f"<span class=muted>{e(qi.basis)}</span></div>")
-        if f.management_question:
-            a(f"<div class=q>Q for management: {e(f.management_question)}</div>")
-        a("</div>")
-
-    # analyst worksheet — derived rows with their source rows, in full
+    # analyst worksheet — each calculation with its source rows AND its own flag line
+    findings_by_id = {f.id: f for f in report.findings}
     tables = report.annotation_tables
     if tables:
         a("<h2>Worksheet <span class=muted style='font-weight:400;font-size:14px'>"
-          "— each new calculation with the model's own rows, in full</span></h2>")
+          "— each calculation with the model's own rows, and what it flags</span></h2>")
         a("<p class=legend>Each block shows the company's <b style='color:#5f574b'>model rows</b> "
-          "and the <b>NEW</b> derived row beneath them. Highlighted cells are values that stand out — "
-          "<b>hover</b> for why. Blue numbers are typed inputs in the model.</p>")
+          "and the <b>NEW</b> derived row beneath them, then a one-line <b>flag</b> for that calculation. "
+          "Highlighted cells are values that stand out — <b>hover</b> for why.</p>")
         last_fam = None
         for t in tables:
             if t.family != last_fam:
                 a(f"<div class=fam>{e(t.family)}</div>")
                 last_fam = t.family
-            a(render_annotation_table(t))
+            a(render_annotation_table(t, findings_by_id))
 
     # sensitivity / tornado — off the model's own input cells
     if report.sensitivities:

@@ -39,8 +39,27 @@ def _fmt_v(v) -> str:
     return str(v)[:40]
 
 
+_SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "info": 3}
+
+
+def _table_flag_md(t, findings_by_id):
+    related = [findings_by_id[i] for i in t.related_finding_ids if i in findings_by_id]
+    related.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
+    if related:
+        f = related[0]
+        q = f" — {f.management_question}" if f.management_question else ""
+        return (f"{f.title}{q}", f.severity.value)
+    if t.derived_row:
+        hl = [c for c in t.derived_row.cells if c.highlighted and c.comment]
+        hl.sort(key=lambda c: _SEV_RANK.get(c.severity.value if c.severity else "info", 9))
+        if hl:
+            return (hl[0].comment, hl[0].severity.value if hl[0].severity else "medium")
+    return ("No flags — this calculation looks clean.", None)
+
+
 def render_markdown(report: Report) -> str:
     wm = report.workbook_map
+    _fbi = {f.id: f for f in report.findings}
     out: list[str] = []
     a = out.append
 
@@ -58,7 +77,6 @@ def render_markdown(report: Report) -> str:
     a(f"| Periods | {periods[0] + ' – ' + periods[-1] if periods else 'none detected'}"
       f" ({wm.period_axis.granularity.value if wm.period_axis else '–'}, {len(periods)} periods) |")
     a(f"| Units | {units_label or 'unknown'} |")
-    a(f"| Trust score | **{wm.trust_score:.2f}** |")
     a(f"| Analyzed | {report.analyzed_at} · sha256 {report.sha256[:12]}… · "
       f"tool {report.tool_version} · schema {report.schema_version} · "
       f"LLM {'used' if report.llm_used else 'not used'} |")
@@ -71,13 +89,17 @@ def render_markdown(report: Report) -> str:
         a(report.executive_summary.text)
         a("")
 
-    # ---- read this first ----
-    a("## Read this first")
-    a("")
-    a(read_this_first(report))
-    a("")
-    a(trust_sentence(report))
-    a("")
+    # ---- model-level flags (not tied to one calculation) ----
+    _attached = {fid for t in report.annotation_tables for fid in t.related_finding_ids}
+    _ml = [f for f in report.sorted_findings()
+           if f.id not in _attached and f.severity.value in ("critical", "high", "medium")]
+    if _ml:
+        a("## Model-level flags")
+        a("")
+        for f in _ml:
+            q = f" — {f.management_question}" if f.management_question else ""
+            a(f"- **[{f.severity.value.upper()}]** {f.title}{q}")
+        a("")
 
     # ---- analysis plan (the WHY layer) ----
     plan = report.analysis_plan
@@ -148,8 +170,12 @@ def render_markdown(report: Report) -> str:
                     row.append(txt)
                 a(f"| **{dr.label[:40].replace('|', '/')} (NEW)** | " + " | ".join(row) + " |")
             a("")
+            # one-line flag for this calculation
+            ftext, fsev = _table_flag_md(t, _fbi)
+            a(f"> **⚑ {fsev.upper()}:** {ftext}" if fsev else f"> ✓ {ftext}")
+            a("")
             for n in notes:
-                a(f"- *{n}*")
+                a(f"  - *{n}*")
             if notes:
                 a("")
 
@@ -182,44 +208,8 @@ def render_markdown(report: Report) -> str:
           f"{t.periods_checked or ''} | {t.detail[:160].replace('|', '/')} |")
     a("")
 
-    # ---- findings ----
-    a("## Findings")
-    a("")
-    if not report.findings:
-        a("No findings above the reporting threshold. See clean checks below.")
-        a("")
-    for f in report.sorted_findings():
-        a(f"### {f.id} · {_SEV_LABEL[f.severity]} — {f.title}")
-        a("")
-        flags = []
-        if f.trust_degraded:
-            flags.append("trust degraded by tie-out failures")
-        flags.append(f"confidence {f.confidence:.2f}")
-        a(f"*{f.category} · {' · '.join(flags)}*")
-        a("")
-        a(f.narrative)
-        a("")
-        if f.evidence_values:
-            a("Evidence:")
-            for e in f.evidence_values[:8]:
-                lbl = f" — {e.label}" if e.label else ""
-                val = f" = {_fmt_v(e.value)}" if e.value is not None else ""
-                a(f"- `{e.ref}`{val}{lbl}")
-            a("")
-        elif f.evidence_cells:
-            a("Evidence: " + ", ".join(f"`{c}`" for c in f.evidence_cells[:10]))
-            a("")
-        qi = f.quantified_impact
-        if qi is not None and (qi.as_modeled is not None or qi.as_corrected is not None):
-            a(f"Quantified impact ({qi.metric}): as modeled {_fmt_v(qi.as_modeled)} → "
-              f"as corrected {_fmt_v(qi.as_corrected)}. Basis: {qi.basis}")
-            a("")
-        if f.management_question:
-            a(f"> **Question for management:** {f.management_question}")
-            a("")
-        if f.supporting_echoes:
-            a(f"*Downstream symptoms folded into this finding: {'; '.join(f.supporting_echoes[:4])}*")
-            a("")
+    # (Findings are now shown inline as a one-line flag under each worksheet
+    #  calculation, plus the Model-level flags section above.)
 
     # ---- acquittals ----
     a("## Acquittals — looked alarming, dissolved under investigation")
