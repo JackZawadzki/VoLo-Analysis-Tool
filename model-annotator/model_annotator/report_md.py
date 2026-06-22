@@ -123,58 +123,89 @@ def render_markdown(report: Report) -> str:
         a("")
 
     # ---- analyst worksheet ----
+    # Per family: the model's own cited rows ONCE, then every calculation built
+    # on them, then the family's flags (deduped). A row used by several calcs is
+    # shown once, so the section stays compact.
     if report.annotation_tables:
-        a("## Worksheet — each new calculation with the model's own rows")
+        a("## Worksheet — the model's own rows, then the calculations built on them")
         a("")
-        a("Each block shows the company's source rows in full, then the NEW derived row. "
-          "`*` marks a cell that stands out; the reason follows the table. Inputs are typed model cells.")
+        a("Each section lists the cited workbook rows first, then the NEW calculations "
+          "derived from them. `*` marks a cell that stands out.")
         a("")
-        last_fam = None
+        # group preserving family order
+        fams: list[str] = []
+        by_fam: dict[str, list] = {}
         for t in report.annotation_tables:
-            if t.family != last_fam:
-                a(f"### {t.family}")
-                a("")
-                last_fam = t.family
-            a(f"**{t.title}** — `{t.computation}`")
-            if t.rationale:
-                a(f"*{t.rationale}*")
-            a("")
-            per = t.periods
-            a("| row | " + " | ".join(per) + " |")
-            a("|" + "---|" * (len(per) + 1))
-            for sr in t.source_rows:
-                cells = {c.period: c for c in sr.cells}
+            if t.family not in by_fam:
+                by_fam[t.family] = []
+                fams.append(t.family)
+            by_fam[t.family].append(t)
 
-                def _sv(p):
-                    if p not in cells or cells[p].value is None:
-                        return ""
-                    v = cells[p].value
-                    return f"{v * 100:.0f}%" if sr.is_percent else _fmt_v(v)
-                vals = " | ".join(_sv(p) for p in per)
-                cite = f"{sr.sheet} r{sr.row_index}" if sr.sheet and sr.row_index else ""
-                a(f"| {sr.label[:40].replace('|', '/')} ({cite}) | {vals} |")
-            dr = t.derived_row
-            notes = []
-            if dr is not None:
-                cells = {c.period: c for c in dr.cells}
+        for fam in fams:
+            group = by_fam[fam]
+            per = group[0].periods
+            a(f"### {fam}")
+            a("")
+
+            # the model's own rows, deduped
+            seen: dict[tuple, object] = {}
+            for t in group:
+                for sr in t.source_rows:
+                    seen.setdefault((sr.sheet, sr.row_index, sr.label), sr)
+            sources = sorted(seen.values(), key=lambda s: (s.sheet or "", s.row_index or 0))
+            if sources:
+                a("**From the workbook**")
+                a("")
+                a("| row | cell | " + " | ".join(per) + " |")
+                a("|" + "---|" * (len(per) + 2))
+                for sr in sources:
+                    cells = {c.period: c for c in sr.cells}
+
+                    def _sv(p, _sr=sr, _cells=None):
+                        cc = (_cells or {c.period: c for c in _sr.cells})
+                        if p not in cc or cc[p].value is None:
+                            return ""
+                        v = cc[p].value
+                        return f"{v * 100:.0f}%" if _sr.is_percent else _fmt_v(v)
+                    vals = " | ".join(_sv(p) for p in per)
+                    cite = f"{sr.sheet} r{sr.row_index}" if sr.sheet and sr.row_index else "model"
+                    a(f"| {sr.label[:40].replace('|', '/')} | `{cite}` | {vals} |")
+                a("")
+
+            # calculations
+            a("**Calculations**")
+            a("")
+            a("| calculation | computation | " + " | ".join(per) + " |")
+            a("|" + "---|" * (len(per) + 2))
+            notes: list[str] = []
+            for t in group:
+                dr = t.derived_row
                 row = []
+                cells = {c.period: c for c in dr.cells} if dr else {}
                 for p in per:
                     c = cells.get(p)
                     if c is None or c.value is None:
-                        row.append("")
+                        row.append("·")
                         continue
                     txt = (f"{c.value * 100:.0f}%" if dr.is_percent else _fmt_v(c.value))
                     if c.highlighted:
                         txt = f"**{txt}***"
-                        notes.append(f"{p}: {c.comment}")
+                        notes.append(f"{t.title} · {p}: {c.comment}")
                     row.append(txt)
-                a(f"| **{dr.label[:40].replace('|', '/')} (NEW)** | " + " | ".join(row) + " |")
+                a(f"| **{t.title[:42].replace('|', '/')}** | `{t.computation[:48].replace('|', '/')}` | "
+                  + " | ".join(row) + " |")
             a("")
-            # one-line flag for this calculation
-            ftext, fsev = _table_flag_md(t, _fbi)
-            a(f"> **⚑ {fsev.upper()}:** {ftext}" if fsev else f"> ✓ {ftext}")
+
+            # deduped flags for the family
+            shown: set = set()
+            for t in group:
+                ftext, fsev = _table_flag_md(t, _fbi)
+                key = (ftext, fsev)
+                if fsev and key not in shown:
+                    shown.add(key)
+                    a(f"- **⚑ {fsev.upper()}** ({t.title}): {ftext}")
             a("")
-            for n in notes:
+            for n in notes[:8]:
                 a(f"  - *{n}*")
             if notes:
                 a("")

@@ -96,12 +96,17 @@ class Ctx:
 # ---------------------------------------------------------------------------
 
 def growth(s: dict[str, Optional[float]], periods: list[str],
-           small_base: Optional[float] = None) -> dict[str, Optional[float]]:
+           small_base: Optional[float] = None,
+           positive_only: bool = False) -> dict[str, Optional[float]]:
     out: dict[str, Optional[float]] = {}
     prev: Optional[float] = None
     for p in periods:
         v = s.get(p)
         if v is None or prev is None or abs(prev) < EPS:
+            out[p] = None
+        elif positive_only and (prev <= 0 or v <= 0):
+            # a % growth off a non-positive base is meaningless (and the |prev|
+            # denominator makes sign-flips read as spurious "growth"); suppress
             out[p] = None
         elif small_base is not None and abs(prev) < small_base:
             out[p] = None     # suppressed: base too small to mean anything
@@ -614,9 +619,9 @@ def _grants(ctx: Ctx, out: MetricsResult) -> None:
     out.metrics.append(mk(
         "revenue_ex_grants_growth", "Revenue ex-grants growth",
         applicability="grants mapped", inputs=grant_refs + ctx.refs("revenue_total"),
-        computation="(rev_ex_grants[t] - rev_ex_grants[t-1]) / |rev_ex_grants[t-1]|",
-        series=growth(ex, P), units="x (period growth)",
-        notes="the commercial trajectory once 100%-margin grant revenue is removed"))
+        computation="(rev_ex_grants[t] - rev_ex_grants[t-1]) / rev_ex_grants[t-1], shown only where the prior-year commercial base is positive",
+        series=growth(ex, P, positive_only=True), units="x (period growth)",
+        notes="the commercial growth rate once 100%-margin grant revenue is removed; blank in years where ex-grant revenue is zero or negative (grants exceed total revenue, so there is no commercial base to grow from)"))
     gp = ctx.series("gross_profit")
     if gp:
         gm_ex = combine(P, lambda g, gr, e: (g - gr) / e if abs(e) > EPS else None, gp, grants, ex)

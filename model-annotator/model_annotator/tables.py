@@ -34,6 +34,7 @@ from .structure import StructureResult
 # metric_id -> (family key, human family title). Order here drives report order.
 FAMILIES: list[tuple[str, str]] = [
     ("growth", "Growth"),
+    ("cagr", "Growth"),
     ("margin", "Margins & unit economics"),
     ("runway", "Runway & burn"),
     ("cumulative", "Capital consumed & raised"),
@@ -69,10 +70,14 @@ FAMILIES: list[tuple[str, str]] = [
 
 
 def _family(metric_id: str) -> tuple[str, str]:
+    # most specific (longest) matching key wins, so e.g. "revenue_ex_grants_growth"
+    # maps to Grant dependence (via "revenue_ex_grants") rather than Growth ("growth")
+    best: Optional[tuple[str, str]] = None
     for key, title in FAMILIES:
         if metric_id.startswith(key) or key in metric_id:
-            return key, title
-    return "other", "Other"
+            if best is None or len(key) > len(best[0]):
+                best = (key, title)
+    return best or ("other", "Other")
 
 
 # Headline calcs that always tell the trajectory story (good or bad) and are

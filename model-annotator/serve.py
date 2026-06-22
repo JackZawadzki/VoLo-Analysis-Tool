@@ -153,12 +153,22 @@ table.grid th,table.grid td{padding:5px 9px;text-align:right;white-space:nowrap;
 table.grid th.lab,table.grid td.lab{text-align:left;position:sticky;left:0;background:var(--panel);min-width:210px;max-width:280px;overflow:hidden;text-overflow:ellipsis;font-weight:500}
 table.grid thead th{position:sticky;top:0;background:#efe9dd;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;z-index:1}
 table.grid thead th.lab{z-index:2;background:#efe9dd}
+table.grid td.lab{vertical-align:top}
+tr.subhdr td{background:#f3eee3;border-bottom:1px solid #e4dcc9;padding-top:9px;padding-bottom:7px}
+tr.subhdr td.lab{font-family:Georgia,serif;font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.07em;color:#9a8f78;background:#f3eee3}
+.rl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px}
+.prov{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#b0a489;margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px;cursor:help}
+.cf{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#a89f8c;font-weight:400;margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px;cursor:help}
 tr.src td{color:#5f574b}
-tr.src td.lab{color:#3a3128}
-tr.src td.lab::before{content:"model";float:right;font-size:9px;color:#a99;background:#f0ece2;border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:.04em}
-tr.der td{font-weight:600;color:var(--ink);border-top:2px solid #d8cfbe}
+tr.src td.lab{color:#3a3128;font-weight:500}
+tr.der td{font-weight:600;color:var(--ink);border-top:1px solid #ece4d3}
 tr.der td.lab{color:var(--accent)}
-tr.der td.lab::before{content:"NEW";float:right;font-size:9px;color:#fff;background:var(--accent);border-radius:3px;padding:0 4px;margin-left:6px;letter-spacing:.04em}
+tr.flagrow td{padding:0;border-bottom:1px solid #f0ece2}
+tr.flagrow .wkflag{margin:0;border-radius:0;border-left-width:3px}
+tr.flagrow .chip{margin-left:8px}
 td.inp{color:#1a5fb4}  /* typed input in the model */
 td.hl{border-radius:4px;cursor:help;position:relative;font-weight:700}
 td.hl.s-critical,td.hl.s-high{background:#fbe3dd;color:#9a2415;box-shadow:inset 0 0 0 1px #e8b3a6}
@@ -322,6 +332,97 @@ def _model_level_flags(report):
            if f.id not in attached and f.severity.value in ("critical", "high", "medium")]
     out.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
     return out
+
+
+def _prov(sr) -> tuple[str, str]:
+    """(short provenance shown on the row, full ref for the hover title)."""
+    if sr.sheet and sr.row_index:
+        return f"{sr.sheet} · r{sr.row_index}", f"{sr.sheet}!row {sr.row_index}"
+    for c in sr.cells:
+        if c.ref:
+            return c.ref, c.ref
+    return "model", "from the workbook"
+
+
+def render_family(fam: str, tables: list, findings_by_id=None) -> str:
+    """One section per family: the model's own cited rows ONCE at the top, then
+    every calculation built on them. A row used by several calcs is shown once,
+    so the section stays compact. Source provenance is on a hover."""
+    findings_by_id = findings_by_id or {}
+    o: list[str] = []
+    a = o.append
+    periods = tables[0].periods if tables else []
+    ncol = len(periods) + 1
+
+    # dedupe source rows across all calcs in this family, keep workbook order
+    seen: dict[tuple, object] = {}
+    for t in tables:
+        for sr in t.source_rows:
+            key = (sr.sheet, sr.row_index, sr.label)
+            if key not in seen:
+                seen[key] = sr
+    sources = sorted(seen.values(), key=lambda s: (s.sheet or "", s.row_index or 0))
+
+    a("<div class=scroll><table class=grid><thead><tr>")
+    a("<th class=lab>row</th>")
+    for p in periods:
+        a(f"<th>{e(p)}</th>")
+    a("</tr></thead><tbody>")
+
+    # ---- the model's own rows, once ----
+    if sources:
+        a(f"<tr class=subhdr><td class=lab>From the workbook</td><td colspan={len(periods)}></td></tr>")
+        for sr in sources:
+            short, full = _prov(sr)
+            a(f"<tr class=src><td class=lab><div class=rl title='{e(sr.label)}'>{e(sr.label)}</div>"
+              f"<div class=prov title='{e(full)}'>{e(short)}</div></td>")
+            by_p = {c.period: c for c in sr.cells}
+            for p in periods:
+                c = by_p.get(p)
+                cls = " inp" if (c and c.is_input) else ""
+                tip = f" title='{e(c.ref)}'" if (c and c.ref) else ""
+                a(f"<td class='v{cls}'{tip}>{_cell_text(c.value if c else None, sr.is_percent)}</td>")
+            a("</tr>")
+
+    # ---- calculations built on those rows ----
+    a(f"<tr class=subhdr><td class=lab>Calculations</td><td colspan={len(periods)}></td></tr>")
+    seen_flags: set = set()          # a finding can flag several calcs — show it once
+    any_clean_shown = False
+    for t in tables:
+        dr = t.derived_row
+        a("<tr class=der><td class=lab>"
+          f"<div class=rl title='{e(t.title)}'>{e(t.title)}</div>"
+          f"<div class=cf title='{e(t.computation)}'>{e(t.computation)}</div></td>")
+        by_p = {c.period: c for c in dr.cells} if dr else {}
+        for p in periods:
+            c = by_p.get(p)
+            if c is None or c.value is None:
+                a("<td>·</td>")
+                continue
+            txt = _cell_text(c.value, dr.is_percent)
+            if c.highlighted and c.comment:
+                sev = (c.severity.value if c.severity else "medium")
+                a(f"<td class='hl s-{sev}'>{txt}<span class=tip>{e(c.comment)}</span></td>")
+            else:
+                a(f"<td>{txt}</td>")
+        a("</tr>")
+        # one-line flag, full width under its row — deduped within the family
+        flag_text, flag_sev = _table_flag(t, findings_by_id)
+        key = (flag_text, flag_sev)
+        if flag_sev:
+            if key in seen_flags:
+                continue
+            seen_flags.add(key)
+            color = _SEV_COLOR_STR.get(flag_sev, "#7a5a13")
+            chips = "<span class='chip ll'>LLM-directed</span>" if t.llm_directed else ""
+            a(f"<tr class=flagrow><td colspan={ncol}><div class=wkflag style='border-left-color:{color}'>"
+              f"<b style='color:{color}'>⚑ {flag_sev.upper()}</b> {e(flag_text)}{chips}</div></td></tr>")
+        elif not any_clean_shown:
+            any_clean_shown = True
+            a(f"<tr class=flagrow><td colspan={ncol}><div class='wkflag clean' style='border-left-color:#1a7f4b'>"
+              f"<b style='color:#1a7f4b'>✓</b> <span class=muted>{e(flag_text)}</span></div></td></tr>")
+    a("</tbody></table></div>")
+    return "\n".join(o)
 
 
 def render_annotation_table(t, findings_by_id=None) -> str:
@@ -633,13 +734,13 @@ def render_report(report: Report, filename: str) -> str:
             by_fam[t.family].append(t)
         for fam in fams:
             group = by_fam[fam]
-            sevs = []
+            uniq: dict[tuple, str] = {}        # unique (text, sev) -> sev; matches the deduped display
             for t in group:
-                _, fs = _table_flag(t, findings_by_id)
+                ft, fs = _table_flag(t, findings_by_id)
                 if fs:
-                    sevs.append(fs)
-            worst = min((_SEV_RANK.get(s, 9) for s in sevs), default=9)
-            n_flag = len(sevs)
+                    uniq[(ft, fs)] = fs
+            worst = min((_SEV_RANK.get(s, 9) for s in uniq.values()), default=9)
+            n_flag = len(uniq)
             # badge colored by the worst flag in the family; all collapsed by
             # default so the report is a scannable list you click to expand
             if n_flag:
@@ -650,8 +751,7 @@ def render_report(report: Report, filename: str) -> str:
             a("<details class=famsec>")
             a(f"<summary><span class=famname>{e(fam)}</span> "
               f"<span class=muted>· {len(group)} calc{'s' if len(group) != 1 else ''}</span> {badge}</summary>")
-            for t in group:
-                a(render_annotation_table(t, findings_by_id))
+            a(render_family(fam, group, findings_by_id))
             a("</details>")
 
     # sensitivity — Shapley contribution bars + two-way grid, off the model's own inputs
