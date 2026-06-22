@@ -210,11 +210,14 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .osel{font-size:13px;color:#3a3128;margin:2px 0 12px}
 .osel select{font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:3px 7px;background:#fff}
 /* single magnitude bar per input: length = how far it moves the selected output */
-.shap{display:grid;grid-template-columns:210px 1fr 168px;gap:10px;align-items:center;margin:5px 0;font-size:12.5px}
+.shap{display:grid;grid-template-columns:200px 1fr 150px;gap:10px;align-items:center;margin:5px 0;font-size:12.5px}
+.shap.hascube{grid-template-columns:190px 1fr 124px 98px}   /* extra column for the by-year sparkline */
 .shap .nm{text-align:right;color:#3a3128;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .shap .tk{position:relative;height:16px;background:#f4efe4;border-radius:4px}
 .shap .bar1{position:absolute;left:0;top:2px;height:12px;background:var(--accent);border-radius:3px;min-width:2px;transition:width .15s}
 .shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:left;font-size:11.5px}
+.shap .spark{height:20px}
+.shap .spark svg{display:block}
 /* two-way grid */
 .twoway{margin-top:6px}
 .twoway .sel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;color:var(--muted)}
@@ -626,6 +629,8 @@ def render_tornado(t, idx: int) -> str:
                         f"{e(x['label'])}</option>" for x in cube["outputs"])
         popts = "".join(f"<option value='{e(p)}'{' selected' if p==cube.get('defaultPeriod') else ''}>{e(p)}</option>"
                         for p in cube["periods"])
+        if cube["periods"]:
+            popts += (f"<option value='__cum__'>Cumulative {e(cube['periods'][0])}–{e(cube['periods'][-1])}</option>")
         a(f"<div class=osel>Output: <select class=outsel>{oopts}</select> "
           f"&nbsp; Year: <select class=persel>{popts}</select></div>")
 
@@ -635,16 +640,19 @@ def render_tornado(t, idx: int) -> str:
       "<span class=up>▲ all-favorable: <b class=upv></b></span></div>")
 
     # single bar per input: length = swing of the selected output
+    spark_hdr = (" <span class=muted style='font-weight:400'>· the mini chart is that input's effect by year</span>"
+                 if cube else "")
     a("<div class=subh>How far each input moves the <span class=outname>output</span> "
-      "<span class=muted style='font-weight:400'>(sorted by impact)</span></div>")
+      f"<span class=muted style='font-weight:400'>(sorted by impact)</span>{spark_hdr}</div>")
     a("<div class=shapbars>")
     drv = cube["drivers"] if cube else [{"key": d.key, "label": d.label, "refs": d.input_refs} for d in t.drivers]
     for d in drv:
         refs = d.get("refs") if cube else d["refs"]
-        a(f"<div class=shap data-key='{e(d['key'])}'>"
+        spark = "<div class=spark></div>" if cube else ""
+        a(f"<div class='shap{' hascube' if cube else ''}' data-key='{e(d['key'])}'>"
           f"<div class=nm title='model cell {e(', '.join(refs))}'>{e(d['label'])}</div>"
           f"<div class=tk><div class=bar1></div></div>"
-          f"<div class=vv></div></div>")
+          f"<div class=vv></div>{spark}</div>")
     a("</div>")
 
     # two-way grid
@@ -737,12 +745,16 @@ function maSpec(torn){
   const out=(torn.querySelector('.outsel')||{}).value||cube.defaultOutput||cube.outputs[0].key;
   const per=(torn.querySelector('.persel')||{}).value||cube.defaultPeriod||cube.periods[cube.periods.length-1];
   const olabel=(cube.outputs.find(x=>x.key===out)||{}).label||out;
-  const base=((cube.base[out]||{})[per]);
+  const cum=per==='__cum__', PS=cube.periods;
+  const base=cum?PS.reduce((s,p)=>s+(((cube.base[out]||{})[p])||0),0):((cube.base[out]||{})[per]);
   const drivers=cube.drivers.map(d=>{
-    const cell=((d.out[out]||{})[per])||{low:base,high:base};
-    return {key:d.key,label:d.label,base:d.value,low:d.value*0.8,high:d.value*1.2,outLow:cell.low,outHigh:cell.high};
+    let lo,hi;
+    if(cum){lo=0;hi=0;PS.forEach(p=>{const c=(d.out[out]||{})[p];if(c){lo+=c.low;hi+=c.high;}});}
+    else{const cell=((d.out[out]||{})[per])||{low:base,high:base};lo=cell.low;hi=cell.high;}
+    return {key:d.key,label:d.label,base:d.value,low:d.value*0.8,high:d.value*1.2,outLow:lo,outHigh:hi};
   });
-  return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,period:per,drivers:drivers,selA:raw.selA,selB:raw.selB,
+  const plabel=cum?('Cumulative '+PS[0]+'–'+PS[PS.length-1]):per;
+  return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,period:plabel,drivers:drivers,selA:raw.selA,selB:raw.selB,
           defaults:Object.fromEntries(drivers.map(d=>[d.key,{low:d.low,high:d.high}]))};
 }
 function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
@@ -773,7 +785,22 @@ function maImpacts(torn,spec,cur){
   });
 }
 function maColor(t){const r=t<0.5?210:Math.round(210-(t-0.5)*2*180),g=t<0.5?Math.round(60+t*2*130):190,b=70;return `rgb(${r},${g},${b})`;}
+// per-input sparkline: how far this input moves the selected output in EACH year
+function maSparks(torn,cube,out,per){
+  const PS=cube.periods,W=90,H=18,bw=W/PS.length;
+  cube.drivers.forEach(d=>{
+    const row=torn.querySelector('.shap[data-key="'+CSS.escape(d.key)+'"]');if(!row)return;
+    const sp=row.querySelector('.spark');if(!sp)return;
+    const sw=PS.map(p=>{const c=(d.out[out]||{})[p];return c?Math.abs(c.high-c.low):0;});
+    const mx=Math.max(...sw,1e-9);
+    let s='<svg width="'+W+'" height="'+H+'" role=img>';
+    sw.forEach((v,i)=>{const h=Math.max(1,v/mx*(H-2));const sel=(per!=='__cum__'&&PS[i]===per);
+      s+='<rect x="'+(i*bw+1).toFixed(1)+'" y="'+(H-h).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+(sel?'#9c4221':'#d3c6ad')+'"><title>'+PS[i]+': '+maFmt(v)+'</title></rect>';});
+    sp.innerHTML=s+'</svg>';
+  });
+}
 function maRender(torn){
+  const raw=JSON.parse(torn.querySelector('script.spec').textContent);
   const spec=maSpec(torn);
   const cur=maRanges(torn);
   const oname=spec.outLabel||((spec.outNames||['output'])[(spec.outNames||[]).length-1]||'output');
@@ -794,6 +821,7 @@ function maRender(torn){
   eff.forEach(e=>{const row=box.querySelector('.shap[data-key="'+CSS.escape(e.key)+'"]');if(!row)return;box.appendChild(row);
     row.querySelector('.bar1').style.width=(e.swing/maxs*100)+'%';
     row.querySelector('.vv').textContent=maFmt(Math.min(e.lo,e.hi))+' → '+maFmt(Math.max(e.lo,e.hi));});
+  if(raw.formula==='cube'){const o=(torn.querySelector('.outsel')||{}).value||raw.cube.defaultOutput;const pr=(torn.querySelector('.persel')||{}).value||raw.cube.defaultPeriod;maSparks(torn,raw.cube,o,pr);}
   maImpacts(torn,spec,cur);
   // two-way grid
   const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
