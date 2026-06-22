@@ -694,6 +694,26 @@ def build_mapping(
         it.instance = it.label.strip()[:40]
         it.evidence = f"numeric row under section {it.section!r} within revenue magnitude band"
 
+    # De-duplicate multi-instance rows that are echoes of each other: the same
+    # canonical id with the same instance label AND an identical value series is
+    # the same line repeated (e.g. a revenue segment shown in the income
+    # statement and again in a per-segment summary). Keep the one with the most
+    # formula cells (the live one); demote the rest so they aren't double-counted.
+    from collections import defaultdict
+    groups: dict[tuple, list[LineItem]] = defaultdict(list)
+    for it in res.items:
+        if it.canonical_id in ("revenue_segment", "cogs_component", "opex_component") and not it.demoted:
+            sig = tuple(round(v, 4) if v is not None else None for v in it.values)
+            inst = (it.instance or it.label.strip()).lower()
+            groups[(it.sheet, it.canonical_id, inst, sig)].append(it)
+    for dupes in groups.values():
+        if len(dupes) > 1:
+            keep = max(dupes, key=lambda it: (it.n_formula, -it.index))
+            for it in dupes:
+                if it is not keep:
+                    it.demoted = True
+                    it.evidence += "; demoted: duplicate echo of the same line"
+
     # Unmapped bucket: numeric rows on statement-role sheets that didn't map.
     for it in res.items:
         if it.canonical_id is None and it.n_numeric >= 2:

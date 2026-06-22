@@ -75,25 +75,29 @@ def _family(metric_id: str) -> tuple[str, str]:
     return "other", "Other"
 
 
-# Signature analyst rows: always worth a full worksheet table when present,
-# even with no highlight firing (they're the rows an analyst adds by hand).
-_SIGNATURE = {
-    "revenue_growth", "gross_margin", "gross_margin_ex_grants", "ebitda_margin",
-    "opex_over_revenue", "grant_share_of_revenue", "revenue_ex_grants",
-    "revenue_ex_grants_growth", "runway_forward_months", "runway_same_period_months",
-    "cushion_ratio", "cash_conversion", "terminal_concentration",
-    "payroll_over_revenue", "ar_over_revenue", "ar_over_beginning_cash",
-    "operational_contracted_ratio", "ebitda_before_expensed_capex",
+# Headline calcs that always tell the trajectory story (good or bad) and are
+# worth showing even with no flag firing. Everything else must earn its place
+# by carrying a flag (a highlight or a finding) — so the report stays selective:
+# every block reveals something, nothing is filler.
+_HEADLINE = {
+    "revenue_growth", "revenue_cagr", "gross_margin", "ebitda_margin",
+    "opex_over_revenue", "grant_share_of_revenue", "revenue_ex_grants_growth",
+    "runway_forward_months", "burn_multiple", "cash_conversion",
+    "terminal_concentration", "cushion_ratio", "rule_of_40",
+    "operational_contracted_ratio",
 }
-_SIGNATURE_PREFIX = ("segment_growth", "segment_gross_margin", "segment_cogs_ratio",
-                     "market_share_recomputed", "segment_share")
 
 
 def _worth_a_table(t: AnnotationTable) -> bool:
-    mid = t.metric_id
-    return bool(
-        t.n_highlights or t.related_finding_ids or t.llm_directed
-        or mid in _SIGNATURE or mid.startswith(_SIGNATURE_PREFIX))
+    # A calc earns a place only if it reveals something: a finding, a genuinely
+    # notable standout (high/critical — not a routine medium "largest jump"), an
+    # LLM-directed company-specific calc, or a headline trajectory metric.
+    strong_hl = t.derived_row is not None and any(
+        c.highlighted and c.severity is not None and c.severity.value in ("critical", "high")
+        for c in t.derived_row.cells)
+    return bool(t.related_finding_ids or strong_hl or t.llm_directed
+                or t.metric_id in _HEADLINE
+                or t.metric_id.startswith("market_share_recomputed"))
 
 
 def _is_percentish(m: DerivedMetric) -> bool:

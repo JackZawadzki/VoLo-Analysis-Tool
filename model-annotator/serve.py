@@ -127,14 +127,25 @@ details summary{cursor:pointer;font-weight:600;color:var(--muted)}
 .err{background:#fdecec;border:1px solid #f3b9b9;color:#7a1414;padding:14px 18px;border-radius:10px;white-space:pre-wrap;font-family:monospace;font-size:12.5px}
 .spin{display:none;margin-top:14px;color:var(--muted)}
 .fld{scroll-margin-top:14px}
-/* analyst worksheet tables */
-.fam{font-family:Georgia,serif;font-size:18px;font-weight:600;margin:26px 0 4px}
-.wk{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:12px 0;overflow:hidden}
-.wk-h{padding:13px 16px 11px;border-bottom:1px solid var(--line)}
+/* analyst worksheet — collapsible family sections */
+.famsec{margin:12px 0;border:1px solid var(--line);border-radius:12px;background:#fbf8f2;overflow:hidden}
+.famsec>summary{cursor:pointer;list-style:none;padding:14px 18px;font-family:Georgia,serif;font-size:17px;
+  font-weight:600;display:flex;align-items:center;gap:10px;user-select:none}
+.famsec>summary::-webkit-details-marker{display:none}
+.famsec>summary::before{content:"▸";color:var(--muted);font-size:13px;transition:transform .15s}
+.famsec[open]>summary::before{transform:rotate(90deg)}
+.famsec[open]>summary{border-bottom:1px solid var(--line)}
+.famsec .famname{color:var(--ink)}
+.fambadge{font-family:-apple-system,sans-serif;font-size:11px;font-weight:600;color:#fff;border-radius:999px;
+  padding:2px 10px;margin-left:auto}
+.famsec>.wk:first-of-type{margin-top:12px}
+.wk{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:12px 16px;overflow:hidden}
+.wk-h{padding:13px 16px 12px;border-bottom:1px solid var(--line)}
 .wk-h .t{font-weight:600;font-size:15px}
-.wk-h .why{color:var(--muted);font-size:13px;margin-top:3px}
-.wk-h .comp{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11.5px;color:#7d756a;background:#f0ebe0;padding:1px 6px;border-radius:4px;display:inline-block;margin-top:6px}
-.wk-h .chip{display:inline-block;font-size:11px;color:#7a3d12;background:#f3e3d6;border:1px solid #e6cdba;border-radius:999px;padding:1px 8px;margin:6px 6px 0 0}
+.wk-h .why{color:var(--muted);font-size:13px;margin-top:3px;line-height:1.5}
+.wk-h .comp{color:#9a9080;font-size:11.5px;margin-top:5px}
+.wk-h .comp .fx{font-family:"SF Mono",Menlo,Consolas,monospace;color:#7d756a}
+.wk-h .chip{display:inline-block;font-size:11px;color:#7a3d12;background:#f3e3d6;border:1px solid #e6cdba;border-radius:999px;padding:1px 8px;margin:6px 6px 0 0;text-decoration:none}
 .wk-h .chip.ll{color:#27506b;background:#dceaf3;border-color:#bcd7e6}
 .scroll{overflow-x:auto}
 table.grid{border-collapse:collapse;font-size:12.5px;min-width:100%}
@@ -175,14 +186,14 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .torn .duo .up{color:#1a7f4b}
 .subh{font-family:Georgia,serif;font-size:14px;font-weight:600;margin:14px 0 8px;color:#3a3128}
 /* shapley bars: zero line in the middle, negative left (red), positive right (green) */
-.shap{display:grid;grid-template-columns:190px 1fr 110px;gap:8px;align-items:center;margin:5px 0;font-size:12.5px}
+.shap{display:grid;grid-template-columns:200px 1fr 188px;gap:10px;align-items:center;margin:5px 0;font-size:12.5px}
 .shap .nm{text-align:right;color:#3a3128;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.shap .tk{position:relative;height:20px;background:#f4efe4;border-radius:4px}
-.shap .zero{position:absolute;left:50%;top:-2px;bottom:-2px;width:1px;background:#b3a892}
-.shap .bar{position:absolute;top:3px;height:14px;border-radius:3px}
-.shap .bar.neg{background:linear-gradient(90deg,#b11226,#d9730d)}
-.shap .bar.pos{background:linear-gradient(90deg,#5fae7f,#1a7f4b)}
-.shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right}
+.shap .tk{position:relative;height:18px;background:#f4efe4;border-radius:4px}
+.shap .zero{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:#b3a892;z-index:2}
+.shap .bar{position:absolute;top:3px;height:12px}
+.shap .bar.dn{background:#c4543a;border-radius:3px 0 0 3px}
+.shap .bar.up{background:#5a9e74;border-radius:0 3px 3px 0}
+.shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:left;font-size:11.5px}
 /* two-way grid */
 .twoway{margin-top:6px}
 .twoway .sel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;color:var(--muted)}
@@ -321,7 +332,7 @@ def render_annotation_table(t, findings_by_id=None) -> str:
     a(f"<div class=t>{e(t.title)}</div>")
     if t.rationale:
         a(f"<div class=why>{e(t.rationale)}</div>")
-    a(f"<div class=comp>{e(t.computation)}</div>")
+    a(f"<div class=comp>computed as <span class=fx>{e(t.computation)}</span></div>")
     if t.llm_directed:
         a("<span class='chip ll'>LLM-directed</span>")
     for fid in t.related_finding_ids:
@@ -392,12 +403,15 @@ def render_tornado(t, idx: int) -> str:
     a(f"<div class=duo><span class=dn>▼ all-adverse: <b class=dnv>{_cell_text(t.downside, False)}</b></span>"
       f"<span class=up>▲ all-favorable: <b class=upv>{_cell_text(t.upside, False)}</b></span></div>")
 
-    # Shapley contribution bars (signed: red = pulls the output down)
-    a("<div class=subh>Contribution to the downside (Shapley)</div>")
+    # Two-sided tornado bars: red = output at the adverse end, green = favorable
+    a("<div class=subh>How far each input moves the output "
+      "<span class=muted style='font-weight:400'>(▼ adverse · ▲ favorable, sorted by swing)</span></div>")
     a("<div class=shapbars>")
     for d in t.drivers:
-        a(f"<div class=shap data-key='{e(d.key)}'><div class=nm title='{e(', '.join(d.input_refs))}'>{e(d.label)}</div>"
-          f"<div class=tk><div class=zero></div><div class=bar></div></div><div class=vv></div></div>")
+        a(f"<div class=shap data-key='{e(d.key)}'>"
+          f"<div class=nm title='model cell {e(', '.join(d.input_refs))}'>{e(d.label)}</div>"
+          f"<div class=tk><div class=zero></div><div class='bar dn'></div><div class='bar up'></div></div>"
+          f"<div class=vv></div></div>")
     a("</div>")
 
     # Two-way grid
@@ -479,16 +493,23 @@ function maRender(torn){
   const du=maDownUp(spec,cur);
   torn.querySelector('.dnv').textContent=maFmt(du.dn);
   torn.querySelector('.upv').textContent=maFmt(du.up);
-  // shapley bars
-  const phi=maShapley(spec,cur);
-  const maxabs=Math.max(...Object.values(phi).map(Math.abs),1e-9);
+  // two-sided tornado bars: each input's output at its adverse end (red, left
+  // of base) and favorable end (green, right of base), centered on the base.
+  const eff=spec.drivers.map(d=>{
+    const lo=maEval(spec,{[d.key]:cur[d.key].lo});
+    const hi=maEval(spec,{[d.key]:cur[d.key].hi});
+    const adv=d.adverse==='high'?hi:lo, fav=d.adverse==='high'?lo:hi;
+    return {key:d.key,adv,fav,swing:Math.abs(hi-lo)};
+  });
+  const maxd=Math.max(...eff.map(e=>Math.max(Math.abs(e.adv-base),Math.abs(e.fav-base))),1e-9);
   const box=torn.querySelector('.shapbars');
-  const sorted=spec.drivers.slice().sort((a,b)=>Math.abs(phi[b.key])-Math.abs(phi[a.key]));
-  sorted.forEach(d=>{const row=box.querySelector(`.shap[data-key="${CSS.escape(d.key)}"]`);box.appendChild(row);
-    const v=phi[d.key];const bar=row.querySelector('.bar');const frac=Math.abs(v)/maxabs*50;
-    if(v<0){bar.className='bar neg';bar.style.right='50%';bar.style.left='';bar.style.width=frac+'%';}
-    else{bar.className='bar pos';bar.style.left='50%';bar.style.right='';bar.style.width=frac+'%';}
-    row.querySelector('.vv').textContent=maFmt(v);});
+  eff.sort((a,b)=>b.swing-a.swing);
+  eff.forEach(e=>{const row=box.querySelector(`.shap[data-key="${CSS.escape(e.key)}"]`);box.appendChild(row);
+    const dn=row.querySelector('.bar.dn'), up=row.querySelector('.bar.up');
+    const dpct=Math.abs(e.adv-base)/maxd*50, upct=Math.abs(e.fav-base)/maxd*50;
+    dn.style.right='50%';dn.style.width=dpct+'%';
+    up.style.left='50%';up.style.width=upct+'%';
+    row.querySelector('.vv').textContent='▼ '+maFmt(e.adv)+'  ▲ '+maFmt(e.fav);});
   // two-way grid
   const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
   const B=spec.drivers.find(d=>d.key===torn.querySelector('.selB').value)||spec.drivers[0];
@@ -592,30 +613,57 @@ def render_report(report: Report, filename: str) -> str:
             a("</ul>")
         a("</div>")
 
-    # analyst worksheet — each calculation with its source rows AND its own flag line
+    # analyst worksheet — each calculation with its source rows AND its own flag line,
+    # grouped into collapsible family sections
     findings_by_id = {f.id: f for f in report.findings}
     tables = report.annotation_tables
     if tables:
         a("<h2>Worksheet <span class=muted style='font-weight:400;font-size:14px'>"
           "— each calculation with the model's own rows, and what it flags</span></h2>")
-        a("<p class=legend>Each block shows the company's <b style='color:#5f574b'>model rows</b> "
-          "and the <b>NEW</b> derived row beneath them, then a one-line <b>flag</b> for that calculation. "
-          "Highlighted cells are values that stand out — <b>hover</b> for why.</p>")
-        last_fam = None
+        a("<p class=legend>Each calculation shows the company's <b style='color:#5f574b'>model rows</b> "
+          "(hover any value for its exact <code>Sheet!Cell</code>) and the <b>NEW</b> derived row, then a "
+          "one-line flag. Click a section to expand it.</p>")
+        # group preserving family order
+        fams: list[str] = []
+        by_fam: dict[str, list] = {}
         for t in tables:
-            if t.family != last_fam:
-                a(f"<div class=fam>{e(t.family)}</div>")
-                last_fam = t.family
-            a(render_annotation_table(t, findings_by_id))
+            if t.family not in by_fam:
+                by_fam[t.family] = []
+                fams.append(t.family)
+            by_fam[t.family].append(t)
+        for fam in fams:
+            group = by_fam[fam]
+            sevs = []
+            for t in group:
+                _, fs = _table_flag(t, findings_by_id)
+                if fs:
+                    sevs.append(fs)
+            worst = min((_SEV_RANK.get(s, 9) for s in sevs), default=9)
+            n_flag = len(sevs)
+            # badge colored by the worst flag in the family; all collapsed by
+            # default so the report is a scannable list you click to expand
+            if n_flag:
+                bcolor = _SEV_COLOR_STR["high"] if worst <= 1 else _SEV_COLOR_STR["medium"]
+                badge = f"<span class=fambadge style='background:{bcolor}'>{n_flag} flag{'s' if n_flag != 1 else ''}</span>"
+            else:
+                badge = "<span class=fambadge style='background:#1a7f4b'>clean</span>"
+            a("<details class=famsec>")
+            a(f"<summary><span class=famname>{e(fam)}</span> "
+              f"<span class=muted>· {len(group)} calc{'s' if len(group) != 1 else ''}</span> {badge}</summary>")
+            for t in group:
+                a(render_annotation_table(t, findings_by_id))
+            a("</details>")
 
     # sensitivity — Shapley contribution bars + two-way grid, off the model's own inputs
     if report.sensitivities:
         a("<h2>Sensitivity <span class=muted style='font-weight:400;font-size:14px'>"
-          "— what moves the output, and what happens if two inputs move together</span></h2>")
-        a("<p class=legend>Drivers are the model's <b>own input cells</b>, decomposed to every line item. "
-          "The <b>Shapley bars</b> attribute the swing from the base case to an all-adverse case across the "
-          "inputs (red pulls the output down). The <b>two-way grid</b> lets you flex any two at once. "
-          "Edit the input ranges to re-run it live.</p>")
+          "— how the outputs move when you change the model's inputs</span></h2>")
+        a("<p class=legend>Each input below is one of the model's <b>own cells</b> (hover a bar for its "
+          "<code>Sheet!Cell</code>). For each output there are two views: the <b>tornado</b> shows how far "
+          "that output moves when each input swings across its range — <span style='color:#c4543a'>red = the "
+          "adverse end</span>, <span style='color:#5a9e74'>green = the favorable end</span> (so you see both "
+          "directions, not just downside); the <b>two-way grid</b> lets you move <i>two</i> inputs at once and "
+          "reads the output as a red→green heatmap. Edit any input's range and both views re-run live.</p>")
         for i, t in enumerate(report.sensitivities):
             a(render_tornado(t, i))
             for cav in t.caveats:

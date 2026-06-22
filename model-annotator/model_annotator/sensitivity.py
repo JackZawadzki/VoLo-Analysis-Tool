@@ -28,7 +28,7 @@ from .schema import SensitivityDriver, Tornado
 from .structure import StructureResult
 
 DEFAULT_PCT = 0.20
-MAX_SHAPLEY_DRIVERS = 12     # exact Shapley caps here; linear outputs use the closed form
+MAX_DRIVERS = 8             # keep the chart legible — show the inputs that move it most
 
 
 @dataclass
@@ -213,7 +213,8 @@ def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
                 ol = _eval_linear(specs, {s.key: s.low()})
                 oh = _eval_linear(specs, {s.key: s.high()})
                 drivers.append(_mk_driver(s, ol, oh, shap[s.key]))
-            drivers.sort(key=lambda d: -abs(d.shapley))
+            drivers.sort(key=lambda d: -max(abs(d.shapley), d.swing))
+            drivers = drivers[:MAX_DRIVERS]
             out.append(Tornado(
                 output_key="terminal_ebitda", output_label=f"Terminal EBITDA ({tp})",
                 output_unit=U, output_base=base_out, formula="linear_sum",
