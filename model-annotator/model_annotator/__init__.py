@@ -174,6 +174,18 @@ def annotate(
     if llm.disabled_reason and not no_llm:
         limitations.append(f"LLM assist unavailable ({llm.disabled_reason}); heuristics-only run.")
 
+    # a cross-sheet scale gap is surfaced as a quiet transparency note, never a
+    # model flag (it usually reflects the tool's unit detection, not a real error)
+    for t in integrity.tie_outs:
+        if t.id.startswith("mirror_") and getattr(t.status, "value", t.status) == "failed" \
+                and "units inconsistency" in (t.detail or ""):
+            limitations.append(
+                "Units check: two sheets carry the same line at a ~1000x different scale; the tool "
+                "reconciled to the primary statement's units for all metrics. If a cross-sheet link is "
+                "genuinely mixing thousands and whole dollars, verify it — but this is not flagged as a "
+                "model error.")
+            break
+
     if not any(structure.axes.get(name) for name in wbd.sheet_order):
         limitations.insert(0, (
             "No period axis found on any sheet: this looks like a point-estimate / "

@@ -43,17 +43,24 @@ _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "info": 3}
 
 
 def _table_flag_md(t, findings_by_id):
+    # mirrors serve._table_flag: a calc's own high/critical standout wins, then a
+    # related finding, then a medium standout (structural findings filtered upstream)
+    own = []
+    if t.derived_row:
+        for c in t.derived_row.cells:
+            if c.highlighted and c.comment:
+                own.append((c.severity.value if c.severity else "medium", c.comment))
+        own.sort(key=lambda x: _SEV_RANK.get(x[0], 9))
+    if own and _SEV_RANK.get(own[0][0], 9) <= 1:
+        return (own[0][1], own[0][0])
     related = [findings_by_id[i] for i in t.related_finding_ids if i in findings_by_id]
     related.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
     if related:
         f = related[0]
         q = f" — {f.management_question}" if f.management_question else ""
         return (f"{f.title}{q}", f.severity.value)
-    if t.derived_row:
-        hl = [c for c in t.derived_row.cells if c.highlighted and c.comment]
-        hl.sort(key=lambda c: _SEV_RANK.get(c.severity.value if c.severity else "info", 9))
-        if hl:
-            return (hl[0].comment, hl[0].severity.value if hl[0].severity else "medium")
+    if own:
+        return (own[0][1], own[0][0])
     return ("No flags — this calculation looks clean.", None)
 
 

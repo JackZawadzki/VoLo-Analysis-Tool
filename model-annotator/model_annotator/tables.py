@@ -179,10 +179,17 @@ def build_annotation_tables(
     by_key, ref_to_key = _row_index(mapping)
     is_input = _kind_lookup(structure)
 
+    # Structural / tool-coverage findings are about the WORKBOOK as a whole, not
+    # any one calculation — they must never become a calc's flag (they belong in
+    # Model-level flags). A calc's flag should be about that calc's own behaviour.
+    _MODEL_LEVEL_ONLY = {"unit_scale_inconsistency", "data_quality", "arithmetic_integrity"}
+
     # finding lookup: metric_id-or-row -> finding ids
     fk_by_metric: dict[str, list[str]] = {}
     fk_by_ref: dict[str, list[str]] = {}
     for f in findings.findings:
+        if f.category in _MODEL_LEVEL_ONLY:
+            continue
         if f.quantified_impact and f.quantified_impact.metric:
             base = f.quantified_impact.metric.split("[")[0]
             fk_by_metric.setdefault(base, []).append(f.id)

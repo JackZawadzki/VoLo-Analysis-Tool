@@ -166,18 +166,13 @@ def _rule_missing_cached(ctx: FCtx, cands: list[Candidate]) -> None:
 
 
 def _rule_units_inconsistency(ctx: FCtx, cands: list[Candidate]) -> None:
-    for t in ctx.integrity.tie_outs:
-        if t.id.startswith("mirror_") and t.status == TieOutStatus.failed and "units inconsistency" in t.detail:
-            cands.append(Candidate(
-                category="unit_scale_inconsistency",
-                severity=Severity.high,
-                title="Sheets disagree on units by a consistent factor",
-                narrative=t.detail,
-                management_question=("Which sheets are in thousands and which in whole dollars? "
-                                     "A mixed-units link can silently inflate or deflate a statement 1000x."),
-                evidence=t.evidence,
-                confidence=0.85,
-            ))
+    # Intentionally emits NO finding. A cross-sheet scale gap is almost always
+    # the tool's own unit-detection being unsure on one sheet, not an error in
+    # the business plan — and the user has been clear that flags must be about
+    # the model itself, never the tool's confusion. The scale gap still shows
+    # transparently in the Tie-outs table and as a limitation (see __init__),
+    # so nothing is hidden; it just isn't presented as a model flag.
+    return
 
 
 def _rule_grant_dependence(ctx: FCtx, cands: list[Candidate]) -> None:

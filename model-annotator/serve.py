@@ -215,8 +215,24 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .grid2 .cap{font-size:11px;color:var(--muted);margin:6px 0 2px}
 .ranges{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .ranges table{width:100%;font-size:12.5px}
-.ranges input[type=number]{width:64px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
+.ranges input[type=number]{width:82px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
 .ranges .rcite{font-family:"SF Mono",Menlo,monospace;font-size:10.5px;color:#8a7f6f}
+.rhint{font-size:12px;color:#5f574b;margin:8px 0 12px;line-height:1.5}
+.rhint b{color:var(--ink)}
+.rtbl{width:100%;border-collapse:collapse;font-size:12.5px}
+.rtbl th,.rtbl td{padding:6px 8px;border-bottom:1px solid #f0ece2;vertical-align:middle}
+.rtbl th{color:var(--muted);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;text-align:right;white-space:nowrap}
+.rtbl th.l,.rtbl td.l{text-align:left}
+.rtbl th.oimph{text-align:center;color:#3a3128;background:#f6f1e8;border-bottom:2px solid #e4dcc9}
+.rtbl td.rbase{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.rtbl .rl{font-weight:500;color:#3a3128;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oimp{text-align:center;white-space:nowrap;font-variant-numeric:tabular-nums;background:#fcfaf5}
+.oimp .iv{font-weight:700}
+.oimp .iv.dn{color:#b11226}
+.oimp .iv.up{color:#1a7f4b}
+.oimp .iar{color:#c0b59c;margin:0 6px}
+.oimp .idl{font-size:10.5px;color:var(--muted);margin-top:2px}
+.oimp .nochg{color:#c5bca8;font-size:11px}
 .ranges button{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px;margin-top:8px}
 .ranges details summary{cursor:pointer;color:var(--muted);font-size:12.5px;margin-top:8px}
 /* progress bar */
@@ -304,22 +320,40 @@ _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "info": 3}
 
 
 def _table_flag(t, findings_by_id):
-    """One-sentence flag summary for a worksheet calculation: (text, severity|None)."""
+    """One-sentence flag for a worksheet calculation: (text, severity|None).
+
+    Priority is built around the user's rule that a calc's flag must be about
+    THAT calc: a high/critical standout in the calc's own row wins first (it is
+    intrinsically about this number's behaviour), then a related finding, then a
+    medium own standout. Structural/units findings never reach here (filtered in
+    tables.py), so a flag is always either the calc's own story or a real,
+    calc-specific finding — never the tool's unit confusion."""
+    own = []
+    if t.derived_row:
+        for c in t.derived_row.cells:
+            if c.highlighted and c.comment:
+                sev = c.severity.value if c.severity else "medium"
+                own.append((sev, c.comment))
+        own.sort(key=lambda x: _SEV_RANK.get(x[0], 9))
+
+    def own_flag():
+        sev, comment = own[0]
+        extra = f" (+{len(own) - 1} more period{'s' if len(own) > 2 else ''})" if len(own) > 1 else ""
+        return (comment + extra, sev)
+
+    # 1) the calc's own high/critical standout — most specific to this number
+    if own and _SEV_RANK.get(own[0][0], 9) <= 1:
+        return own_flag()
+    # 2) a related, calc-specific finding (has a management question)
     related = [findings_by_id[i] for i in t.related_finding_ids if i in findings_by_id]
     related.sort(key=lambda f: _SEV_RANK.get(f.severity.value, 9))
     if related:
         f = related[0]
         q = f" — {f.management_question}" if f.management_question else ""
         return (f"{f.title}{q}", f.severity.value)
-    # else summarize the standout cells on the derived row
-    if t.derived_row:
-        hl = [c for c in t.derived_row.cells if c.highlighted and c.comment]
-        if hl:
-            order = {"critical": 0, "high": 1, "medium": 2, None: 3}
-            hl.sort(key=lambda c: order.get(c.severity.value if c.severity else None, 3))
-            sev = hl[0].severity.value if hl[0].severity else "medium"
-            extra = f" (+{len(hl) - 1} more period{'s' if len(hl) > 2 else ''})" if len(hl) > 1 else ""
-            return (hl[0].comment + extra, sev)
+    # 3) a medium own standout
+    if own:
+        return own_flag()
     return ("No flags — this calculation looks clean.", None)
 
 
@@ -525,21 +559,36 @@ def render_tornado(t, idx: int) -> str:
       f"<span class=muted>green = higher {e(t.output_label.lower())}, red = lower</span></div>")
     a("<div class=gridbox></div></div>")
 
-    # editable ranges (drives both views)
-    a("<div class=ranges><details><summary>Edit input ranges (defaults: ±20% / benchmark)</summary>"
-      "<table><tr><th style='text-align:left'>input</th><th>cell</th>"
-      "<th>base</th><th>low</th><th>high</th></tr>")
+    # the model's key OUTPUTS this section reports impact on: for the income
+    # statement, both Revenue and EBITDA move; for the valuation, the PV moves
+    out_names = ["Revenue", "EBITDA"] if t.formula == "linear_sum" else ["Valuation"]
+
+    # editable ranges — AND a live readout of how each input moves the outputs
+    a("<div class=ranges><details open>"
+      "<summary>Edit input ranges — and see how each input moves the model's outputs</summary>")
+    a("<div class=rhint>Flex any input's low/high. Each cell is the resulting output when that one "
+      "input sits at its <b>low → high</b> end (everything else at base); <b>Δ</b> is the swing from "
+      "base. <span class=muted>Red = output falls, green = output rises.</span></div>")
+    a("<table class=rtbl><thead><tr><th class=l>input (model cell)</th><th>base</th><th>low</th><th>high</th>")
+    for nm in out_names:
+        a(f"<th class=oimph>{e(nm)} <span class=muted>(low → high)</span></th>")
+    a("</tr></thead><tbody>")
     for d in t.drivers:
+        is_frac = d.unit == 'fraction'
         a(f"<tr data-key='{e(d.key)}'>"
-          f"<td style='text-align:left'>{e(d.label)}</td>"
-          f"<td class=rcite>{e(', '.join(d.input_refs))}</td>"
-          f"<td style='text-align:right'>{_cell_text(d.base, d.unit=='fraction')}</td>"
+          f"<td class=l><div class=rl>{e(d.label)}</div>"
+          f"<div class=rcite>{e(', '.join(d.input_refs))}</div></td>"
+          f"<td class=rbase>{_cell_text(d.base, is_frac)}</td>"
           f"<td><input type=number class=lo step=any value='{round(d.low,6)}'></td>"
-          f"<td><input type=number class=hi step=any value='{round(d.high,6)}'></td></tr>")
-    a("</table><button class=reset>Reset ranges</button></details></div>")
+          f"<td><input type=number class=hi step=any value='{round(d.high,6)}'></td>")
+        for _ in out_names:
+            a("<td class=oimp></td>")
+        a("</tr>")
+    a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
     spec = {
         "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
+        "outNames": out_names,
         "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
                      "coef": d.coef,
                      "adverse": ("high" if (t.formula == "valuation_pv" and d.key == "rate")
@@ -582,6 +631,32 @@ function maShapley(spec,cur){
   return phi;
 }
 function maDownUp(spec,cur){const dn={},up={};spec.drivers.forEach(d=>{dn[d.key]=maAdv(d,cur);up[d.key]=maFav(d,cur);});return {dn:maEval(spec,dn),up:maEval(spec,up)};}
+function maOutFns(spec){
+  // the model's key outputs. valuation: PV. income statement: Revenue (sum of
+  // positive-coef inputs) AND EBITDA (the full net), so an analyst sees both.
+  const nm=spec.outNames||[];
+  if(spec.formula==='valuation_pv') return [{name:nm[0]||'Output',fn:v=>maEval(spec,v)}];
+  return [
+    {name:nm[0]||'Revenue',fn:v=>{let s=0;spec.drivers.forEach(d=>{if(d.coef>0)s+=d.coef*maGet(spec,v,d.key);});return s;}},
+    {name:nm[1]||'EBITDA',fn:v=>maEval(spec,v)},
+  ];
+}
+function maImpacts(torn,spec,cur){
+  const fns=maOutFns(spec);
+  spec.drivers.forEach(d=>{
+    const tr=torn.querySelector('.ranges tr[data-key="'+CSS.escape(d.key)+'"]');if(!tr)return;
+    const cells=tr.querySelectorAll('.oimp');
+    fns.forEach((o,oi)=>{
+      const cell=cells[oi];if(!cell)return;
+      const b=o.fn({}),lo=o.fn({[d.key]:cur[d.key].lo}),hi=o.fn({[d.key]:cur[d.key].hi}),dhi=hi-b;
+      if(Math.abs(lo-b)<1e-6&&Math.abs(hi-b)<1e-6){cell.innerHTML='<span class=nochg>— no effect</span>';return;}
+      cell.innerHTML='<span class="iv '+(lo<b?'dn':'up')+'">'+maFmt(lo)+'</span>'
+        +'<span class=iar>→</span>'
+        +'<span class="iv '+(hi<b?'dn':'up')+'">'+maFmt(hi)+'</span>'
+        +'<div class=idl>Δ '+(dhi>=0?'+':'')+maFmt(dhi)+'</div>';
+    });
+  });
+}
 function maColor(t){ // 0=red .. 1=green
   const r=t<0.5?210:Math.round(210-(t-0.5)*2*180), g=t<0.5?Math.round(60+t*2*130):190, b=70;
   return `rgb(${r},${g},${b})`;
@@ -611,6 +686,8 @@ function maRender(torn){
     dn.style.right='50%';dn.style.width=dpct+'%';
     up.style.left='50%';up.style.width=upct+'%';
     row.querySelector('.vv').textContent='▼ '+maFmt(e.adv)+'  ▲ '+maFmt(e.fav);});
+  // live output-impact readout in the edit-ranges table
+  maImpacts(torn,spec,cur);
   // two-way grid
   const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
   const B=spec.drivers.find(d=>d.key===torn.querySelector('.selB').value)||spec.drivers[0];

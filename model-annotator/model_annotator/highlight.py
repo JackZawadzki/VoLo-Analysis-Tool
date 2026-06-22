@@ -96,6 +96,26 @@ def _rule_growth(points):
     return out
 
 
+def _rule_ex_grants_growth(points):
+    """The commercial growth story once grants are stripped out: declines,
+    whipsaws/spikes, AND an explicit 'this is erratic' call when the rate swings
+    all over the place (no steady trajectory under the grants)."""
+    out = {}
+    out.update(_rule_growth(points))                       # whipsaws, spikes, stalls
+    out.update(_rule_negative_growth_after_positive(points))  # declines take priority (high sev)
+    vals = [v for _, v in points]
+    if len(vals) >= 3:
+        sign_flips = sum(1 for i in range(1, len(vals)) if (vals[i] > 0) != (vals[i - 1] > 0))
+        spread = max(vals) - min(vals)
+        if sign_flips >= 2 or spread > 5.0:               # repeated flips, or >500pp range
+            # anchor on the first period so this whole-series verdict leads the flag
+            out[points[0][0]] = (f"Ex-grant growth is all over the place — it swings from "
+                                 f"{_pct(min(vals))} to {_pct(max(vals))} across the plan, so there's "
+                                 "no steady commercial trajectory underneath the grant revenue.",
+                                 Severity.high)
+    return out
+
+
 def _rule_runway(points):
     out = {}
     for p, v in points:
@@ -161,7 +181,7 @@ def _rule_conversion(points):
 
 _FAMILY_RULES: list[tuple[Callable[[str], bool], Callable]] = [
     (lambda m: m == "grant_share_of_revenue", _rule_grant_share),
-    (lambda m: m == "revenue_ex_grants_growth", _rule_negative_growth_after_positive),
+    (lambda m: m == "revenue_ex_grants_growth", _rule_ex_grants_growth),
     (lambda m: m.endswith("_growth"), _rule_growth),
     (lambda m: m.startswith("runway_"), _rule_runway),
     (lambda m: "margin" in m, _rule_margin),
