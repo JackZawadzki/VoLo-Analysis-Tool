@@ -285,6 +285,14 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         return None
     cand.sort(key=lambda d: -d["swing"])
     cand = cand[:MAX_DRIVERS]
+    # disambiguate duplicate labels (e.g. two 'Edge computing' rows) by cell, so
+    # the dropdowns and bars don't show two identical names
+    lab_counts: dict[str, int] = {}
+    for d in cand:
+        lab_counts[d["label"]] = lab_counts.get(d["label"], 0) + 1
+    for d in cand:
+        if lab_counts[d["label"]] > 1:
+            d["label"] = f"{d['label']} ({d['ref'].split('!')[-1]})"
 
     # cube: every driver's effect on every output at every period (for the UI)
     cube = {

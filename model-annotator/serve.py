@@ -227,6 +227,8 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .grid2 th{background:#efe9dd;color:var(--muted);font-weight:600}
 .grid2 .axl{background:#efe9dd;color:var(--muted);font-weight:600;white-space:nowrap}
 .grid2 .cap{font-size:11px;color:var(--muted);margin:6px 0 2px}
+.flatmsg{font-size:12.5px;color:#5f574b;background:#f6f1e8;border:1px dashed #d8cfbe;border-radius:8px;padding:14px 16px;line-height:1.5}
+.flatmsg b{color:var(--ink)}
 .ranges{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
 .ranges table{width:100%;font-size:12.5px}
 .ranges input[type=number]{width:82px;font-family:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:5px;padding:2px 5px;text-align:right}
@@ -839,11 +841,16 @@ function maRender(torn){
   // two-way grid
   const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
   const B=spec.drivers.find(d=>d.key===torn.querySelector('.selB').value)||spec.drivers[0];
-  if(!A||!B){torn.querySelector('.gridbox').innerHTML='';return;}
+  const gb=torn.querySelector('.gridbox');
+  if(!A||!B){gb.innerHTML='';return;}
+  const yr=spec.period||'this year';
+  if(A.key===B.key){gb.innerHTML='<div class=flatmsg>Pick <b>two different</b> inputs to see how they interact.</div>';return;}
   const N=5,av=[],bv=[];
   for(let i=0;i<N;i++){av.push(cur[A.key].lo+(cur[A.key].hi-cur[A.key].lo)*i/(N-1));bv.push(cur[B.key].lo+(cur[B.key].hi-cur[B.key].lo)*i/(N-1));}
   let cells=[],mn=Infinity,mx=-Infinity;
   for(let i=0;i<N;i++){cells.push([]);for(let j=0;j<N;j++){const ov={};ov[A.key]=av[i];ov[B.key]=bv[j];const v=maEval(spec,ov);cells[i].push(v);if(v<mn)mn=v;if(v>mx)mx=v;}}
+  if(mx-mn < 1e-6*Math.max(Math.abs(mx),Math.abs(mn),1)){
+    gb.innerHTML='<div class=flatmsg>Neither <b>'+A.label+'</b> nor <b>'+B.label+'</b> moves '+oname+' in <b>'+yr+'</b> — they act in other years. Try a later year (or <b>Cumulative</b>), or pick inputs that bite in '+yr+'.</div>';return;}
   const fp=x=>maFmt(x);
   const ctx=spec.outLabel?('<b>'+spec.outLabel+(spec.period?' · '+spec.period:'')+'</b> — '):'';
   let h='<div class=cap>'+ctx+'cells = '+(spec.outLabel||'output')+'; columns: '+B.label+' · rows: '+A.label+'</div><table class=grid2><tr><th></th>';
