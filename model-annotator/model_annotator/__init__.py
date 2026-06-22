@@ -161,7 +161,7 @@ def annotate(
         sensitivities = build_sensitivities(
             wbd, structure, mapping, benchmarks,
             archetype=(plan.benchmark_archetype if plan else "default"),
-            periods=sens_periods)
+            periods=sens_periods, graph=graph)
     except Exception:
         log.exception("sensitivity build failed; skipping")
         sensitivities = []

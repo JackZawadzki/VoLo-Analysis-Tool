@@ -22,9 +22,10 @@ from itertools import combinations
 from math import factorial
 from typing import Optional
 
+from .ingest import is_number
 from .mapping import LineItem, MappingResult
 from .metrics import find_scalar_assumptions
-from .schema import SensitivityDriver, Tornado
+from .schema import CellKind, SensitivityDriver, Tornado
 from .structure import StructureResult
 
 DEFAULT_PCT = 0.20
@@ -157,9 +158,139 @@ def _components(ctx_items, sheet, period, coef, key_prefix, unit) -> list[_Spec]
     return specs
 
 
+def _node_for_item(graph, item, period):
+    """(graph node, value) for an item's terminal-period cell, or (None, None)."""
+    t = _terminal_for(item, period)
+    if not t:
+        return None, None
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+    from .graph import encode
+    ref = t[2]
+    sh = ref.split("!")[0].strip("'")
+    if sh not in graph.sheet_index:
+        return None, None
+    col_l, row = coordinate_from_string(ref.split("!")[1])
+    return encode(graph.sheet_index[sh], row, column_index_from_string(col_l)), t[1]
+
+
+def _row_label(sd, row: int) -> str:
+    for c in range(1, min(sd.max_col, 12) + 1):
+        rec = sd.cell(row, c)
+        if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+            return rec.value.strip()[:38]
+    return f"row {row}"
+
+
+def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U) -> Optional[Tornado]:
+    """Flex the model's REAL input cells and recompute EBITDA/revenue exactly
+    through the workbook's own formulas. Returns None when the model can't be
+    faithfully reproduced (the caller then uses the line-item flex)."""
+    if graph is None:
+        return None
+    from .graph import encode, rank_inputs_by_impact
+    from .recompute import RecomputeModel
+    sheet = mapping.primary_sheet
+    rev_item = mapping.get("revenue_total", sheet)
+    eb_item = mapping.get("ebitda_or_ebit", sheet)
+    if rev_item is None or eb_item is None:
+        return None
+    t = _terminal(rev_item)
+    tp = t[0] if t else None
+    if tp is None:
+        return None
+    eb_node, _ = _node_for_item(graph, eb_item, tp)
+    rev_node, _ = _node_for_item(graph, rev_item, tp)
+    if eb_node is None or rev_node is None:
+        return None
+    model = RecomputeModel.build(graph, [eb_node, rev_node])
+    if model is None:
+        return None
+    eb_base = model.values[eb_node]
+    rev_base = model.values[rev_node]
+
+    up = graph.upstream(eb_node, cap=200_000)
+    # distinct input ROWS upstream of EBITDA, in impact order, capped for cost
+    distinct: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    for imp in rank_inputs_by_impact(graph, [sheet], top_n=400):
+        if not is_number(imp.value):
+            continue
+        if encode(graph.sheet_index[imp.sheet], imp.row, imp.col) not in up:
+            continue
+        key = (imp.sheet, imp.row)
+        if key not in seen:
+            seen.add(key)
+            distinct.append(key)
+        if len(distinct) >= 40:
+            break
+
+    cand = []
+    for sn, r in distinct:
+        cen = structure.censuses.get(sn)
+        sd = wbd.sheets.get(sn)
+        if cen is None or sd is None:
+            continue
+        cells = []          # (node, col, value) for the row's typed-input cells
+        for c in range(1, sd.max_col + 1):
+            if cen.kind(r, c) == CellKind.typed_input:
+                rec = sd.cell(r, c)
+                if rec is not None and is_number(rec.value):
+                    cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
+        nz = [x for x in cells if x[2] != 0]
+        if not nz:
+            continue
+        cells.sort(key=lambda x: x[1])
+        v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
+
+        def ov(factor, _cells=cells):
+            return {nd: val * factor for (nd, _c, val) in _cells}
+
+        lo = model.outputs_with_overrides(ov(0.8), [eb_node, rev_node])
+        hi = model.outputs_with_overrides(ov(1.2), [eb_node, rev_node])
+        swing = abs(hi[eb_node] - lo[eb_node])
+        if swing < max(1.0, 1e-4 * abs(eb_base)):
+            continue
+        cand.append(dict(sn=sn, r=r, v0=v0, cells=cells, ref=graph.node_ref(cells[-1][0]),
+                         eb_lo=lo[eb_node], eb_hi=hi[eb_node],
+                         rv_lo=lo[rev_node], rv_hi=hi[rev_node],
+                         label=_row_label(sd, r), swing=swing))
+    if not cand:
+        return None
+    cand.sort(key=lambda d: -d["swing"])
+    cand = cand[:MAX_DRIVERS]
+
+    drivers = []
+    adv_ov: dict[int, float] = {}
+    fav_ov: dict[int, float] = {}
+    for d in cand:
+        drivers.append(SensitivityDriver(
+            key=f"in:{d['sn']}:{d['r']}", label=f"{d['label']} ({tp})",
+            input_refs=[d["ref"]], base=d["v0"], low=d["v0"] * 0.8, high=d["v0"] * 1.2,
+            low_pct=-0.20, high_pct=0.20,
+            output_low=d["eb_lo"], output_high=d["eb_hi"], swing=d["swing"],
+            out2_low=d["rv_lo"], out2_high=d["rv_hi"], unit=U))
+        adverse_low = d["eb_lo"] < d["eb_hi"]      # the low end lowers EBITDA?
+        fa, ff = (0.8, 1.2) if adverse_low else (1.2, 0.8)
+        for (nd, _c, val) in d["cells"]:
+            adv_ov[nd] = val * fa
+            fav_ov[nd] = val * ff
+    downside = model.outputs_with_overrides(adv_ov, [eb_node])[eb_node]
+    upside = model.outputs_with_overrides(fav_ov, [eb_node])[eb_node]
+
+    return Tornado(
+        output_key="terminal_ebitda", output_label=f"Terminal EBITDA ({tp})",
+        output_unit=U, output_base=eb_base, formula="recompute_linear",
+        out2_base=rev_base, out2_label="Revenue",
+        formula_note="EBITDA recomputed through the model's own formulas as each input is flexed",
+        drivers=drivers, downside=downside, upside=upside,
+        caveats=["Each input is flexed through the model's actual formulas — an exact recompute, "
+                 "not a proportional estimate.",
+                 "Single-input moves are exact; all-adverse and the two-way grid combine drivers linearly."])
+
+
 def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
                         benchmarks: dict, archetype: str = "default",
-                        periods: Optional[list[str]] = None) -> list[Tornado]:
+                        periods: Optional[list[str]] = None, graph=None) -> list[Tornado]:
     out: list[Tornado] = []
     sheet = mapping.primary_sheet
     if sheet is None:
@@ -198,7 +329,18 @@ def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
                           adverse="high" if coef < 0 else "low")]
         return comps
 
-    if rev is not None and tp is not None:
+    # Preferred: flex the model's REAL input cells and recompute EBITDA exactly
+    # through its own formulas. Falls back to the line-item closed form when the
+    # workbook can't be faithfully recomputed (XLOOKUP/VBA/etc.).
+    recomputed = None
+    try:
+        recomputed = _recompute_ebitda_tornado(wbd, structure, mapping, graph, U)
+    except Exception:
+        recomputed = None
+    if recomputed is not None:
+        out.append(recomputed)
+
+    if recomputed is None and rev is not None and tp is not None:
         specs: list[_Spec] = []
         specs += _group([it for it in mapping.get_all("revenue_segment") if it.sheet == sheet],
                         rev, +1.0, "rev", "Total revenue")

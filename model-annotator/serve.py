@@ -603,7 +603,7 @@ def render_tornado(t, idx: int) -> str:
 
     # the model's key OUTPUTS this section reports impact on: for the income
     # statement, both Revenue and EBITDA move; for the valuation, the PV moves
-    out_names = ["Revenue", "EBITDA"] if t.formula == "linear_sum" else ["Valuation"]
+    out_names = ["Revenue", "EBITDA"] if t.formula in ("linear_sum", "recompute_linear") else ["Valuation"]
 
     # editable ranges — AND a live readout of how each input moves the outputs
     a("<div class=ranges><details open>"
@@ -628,13 +628,21 @@ def render_tornado(t, idx: int) -> str:
         a("</tr>")
     a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
+    def _adverse(d):
+        if t.formula == "recompute_linear":
+            return "low" if d.output_low < d.output_high else "high"
+        if t.formula == "valuation_pv" and d.key == "rate":
+            return "high"
+        return "high" if (t.formula == "linear_sum" and d.coef < 0) else "low"
+
     spec = {
         "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
         "offset": t.offset, "outNames": out_names,
+        "ebitdaBase": t.output_base, "revBase": t.out2_base,
         "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
-                     "coef": d.coef,
-                     "adverse": ("high" if (t.formula == "valuation_pv" and d.key == "rate")
-                                 or (t.formula == "linear_sum" and d.coef < 0) else "low")}
+                     "coef": d.coef, "adverse": _adverse(d),
+                     "outLow": d.output_low, "outHigh": d.output_high,
+                     "rev2Low": d.out2_low, "rev2High": d.out2_high}
                     for d in t.drivers],
         "defaults": {d.key: {"low": d.low, "high": d.high} for d in t.drivers},
         "selA": keyA, "selB": keyB,
@@ -651,6 +659,11 @@ function maEval(spec,vals){
   if(spec.formula==='valuation_pv'){
     const rate=spec.drivers.find(d=>d.key==='rate')?maGet(spec,vals,'rate'):0;
     return maGet(spec,vals,'multiple')*maGet(spec,vals,'metric')/Math.pow(1+rate,spec.horizon||0);
+  }
+  if(spec.formula==='recompute_linear'){
+    let s=spec.ebitdaBase||0;
+    spec.drivers.forEach(d=>{const sl=(d.outHigh-d.outLow)/((d.high-d.low)||1);s+=sl*(maGet(spec,vals,d.key)-d.base);});
+    return s;
   }
   let s=spec.offset||0;spec.drivers.forEach(d=>{s+=d.coef*maGet(spec,vals,d.key);});return s;
 }
@@ -674,10 +687,13 @@ function maShapley(spec,cur){
 }
 function maDownUp(spec,cur){const dn={},up={};spec.drivers.forEach(d=>{dn[d.key]=maAdv(d,cur);up[d.key]=maFav(d,cur);});return {dn:maEval(spec,dn),up:maEval(spec,up)};}
 function maOutFns(spec){
-  // the model's key outputs. valuation: PV. income statement: Revenue (sum of
-  // positive-coef inputs) AND EBITDA (the full net), so an analyst sees both.
+  // the model's key outputs. valuation: PV. income statement: Revenue AND EBITDA.
   const nm=spec.outNames||[];
   if(spec.formula==='valuation_pv') return [{name:nm[0]||'Output',fn:v=>maEval(spec,v)}];
+  if(spec.formula==='recompute_linear') return [
+    {name:nm[0]||'Revenue',fn:v=>{let s=spec.revBase||0;spec.drivers.forEach(d=>{const sl=(d.rev2High-d.rev2Low)/((d.high-d.low)||1);s+=sl*(maGet(spec,v,d.key)-d.base);});return s;}},
+    {name:nm[1]||'EBITDA',fn:v=>maEval(spec,v)},
+  ];
   return [
     {name:nm[0]||'Revenue',fn:v=>{let s=0;spec.drivers.forEach(d=>{if(d.coef>0)s+=d.coef*maGet(spec,v,d.key);});return s;}},
     {name:nm[1]||'EBITDA',fn:v=>maEval(spec,v)},
@@ -878,11 +894,12 @@ def render_report(report: Report, filename: str) -> str:
         a("<h2>Sensitivity <span class=muted style='font-weight:400;font-size:14px'>"
           "— how the outputs move when you change the model's inputs</span></h2>")
         a("<p class=legend>Each input below is one of the model's <b>own cells</b> (hover a bar for its "
-          "<code>Sheet!Cell</code>). For each output there are two views: the <b>tornado</b> shows how far "
-          "that output moves when each input swings across its range — <span style='color:#c4543a'>red = the "
-          "adverse end</span>, <span style='color:#5a9e74'>green = the favorable end</span> (so you see both "
-          "directions, not just downside); the <b>two-way grid</b> lets you move <i>two</i> inputs at once and "
-          "reads the output as a red→green heatmap. Edit any input's range and both views re-run live.</p>")
+          "<code>Sheet!Cell</code>). Where the workbook's formulas can be evaluated, flexing an input "
+          "<b>recomputes the outputs through the model's own formulas</b> — an exact what-if; otherwise the "
+          "model's revenue/cost lines are flexed directly (the per-tornado note says which). The <b>tornado</b> "
+          "shows how far each input moves the output — <span style='color:#c4543a'>red = adverse end</span>, "
+          "<span style='color:#5a9e74'>green = favorable end</span>; the <b>two-way grid</b> moves two at once. "
+          "Edit any range and both views re-run live.</p>")
         for i, t in enumerate(report.sensitivities):
             a(render_tornado(t, i))
             for cav in t.caveats:

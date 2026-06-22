@@ -407,6 +407,10 @@ class SensitivityDriver(BaseModel):
     coef: float = 0.0                     # weight in a linear_sum output (+rev / -cost)
     unit: str = ""
     editable: bool = True
+    # for recompute-mode tornados: the secondary output (revenue) at this
+    # driver's low/high, computed exactly through the model's own formulas
+    out2_low: Optional[float] = None
+    out2_high: Optional[float] = None
 
 
 class Tornado(BaseModel):
@@ -418,6 +422,8 @@ class Tornado(BaseModel):
     formula_note: str = ""                # human description of the closed form
     horizon: float = 0.0                  # discount horizon for valuation_pv
     offset: float = 0.0                   # constant that anchors the base to the model's own output row
+    out2_base: Optional[float] = None     # recompute mode: base value of the secondary output (revenue)
+    out2_label: str = "Revenue"           # recompute mode: name of the secondary output
     drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by |shapley| desc
     downside: float = 0.0                 # output with every driver at its adverse end
     upside: float = 0.0                   # output with every driver at its favorable end
