@@ -640,8 +640,8 @@ def render_tornado(t, idx: int) -> str:
       "<span class=up>▲ all-favorable: <b class=upv></b></span></div>")
 
     # single bar per input: length = swing of the selected output
-    spark_hdr = (" <span class=muted style='font-weight:400'>· the mini chart is that input's effect by year</span>"
-                 if cube else "")
+    spark_hdr = (" <span class=muted style='font-weight:400'>· the mini chart is that input's effect each year, "
+                 "as % of that year's own value</span>" if cube else "")
     a("<div class=subh>How far each input moves the <span class=outname>output</span> "
       f"<span class=muted style='font-weight:400'>(sorted by impact)</span>{spark_hdr}</div>")
     a("<div class=shapbars>")
@@ -785,17 +785,24 @@ function maImpacts(torn,spec,cur){
   });
 }
 function maColor(t){const r=t<0.5?210:Math.round(210-(t-0.5)*2*180),g=t<0.5?Math.round(60+t*2*130):190,b=70;return `rgb(${r},${g},${b})`;}
-// per-input sparkline: how far this input moves the selected output in EACH year
+// per-input sparkline: how much this input moves the selected output in EACH
+// year, as a PERCENT of that year's own output level — so early years aren't
+// dwarfed by the exponentially larger late-year numbers.
 function maSparks(torn,cube,out,per){
   const PS=cube.periods,W=90,H=18,bw=W/PS.length;
+  const baseByP=cube.base[out]||{};
+  const floor=0.02*Math.max(...PS.map(p=>Math.abs(baseByP[p]||0)),1e-9);  // guard near-zero years
+  const olabel=(cube.outputs.find(x=>x.key===out)||{}).label||out;
   cube.drivers.forEach(d=>{
     const row=torn.querySelector('.shap[data-key="'+CSS.escape(d.key)+'"]');if(!row)return;
     const sp=row.querySelector('.spark');if(!sp)return;
-    const sw=PS.map(p=>{const c=(d.out[out]||{})[p];return c?Math.abs(c.high-c.low):0;});
-    const mx=Math.max(...sw,1e-9);
+    const pct=PS.map(p=>{const c=(d.out[out]||{})[p];if(!c)return 0;
+      return Math.abs(c.high-c.low)/Math.max(Math.abs(baseByP[p]||0),floor);});
+    const mx=Math.max(...pct,1e-9);
     let s='<svg width="'+W+'" height="'+H+'" role=img>';
-    sw.forEach((v,i)=>{const h=Math.max(1,v/mx*(H-2));const sel=(per!=='__cum__'&&PS[i]===per);
-      s+='<rect x="'+(i*bw+1).toFixed(1)+'" y="'+(H-h).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+(sel?'#9c4221':'#d3c6ad')+'"><title>'+PS[i]+': '+maFmt(v)+'</title></rect>';});
+    pct.forEach((v,i)=>{const h=Math.max(1,v/mx*(H-2));const sel=(per!=='__cum__'&&PS[i]===per);
+      const c=(d.out[out]||{})[PS[i]];const abs=c?Math.abs(c.high-c.low):0;
+      s+='<rect x="'+(i*bw+1).toFixed(1)+'" y="'+(H-h).toFixed(1)+'" width="'+(bw-2).toFixed(1)+'" height="'+h.toFixed(1)+'" fill="'+(sel?'#9c4221':'#d3c6ad')+'"><title>'+PS[i]+': ±'+(v*100).toFixed(0)+'% of that year\'s '+olabel+' (±'+maFmt(abs)+')</title></rect>';});
     sp.innerHTML=s+'</svg>';
   });
 }
