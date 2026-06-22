@@ -742,7 +742,7 @@ function maSpec(torn){
     const cell=((d.out[out]||{})[per])||{low:base,high:base};
     return {key:d.key,label:d.label,base:d.value,low:d.value*0.8,high:d.value*1.2,outLow:cell.low,outHigh:cell.high};
   });
-  return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,drivers:drivers,selA:raw.selA,selB:raw.selB,
+  return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,period:per,drivers:drivers,selA:raw.selA,selB:raw.selB,
           defaults:Object.fromEntries(drivers.map(d=>[d.key,{low:d.low,high:d.high}]))};
 }
 function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
@@ -804,7 +804,8 @@ function maRender(torn){
   let cells=[],mn=Infinity,mx=-Infinity;
   for(let i=0;i<N;i++){cells.push([]);for(let j=0;j<N;j++){const ov={};ov[A.key]=av[i];ov[B.key]=bv[j];const v=maEval(spec,ov);cells[i].push(v);if(v<mn)mn=v;if(v>mx)mx=v;}}
   const fp=x=>maFmt(x);
-  let h='<div class=cap>columns: '+B.label+' · rows: '+A.label+'</div><table class=grid2><tr><th></th>';
+  const ctx=spec.outLabel?('<b>'+spec.outLabel+(spec.period?' · '+spec.period:'')+'</b> — '):'';
+  let h='<div class=cap>'+ctx+'cells = '+(spec.outLabel||'output')+'; columns: '+B.label+' · rows: '+A.label+'</div><table class=grid2><tr><th></th>';
   for(let j=0;j<N;j++)h+='<th>'+fp(bv[j])+'</th>';h+='</tr>';
   for(let i=0;i<N;i++){h+='<tr><td class=axl>'+fp(av[i])+'</td>';for(let j=0;j<N;j++){const v=cells[i][j];const tn=mx>mn?(v-mn)/(mx-mn):0.5;h+='<td style="background:'+maColor(tn)+';color:#fff">'+maFmt(v)+'</td>';}h+='</tr>';}
   torn.querySelector('.gridbox').innerHTML=h+'</table>';
