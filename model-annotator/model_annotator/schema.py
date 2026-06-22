@@ -417,6 +417,7 @@ class Tornado(BaseModel):
     formula: str                          # one of: "valuation_pv" | "linear_sum" | "ratio"
     formula_note: str = ""                # human description of the closed form
     horizon: float = 0.0                  # discount horizon for valuation_pv
+    offset: float = 0.0                   # constant that anchors the base to the model's own output row
     drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by |shapley| desc
     downside: float = 0.0                 # output with every driver at its adverse end
     upside: float = 0.0                   # output with every driver at its favorable end

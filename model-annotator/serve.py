@@ -588,7 +588,7 @@ def render_tornado(t, idx: int) -> str:
 
     spec = {
         "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
-        "outNames": out_names,
+        "offset": t.offset, "outNames": out_names,
         "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
                      "coef": d.coef,
                      "adverse": ("high" if (t.formula == "valuation_pv" and d.key == "rate")
@@ -610,7 +610,7 @@ function maEval(spec,vals){
     const rate=spec.drivers.find(d=>d.key==='rate')?maGet(spec,vals,'rate'):0;
     return maGet(spec,vals,'multiple')*maGet(spec,vals,'metric')/Math.pow(1+rate,spec.horizon||0);
   }
-  let s=0;spec.drivers.forEach(d=>{s+=d.coef*maGet(spec,vals,d.key);});return s;
+  let s=spec.offset||0;spec.drivers.forEach(d=>{s+=d.coef*maGet(spec,vals,d.key);});return s;
 }
 function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
 function maAdv(d,cur){return d.adverse==='high'?cur[d.key].hi:cur[d.key].lo;}

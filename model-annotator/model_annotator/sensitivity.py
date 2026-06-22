@@ -78,8 +78,8 @@ def _terminal_for(it: LineItem, period: str):
 # Output evaluators
 # ---------------------------------------------------------------------------
 
-def _eval_linear(specs: list[_Spec], overrides: dict[str, float]) -> float:
-    return sum(s.coef * overrides.get(s.key, s.base) for s in specs)
+def _eval_linear(specs: list[_Spec], overrides: dict[str, float], offset: float = 0.0) -> float:
+    return offset + sum(s.coef * overrides.get(s.key, s.base) for s in specs)
 
 
 def _eval_pv(specs_by_key: dict[str, _Spec], overrides: dict[str, float], horizon: float) -> float:
@@ -208,24 +208,44 @@ def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
                         mapping.get("opex_total", sheet), -1.0, "opex", "Total opex")
 
         if len(specs) >= 2:
-            base_out = _eval_linear(specs, {})
-            downside = _eval_linear(specs, {s.key: s.adverse_val() for s in specs})
-            upside = _eval_linear(specs, {s.key: s.favorable_val() for s in specs})
-            shap = _shapley_linear(specs)
+            # Anchor the base to the model's OWN EBITDA/EBIT row when it exists,
+            # so the output the analyst flexes equals the number the model
+            # actually reports. The decomposed revenue−COGS−opex can differ (a
+            # line not mapped, D&A handled differently, other income); the gap
+            # becomes a constant offset, leaving every per-input delta exact.
+            offset = 0.0
+            anchored = False
+            own_eb = mapping.get("ebitda_or_ebit", sheet)
+            own_t = _terminal_for(own_eb, tp) if own_eb is not None else None
+            if own_t is None and own_eb is not None:
+                own_t = _terminal(own_eb)
+            if own_t is not None:
+                decomposed = _eval_linear(specs, {})
+                offset = own_t[1] - decomposed
+                anchored = abs(offset) > 0.01 * max(abs(own_t[1]), 1)
+
+            base_out = _eval_linear(specs, {}, offset)
+            downside = _eval_linear(specs, {s.key: s.adverse_val() for s in specs}, offset)
+            upside = _eval_linear(specs, {s.key: s.favorable_val() for s in specs}, offset)
+            shap = _shapley_linear(specs)            # contributions are differences; offset cancels
             drivers = []
             for s in specs:
-                ol = _eval_linear(specs, {s.key: s.low()})
-                oh = _eval_linear(specs, {s.key: s.high()})
+                ol = _eval_linear(specs, {s.key: s.low()}, offset)
+                oh = _eval_linear(specs, {s.key: s.high()}, offset)
                 drivers.append(_mk_driver(s, ol, oh, shap[s.key]))
             drivers.sort(key=lambda d: -max(abs(d.shapley), d.swing))
             drivers = drivers[:MAX_DRIVERS]
+            caveats = ["Every driver is one of the model's own line-item cells; "
+                       "±20% default range, editable below."]
+            if anchored:
+                caveats.append("Base is anchored to the model's own EBITDA row; the part not "
+                               "explained by the decomposed lines is held constant, so each "
+                               "input's effect is exact while the base matches the model.")
             out.append(Tornado(
                 output_key="terminal_ebitda", output_label=f"Terminal EBITDA ({tp})",
-                output_unit=U, output_base=base_out, formula="linear_sum",
+                output_unit=U, output_base=base_out, formula="linear_sum", offset=offset,
                 formula_note="EBITDA = revenue − COGS − opex, decomposed to every mapped line item",
-                drivers=drivers, downside=downside, upside=upside,
-                caveats=["Every driver is one of the model's own line-item cells; "
-                         "±20% default range, editable below."]))
+                drivers=drivers, downside=downside, upside=upside, caveats=caveats))
 
     # ---- Output 2: present value of exit ----------------------------------
     pv = _valuation_tornado(wbd, structure, mapping, benchmarks, archetype, periods, U)

@@ -82,6 +82,25 @@ def test_clean_components_are_decomposed():
     assert "Total opex" not in labels
 
 
+def test_base_anchors_to_model_ebitda_row():
+    # the decomposed revenue−COGS−opex (700) differs from the model's own EBITDA
+    # row (500, e.g. extra D&A); the sensitivity base must equal the model's row,
+    # via a constant offset, while each input's swing stays exact.
+    items = [
+        _item(1, "Revenue", [1000, 1200, 1500], "revenue_total"),
+        _item(2, "COGS", [300, 360, 450], "cogs_total"),
+        _item(3, "Total Operating Expenses", [250, 290, 330], "opex_total"),
+        _item(4, "EBITDA", [380, 480, 500], "ebitda_or_ebit"),   # model's own row, ≠ 720
+    ]
+    t = _ebitda(_Mapping(items))
+    assert t is not None
+    assert abs(t.output_base - 500) < 1e-6           # anchored to the model's EBITDA row
+    assert abs(t.offset - (500 - 720)) < 1e-6        # constant gap held aside
+    # flexing revenue ±20% still moves EBITDA by ±300 around the anchored base
+    rev = [d for d in t.drivers if d.coef > 0][0]
+    assert abs(rev.output_high - rev.output_low - 600) < 1.0
+
+
 def test_overlapping_subtotal_collapses_to_total():
     # a "TOTAL Salaries" subtotal is mapped alongside its parts: Salaries + R&D
     # already equal it, so components (160+100+160+70=490) overshoot the real

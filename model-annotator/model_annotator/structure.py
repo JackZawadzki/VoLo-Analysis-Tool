@@ -337,6 +337,34 @@ def detect_units(sd: SheetData) -> UnitsInfo:
             evidence=f"{trailing_comma}/{numeric_cells} numeric cells use a trailing-comma display format",
         )
 
+    # No scaling caption and no trailing comma. If the modeler has explicitly
+    # formatted the figures as currency/numbers (a "$" or accounting/number
+    # format), they are final stored figures — read them as whole units with
+    # real confidence, not a blind assumption. This is what separates a built
+    # financial model from a bare grid, and it removes the false "unsure about
+    # units" state that drove spurious cross-sheet unit flags. (Scale is 1.0
+    # either way, so reported values are unchanged — only the confidence is.)
+    money_fmt = 0
+    for _, _, rec in sd.iter_cells():
+        if is_number(rec.value) and abs(rec.value) >= 1:
+            nf = rec.number_format or ""
+            if not nf or nf == "General" or "%" in nf:
+                continue
+            # strip color codes ([Red]), locale tags ([$-409]) and quoted literals
+            # ("$") BEFORE testing for date letters, else the 'd' in "[Red]" or a
+            # "$" currency mark gets misread as a date/non-numeric format
+            core = re.sub(r"\[[^\]]*\]", "", nf)
+            core = re.sub(r'"[^"]*"', "", core)
+            is_date = bool(re.search(r"[ymdhs]", core, re.I))
+            if not is_date and re.search(r"[#0]", core):
+                money_fmt += 1
+    if numeric_cells and money_fmt / numeric_cells > 0.5:
+        return UnitsInfo(
+            scale=1.0, label="whole units", confidence=0.85, explicit=True,
+            evidence=f"{money_fmt}/{numeric_cells} numeric cells carry explicit currency/number "
+                     "formatting and there is no scaling caption",
+        )
+
     return UnitsInfo(scale=1.0, label="whole units (assumed)", confidence=0.4, explicit=False,
                      evidence="no explicit unit marker found on this sheet")
 
