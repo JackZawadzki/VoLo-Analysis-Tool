@@ -166,6 +166,8 @@ tr.src td{color:#5f574b}
 tr.src td.lab{color:#3a3128;font-weight:500}
 tr.der td{font-weight:600;color:var(--ink);border-top:1px solid #ece4d3}
 tr.der td.lab{color:var(--accent)}
+tr.der td.lab.flagged .rl{color:#b11226}   /* a calc with a standout cell — red title */
+td.na{}                                     /* n/a here: intentionally blank, no dot */
 tr.flagrow td{padding:0;border-bottom:1px solid #f0ece2}
 tr.flagrow .wkflag{margin:0;border-radius:0;border-left-width:3px}
 tr.flagrow .chip{margin-left:8px}
@@ -195,14 +197,14 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .torn .duo .dn{color:#b11226}
 .torn .duo .up{color:#1a7f4b}
 .subh{font-family:Georgia,serif;font-size:14px;font-weight:600;margin:14px 0 8px;color:#3a3128}
-/* shapley bars: zero line in the middle, negative left (red), positive right (green) */
-.shap{display:grid;grid-template-columns:200px 1fr 188px;gap:10px;align-items:center;margin:5px 0;font-size:12.5px}
+/* output / year selector (recompute mode) */
+.osel{font-size:13px;color:#3a3128;margin:2px 0 12px}
+.osel select{font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:6px;padding:3px 7px;background:#fff}
+/* single magnitude bar per input: length = how far it moves the selected output */
+.shap{display:grid;grid-template-columns:210px 1fr 168px;gap:10px;align-items:center;margin:5px 0;font-size:12.5px}
 .shap .nm{text-align:right;color:#3a3128;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.shap .tk{position:relative;height:18px;background:#f4efe4;border-radius:4px}
-.shap .zero{position:absolute;left:50%;top:-3px;bottom:-3px;width:1px;background:#b3a892;z-index:2}
-.shap .bar{position:absolute;top:3px;height:12px}
-.shap .bar.dn{background:#c4543a;border-radius:3px 0 0 3px}
-.shap .bar.up{background:#5a9e74;border-radius:0 3px 3px 0}
+.shap .tk{position:relative;height:16px;background:#f4efe4;border-radius:4px}
+.shap .bar1{position:absolute;left:0;top:2px;height:12px;background:var(--accent);border-radius:3px;min-width:2px;transition:width .15s}
 .shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:left;font-size:11.5px}
 /* two-way grid */
 .twoway{margin-top:6px}
@@ -461,19 +463,21 @@ def render_family(fam: str, tables: list, findings_by_id=None) -> str:
             a("</tr>")
 
     # ---- calculations built on those rows ----
+    # No flag rows or badges (they cluttered): a standout cell keeps its hover
+    # comment, and a calc that has any standout gets a red title so it's scannable.
     a(f"<tr class=subhdr><td class=lab>Calculations</td><td colspan={len(periods)}></td></tr>")
-    seen_flags: set = set()          # a finding can flag several calcs — show it once
-    any_clean_shown = False
     for t in tables:
         dr = t.derived_row
-        a("<tr class=der><td class=lab>"
+        by_p = {c.period: c for c in dr.cells} if dr else {}
+        flagged = bool(dr) and any(c.highlighted and c.comment for c in dr.cells)
+        labcls = "lab flagged" if flagged else "lab"
+        a(f"<tr class=der><td class='{labcls}'>"
           f"<div class=rl title='{e(t.title)}'>{e(t.title)}</div>"
           f"<div class=cf title='{e(t.computation)}'>{e(t.computation)}</div></td>")
-        by_p = {c.period: c for c in dr.cells} if dr else {}
         for p in periods:
             c = by_p.get(p)
             if c is None or c.value is None:
-                a("<td>·</td>")
+                a("<td class=na></td>")          # blank, not a dot — reads as 'n/a here', not broken
                 continue
             txt = _cell_text(c.value, dr.is_percent)
             if c.highlighted and c.comment:
@@ -482,21 +486,6 @@ def render_family(fam: str, tables: list, findings_by_id=None) -> str:
             else:
                 a(f"<td>{txt}</td>")
         a("</tr>")
-        # one-line flag, full width under its row — deduped within the family
-        flag_text, flag_sev = _table_flag(t, findings_by_id)
-        key = (flag_text, flag_sev)
-        if flag_sev:
-            if key in seen_flags:
-                continue
-            seen_flags.add(key)
-            color = _SEV_COLOR_STR.get(flag_sev, "#7a5a13")
-            chips = "<span class='chip ll'>LLM-directed</span>" if t.llm_directed else ""
-            a(f"<tr class=flagrow><td colspan={ncol}><div class=wkflag style='border-left-color:{color}'>"
-              f"<b style='color:{color}'>⚑ {flag_sev.upper()}</b> {e(flag_text)}{chips}</div></td></tr>")
-        elif not any_clean_shown:
-            any_clean_shown = True
-            a(f"<tr class=flagrow><td colspan={ncol}><div class='wkflag clean' style='border-left-color:#1a7f4b'>"
-              f"<b style='color:#1a7f4b'>✓</b> <span class=muted>{e(flag_text)}</span></div></td></tr>")
     a("</tbody></table></div>")
     return "\n".join(o)
 
@@ -568,132 +557,146 @@ def render_annotation_table(t, findings_by_id=None) -> str:
 
 
 def render_tornado(t, idx: int) -> str:
-    """Shapley contribution bars + an interactive two-way grid, both driven live
-    by JS that mirrors the server-side closed form. Ranges are editable."""
+    """One bar per input (length = how far it moves the chosen output) + a
+    two-way grid + an editable-ranges/impact table, all driven live by JS. In
+    recompute (cube) mode the analyst picks which output and which year to view."""
     o: list[str] = []
     a = o.append
+    cube = t.cube
     tid = f"torn{idx}"
     a(f"<div class=torn id={tid}>")
-    a(f"<h3>{e(t.output_label)}</h3>")
+    title = "Sensitivity — how inputs move the outputs" if cube else e(t.output_label)
+    a(f"<h3>{title}</h3>")
+
+    if cube:
+        oopts = "".join(f"<option value='{e(x['key'])}'{' selected' if x['key']==cube.get('defaultOutput') else ''}>"
+                        f"{e(x['label'])}</option>" for x in cube["outputs"])
+        popts = "".join(f"<option value='{e(p)}'{' selected' if p==cube.get('defaultPeriod') else ''}>{e(p)}</option>"
+                        for p in cube["periods"])
+        a(f"<div class=osel>Output: <select class=outsel>{oopts}</select> "
+          f"&nbsp; Year: <select class=persel>{popts}</select></div>")
+
     a(f"<div class=out>{e(t.formula_note)} — base <b class=base>{_cell_text(t.output_base, False)}</b> "
       f"<span class=muted>{e(t.output_unit)}</span></div>")
-    a(f"<div class=duo><span class=dn>▼ all-adverse: <b class=dnv>{_cell_text(t.downside, False)}</b></span>"
-      f"<span class=up>▲ all-favorable: <b class=upv>{_cell_text(t.upside, False)}</b></span></div>")
+    a("<div class=duo><span class=dn>▼ all-adverse: <b class=dnv></b></span>"
+      "<span class=up>▲ all-favorable: <b class=upv></b></span></div>")
 
-    # Two-sided tornado bars: red = output at the adverse end, green = favorable
-    a("<div class=subh>How far each input moves the output "
-      "<span class=muted style='font-weight:400'>(▼ adverse · ▲ favorable, sorted by swing)</span></div>")
+    # single bar per input: length = swing of the selected output
+    a("<div class=subh>How far each input moves the <span class=outname>output</span> "
+      "<span class=muted style='font-weight:400'>(sorted by impact)</span></div>")
     a("<div class=shapbars>")
-    for d in t.drivers:
-        a(f"<div class=shap data-key='{e(d.key)}'>"
-          f"<div class=nm title='model cell {e(', '.join(d.input_refs))}'>{e(d.label)}</div>"
-          f"<div class=tk><div class=zero></div><div class='bar dn'></div><div class='bar up'></div></div>"
+    drv = cube["drivers"] if cube else [{"key": d.key, "label": d.label, "refs": d.input_refs} for d in t.drivers]
+    for d in drv:
+        refs = d.get("refs") if cube else d["refs"]
+        a(f"<div class=shap data-key='{e(d['key'])}'>"
+          f"<div class=nm title='model cell {e(', '.join(refs))}'>{e(d['label'])}</div>"
+          f"<div class=tk><div class=bar1></div></div>"
           f"<div class=vv></div></div>")
     a("</div>")
 
-    # Two-way grid
+    # two-way grid
     a("<div class=twoway><div class=subh>Two-way sensitivity — pick any two inputs</div>")
-    opts = "".join(f"<option value='{e(d.key)}'>{e(d.label)}</option>" for d in t.drivers)
-    keyA = t.drivers[0].key if t.drivers else ""
-    keyB = t.drivers[1].key if len(t.drivers) > 1 else keyA
+    opts = "".join(f"<option value='{e(d['key'])}'>{e(d['label'])}</option>" for d in drv)
+    keyA = drv[0]["key"] if drv else ""
+    keyB = drv[1]["key"] if len(drv) > 1 else keyA
     a(f"<div class=sel>rows: <select class=selA>{opts}</select> "
       f"columns: <select class=selB>{opts}</select> "
-      f"<span class=muted>green = higher {e(t.output_label.lower())}, red = lower</span></div>")
+      "<span class=muted>green = higher <span class=outname2>output</span>, red = lower</span></div>")
     a("<div class=gridbox></div></div>")
 
-    # the model's key OUTPUTS this section reports impact on: for the income
-    # statement, both Revenue and EBITDA move; for the valuation, the PV moves
-    out_names = ["Revenue", "EBITDA"] if t.formula in ("linear_sum", "recompute_linear") else ["Valuation"]
+    if cube:
+        out_cols = 1                       # one column, header is the selected output
+    else:
+        out_names = ["Revenue", "EBITDA"] if t.formula == "linear_sum" else ["Valuation"]
+        out_cols = len(out_names)
 
-    # editable ranges — AND a live readout of how each input moves the outputs
     a("<div class=ranges><details open>"
-      "<summary>Edit input ranges — and see how each input moves the model's outputs</summary>")
-    a("<div class=rhint>Flex any input's low/high. Each cell is the resulting output when that one "
-      "input sits at its <b>low → high</b> end (everything else at base); <b>Δ</b> is the swing from "
-      "base. <span class=muted>Red = output falls, green = output rises.</span></div>")
+      "<summary>Edit input ranges — and see how each input moves the output</summary>")
+    a("<div class=rhint>Flex any input's low/high. Each cell is the resulting output when that one input "
+      "sits at its <b>low → high</b> end (everything else at base); <b>Δ</b> is the swing from base. "
+      "<span class=muted>Red = output falls, green = output rises.</span></div>")
     a("<table class=rtbl><thead><tr><th class=l>input (model cell)</th><th>base</th><th>low</th><th>high</th>")
-    for nm in out_names:
-        a(f"<th class=oimph>{e(nm)} <span class=muted>(low → high)</span></th>")
+    if cube:
+        a("<th class=oimph><span class=outname3>output</span> <span class=muted>(low → high)</span></th>")
+    else:
+        for nm in out_names:
+            a(f"<th class=oimph>{e(nm)} <span class=muted>(low → high)</span></th>")
     a("</tr></thead><tbody>")
-    for d in t.drivers:
-        is_frac = d.unit == 'fraction'
-        a(f"<tr data-key='{e(d.key)}'>"
-          f"<td class=l><div class=rl>{e(d.label)}</div>"
-          f"<div class=rcite>{e(', '.join(d.input_refs))}</div></td>"
-          f"<td class=rbase>{_cell_text(d.base, is_frac)}</td>"
-          f"<td><input type=number class=lo step=any value='{round(d.low,6)}'></td>"
-          f"<td><input type=number class=hi step=any value='{round(d.high,6)}'></td>")
-        for _ in out_names:
+    for d in (cube["drivers"] if cube else None) or t.drivers:
+        if cube:
+            key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
+            lo, hi, is_frac = base * 0.8, base * 1.2, False
+        else:
+            key, label, refs, base = d.key, d.label, d.input_refs, d.base
+            lo, hi, is_frac = d.low, d.high, d.unit == 'fraction'
+        a(f"<tr data-key='{e(key)}'>"
+          f"<td class=l><div class=rl>{e(label)}</div><div class=rcite>{e(', '.join(refs))}</div></td>"
+          f"<td class=rbase>{_cell_text(base, is_frac)}</td>"
+          f"<td><input type=number class=lo step=any value='{round(lo,6)}'></td>"
+          f"<td><input type=number class=hi step=any value='{round(hi,6)}'></td>")
+        for _ in range(out_cols):
             a("<td class=oimp></td>")
         a("</tr>")
     a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
-    def _adverse(d):
-        if t.formula == "recompute_linear":
-            return "low" if d.output_low < d.output_high else "high"
-        if t.formula == "valuation_pv" and d.key == "rate":
-            return "high"
-        return "high" if (t.formula == "linear_sum" and d.coef < 0) else "low"
-
-    spec = {
-        "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
-        "offset": t.offset, "outNames": out_names,
-        "ebitdaBase": t.output_base, "revBase": t.out2_base,
-        "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
-                     "coef": d.coef, "adverse": _adverse(d),
-                     "outLow": d.output_low, "outHigh": d.output_high,
-                     "rev2Low": d.out2_low, "rev2High": d.out2_high}
-                    for d in t.drivers],
-        "defaults": {d.key: {"low": d.low, "high": d.high} for d in t.drivers},
-        "selA": keyA, "selB": keyB,
-    }
+    if cube:
+        spec = {"formula": "cube", "cube": cube, "unit": t.output_unit, "selA": keyA, "selB": keyB}
+    else:
+        def _adverse(d):
+            if t.formula == "valuation_pv" and d.key == "rate":
+                return "high"
+            return "high" if (t.formula == "linear_sum" and d.coef < 0) else "low"
+        spec = {
+            "formula": t.formula, "horizon": t.horizon, "unit": t.output_unit,
+            "offset": t.offset, "outNames": out_names, "revBase": t.out2_base,
+            "drivers": [{"key": d.key, "label": d.label, "base": d.base, "low": d.low, "high": d.high,
+                         "coef": d.coef, "adverse": _adverse(d),
+                         "outLow": d.output_low, "outHigh": d.output_high,
+                         "rev2Low": d.out2_low, "rev2High": d.out2_high} for d in t.drivers],
+            "defaults": {d.key: {"low": d.low, "high": d.high} for d in t.drivers},
+            "selA": keyA, "selB": keyB,
+        }
     a(f"<script type=application/json class=spec>{json.dumps(spec)}</script>")
     a("</div>")
     return "\n".join(o)
 
 
 TORNADO_JS = r"""
-function maFmt(v){const a=Math.abs(v);if(a>=1e9)return (v/1e9).toFixed(1)+'B';if(a>=1e6)return (v/1e6).toFixed(1)+'M';if(a>=1000)return v.toLocaleString(undefined,{maximumFractionDigits:0});if(a>=1)return v.toFixed(2).replace(/\.?0+$/,'');return v.toFixed(3);}
+function maFmt(v){if(v==null||isNaN(v))return '–';const a=Math.abs(v);if(a>=1e9)return (v/1e9).toFixed(1)+'B';if(a>=1e6)return (v/1e6).toFixed(1)+'M';if(a>=1000)return v.toLocaleString(undefined,{maximumFractionDigits:0});if(a>=1)return v.toFixed(2).replace(/\.?0+$/,'');return v.toFixed(3);}
 function maGet(spec,vals,k){if(k in vals)return vals[k];const d=spec.drivers.find(x=>x.key===k);return d?d.base:0;}
 function maEval(spec,vals){
   if(spec.formula==='valuation_pv'){
     const rate=spec.drivers.find(d=>d.key==='rate')?maGet(spec,vals,'rate'):0;
     return maGet(spec,vals,'multiple')*maGet(spec,vals,'metric')/Math.pow(1+rate,spec.horizon||0);
   }
-  if(spec.formula==='recompute_linear'){
-    let s=spec.ebitdaBase||0;
+  if(spec.formula==='cube_view'){     // base + per-input slope*(value-base); slope from the recompute points
+    let s=spec.base||0;
     spec.drivers.forEach(d=>{const sl=(d.outHigh-d.outLow)/((d.high-d.low)||1);s+=sl*(maGet(spec,vals,d.key)-d.base);});
     return s;
   }
   let s=spec.offset||0;spec.drivers.forEach(d=>{s+=d.coef*maGet(spec,vals,d.key);});return s;
 }
-function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
-function maAdv(d,cur){return d.adverse==='high'?cur[d.key].hi:cur[d.key].lo;}
-function maFav(d,cur){return d.adverse==='high'?cur[d.key].lo:cur[d.key].hi;}
-function maShapley(spec,cur){
-  // linear: contribution = coef*(adverse-base), exact. nonlinear & small: exact Shapley over subsets.
-  const ds=spec.drivers;
-  if(spec.formula==='linear_sum'||ds.length>12){
-    const out={};ds.forEach(d=>{out[d.key]=d.coef*(maAdv(d,cur)-d.base);});return out;
-  }
-  const base={},adv={};ds.forEach(d=>{base[d.key]=d.base;adv[d.key]=maAdv(d,cur);});
-  const fact=n=>{let f=1;for(let i=2;i<=n;i++)f*=i;return f;};
-  const cache={};const f=(S)=>{const key=[...S].sort().join(',');if(key in cache)return cache[key];const ov=Object.assign({},base);S.forEach(k=>ov[k]=adv[k]);const v=maEval(spec,ov);cache[key]=v;return v;};
-  const n=ds.length,phi={};const keys=ds.map(d=>d.key);
-  keys.forEach(k=>{phi[k]=0;const rest=keys.filter(x=>x!==k);
-    const subs=(arr)=>{const res=[[]];for(const x of arr){const cp=res.map(s=>s.concat(x));res.push(...cp);}return res;};
-    subs(rest).forEach(S=>{const w=fact(S.length)*fact(n-S.length-1)/fact(n);phi[k]+=w*(f(S.concat(k))-f(S));});});
-  return phi;
+// resolve the spec to a single-output linear view; for a cube, read the selected output+year
+function maSpec(torn){
+  const raw=JSON.parse(torn.querySelector('script.spec').textContent);
+  if(raw.formula!=='cube') return raw;
+  const cube=raw.cube;
+  const out=(torn.querySelector('.outsel')||{}).value||cube.defaultOutput||cube.outputs[0].key;
+  const per=(torn.querySelector('.persel')||{}).value||cube.defaultPeriod||cube.periods[cube.periods.length-1];
+  const olabel=(cube.outputs.find(x=>x.key===out)||{}).label||out;
+  const base=((cube.base[out]||{})[per]);
+  const drivers=cube.drivers.map(d=>{
+    const cell=((d.out[out]||{})[per])||{low:base,high:base};
+    return {key:d.key,label:d.label,base:d.value,low:d.value*0.8,high:d.value*1.2,outLow:cell.low,outHigh:cell.high};
+  });
+  return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,drivers:drivers,selA:raw.selA,selB:raw.selB,
+          defaults:Object.fromEntries(drivers.map(d=>[d.key,{low:d.low,high:d.high}]))};
 }
-function maDownUp(spec,cur){const dn={},up={};spec.drivers.forEach(d=>{dn[d.key]=maAdv(d,cur);up[d.key]=maFav(d,cur);});return {dn:maEval(spec,dn),up:maEval(spec,up)};}
+function maRanges(torn){const cur={};torn.querySelectorAll('.ranges tr[data-key]').forEach(r=>{cur[r.dataset.key]={lo:parseFloat(r.querySelector('.lo').value),hi:parseFloat(r.querySelector('.hi').value)};});return cur;}
 function maOutFns(spec){
-  // the model's key outputs. valuation: PV. income statement: Revenue AND EBITDA.
+  if(spec.formula==='cube_view') return [{name:spec.outLabel||'Output',fn:v=>maEval(spec,v)}];
   const nm=spec.outNames||[];
   if(spec.formula==='valuation_pv') return [{name:nm[0]||'Output',fn:v=>maEval(spec,v)}];
-  if(spec.formula==='recompute_linear') return [
-    {name:nm[0]||'Revenue',fn:v=>{let s=spec.revBase||0;spec.drivers.forEach(d=>{const sl=(d.rev2High-d.rev2Low)/((d.high-d.low)||1);s+=sl*(maGet(spec,v,d.key)-d.base);});return s;}},
-    {name:nm[1]||'EBITDA',fn:v=>maEval(spec,v)},
-  ];
   return [
     {name:nm[0]||'Revenue',fn:v=>{let s=0;spec.drivers.forEach(d=>{if(d.coef>0)s+=d.coef*maGet(spec,v,d.key);});return s;}},
     {name:nm[1]||'EBITDA',fn:v=>maEval(spec,v)},
@@ -701,6 +704,8 @@ function maOutFns(spec){
 }
 function maImpacts(torn,spec,cur){
   const fns=maOutFns(spec);
+  // keep the impact-table header in sync with the selected output (cube mode)
+  const h=torn.querySelector('.outname3'); if(h&&fns.length===1) h.textContent=fns[0].name;
   spec.drivers.forEach(d=>{
     const tr=torn.querySelector('.ranges tr[data-key="'+CSS.escape(d.key)+'"]');if(!tr)return;
     const cells=tr.querySelectorAll('.oimp');
@@ -708,68 +713,60 @@ function maImpacts(torn,spec,cur){
       const cell=cells[oi];if(!cell)return;
       const b=o.fn({}),lo=o.fn({[d.key]:cur[d.key].lo}),hi=o.fn({[d.key]:cur[d.key].hi}),dhi=hi-b;
       if(Math.abs(lo-b)<1e-6&&Math.abs(hi-b)<1e-6){cell.innerHTML='<span class=nochg>— no effect</span>';return;}
-      cell.innerHTML='<span class="iv '+(lo<b?'dn':'up')+'">'+maFmt(lo)+'</span>'
-        +'<span class=iar>→</span>'
+      cell.innerHTML='<span class="iv '+(lo<b?'dn':'up')+'">'+maFmt(lo)+'</span><span class=iar>→</span>'
         +'<span class="iv '+(hi<b?'dn':'up')+'">'+maFmt(hi)+'</span>'
         +'<div class=idl>Δ '+(dhi>=0?'+':'')+maFmt(dhi)+'</div>';
     });
   });
 }
-function maColor(t){ // 0=red .. 1=green
-  const r=t<0.5?210:Math.round(210-(t-0.5)*2*180), g=t<0.5?Math.round(60+t*2*130):190, b=70;
-  return `rgb(${r},${g},${b})`;
-}
+function maColor(t){const r=t<0.5?210:Math.round(210-(t-0.5)*2*180),g=t<0.5?Math.round(60+t*2*130):190,b=70;return `rgb(${r},${g},${b})`;}
 function maRender(torn){
-  const spec=JSON.parse(torn.querySelector('script.spec').textContent);
+  const spec=maSpec(torn);
   const cur=maRanges(torn);
+  const oname=spec.outLabel||((spec.outNames||['output'])[(spec.outNames||[]).length-1]||'output');
+  torn.querySelectorAll('.outname,.outname2').forEach(el=>el.textContent=oname);
   const base=maEval(spec,{});
   torn.querySelector('.base').textContent=maFmt(base);
-  const du=maDownUp(spec,cur);
-  torn.querySelector('.dnv').textContent=maFmt(du.dn);
-  torn.querySelector('.upv').textContent=maFmt(du.up);
-  // two-sided tornado bars: each input's output at its adverse end (red, left
-  // of base) and favorable end (green, right of base), centered on the base.
-  const eff=spec.drivers.map(d=>{
-    const lo=maEval(spec,{[d.key]:cur[d.key].lo});
-    const hi=maEval(spec,{[d.key]:cur[d.key].hi});
-    const adv=d.adverse==='high'?hi:lo, fav=d.adverse==='high'?lo:hi;
-    return {key:d.key,adv,fav,swing:Math.abs(hi-lo)};
-  });
-  const maxd=Math.max(...eff.map(e=>Math.max(Math.abs(e.adv-base),Math.abs(e.fav-base))),1e-9);
+  // all-adverse / all-favorable: each input set to the end that lowers / raises the output
+  const advv={},favv={};
+  spec.drivers.forEach(d=>{const lo=maEval(spec,{[d.key]:cur[d.key].lo}),hi=maEval(spec,{[d.key]:cur[d.key].hi});
+    const aLo=lo<hi; advv[d.key]=aLo?cur[d.key].lo:cur[d.key].hi; favv[d.key]=aLo?cur[d.key].hi:cur[d.key].lo;});
+  torn.querySelector('.dnv').textContent=maFmt(maEval(spec,advv));
+  torn.querySelector('.upv').textContent=maFmt(maEval(spec,favv));
+  // single magnitude bar per input, sorted by swing
+  const eff=spec.drivers.map(d=>{const lo=maEval(spec,{[d.key]:cur[d.key].lo}),hi=maEval(spec,{[d.key]:cur[d.key].hi});return {key:d.key,lo,hi,swing:Math.abs(hi-lo)};});
+  const maxs=Math.max(...eff.map(e=>e.swing),1e-9);
   const box=torn.querySelector('.shapbars');
   eff.sort((a,b)=>b.swing-a.swing);
-  eff.forEach(e=>{const row=box.querySelector(`.shap[data-key="${CSS.escape(e.key)}"]`);box.appendChild(row);
-    const dn=row.querySelector('.bar.dn'), up=row.querySelector('.bar.up');
-    const dpct=Math.abs(e.adv-base)/maxd*50, upct=Math.abs(e.fav-base)/maxd*50;
-    dn.style.right='50%';dn.style.width=dpct+'%';
-    up.style.left='50%';up.style.width=upct+'%';
-    row.querySelector('.vv').textContent='▼ '+maFmt(e.adv)+'  ▲ '+maFmt(e.fav);});
-  // live output-impact readout in the edit-ranges table
+  eff.forEach(e=>{const row=box.querySelector('.shap[data-key="'+CSS.escape(e.key)+'"]');if(!row)return;box.appendChild(row);
+    row.querySelector('.bar1').style.width=(e.swing/maxs*100)+'%';
+    row.querySelector('.vv').textContent=maFmt(Math.min(e.lo,e.hi))+' → '+maFmt(Math.max(e.lo,e.hi));});
   maImpacts(torn,spec,cur);
   // two-way grid
   const A=spec.drivers.find(d=>d.key===torn.querySelector('.selA').value)||spec.drivers[0];
   const B=spec.drivers.find(d=>d.key===torn.querySelector('.selB').value)||spec.drivers[0];
-  const N=5;const av=[],bv=[];
+  if(!A||!B){torn.querySelector('.gridbox').innerHTML='';return;}
+  const N=5,av=[],bv=[];
   for(let i=0;i<N;i++){av.push(cur[A.key].lo+(cur[A.key].hi-cur[A.key].lo)*i/(N-1));bv.push(cur[B.key].lo+(cur[B.key].hi-cur[B.key].lo)*i/(N-1));}
   let cells=[],mn=Infinity,mx=-Infinity;
   for(let i=0;i<N;i++){cells.push([]);for(let j=0;j<N;j++){const ov={};ov[A.key]=av[i];ov[B.key]=bv[j];const v=maEval(spec,ov);cells[i].push(v);if(v<mn)mn=v;if(v>mx)mx=v;}}
-  const fp=(d,x)=>(d.unit==='fraction'?(x*100).toFixed(0)+'%':maFmt(x));
+  const fp=x=>maFmt(x);
   let h='<div class=cap>columns: '+B.label+' · rows: '+A.label+'</div><table class=grid2><tr><th></th>';
-  for(let j=0;j<N;j++)h+='<th>'+fp(B,bv[j])+'</th>';h+='</tr>';
-  for(let i=0;i<N;i++){h+='<tr><td class=axl>'+fp(A,av[i])+'</td>';for(let j=0;j<N;j++){const v=cells[i][j];const tnorm=mx>mn?(v-mn)/(mx-mn):0.5;h+='<td style="background:'+maColor(tnorm)+';color:#fff">'+maFmt(v)+'</td>';}h+='</tr>';}
-  h+='</table>';
-  torn.querySelector('.gridbox').innerHTML=h;
+  for(let j=0;j<N;j++)h+='<th>'+fp(bv[j])+'</th>';h+='</tr>';
+  for(let i=0;i<N;i++){h+='<tr><td class=axl>'+fp(av[i])+'</td>';for(let j=0;j<N;j++){const v=cells[i][j];const tn=mx>mn?(v-mn)/(mx-mn):0.5;h+='<td style="background:'+maColor(tn)+';color:#fff">'+maFmt(v)+'</td>';}h+='</tr>';}
+  torn.querySelector('.gridbox').innerHTML=h+'</table>';
 }
 document.querySelectorAll('.torn').forEach(t=>{
   t.addEventListener('input',()=>maRender(t));
   t.addEventListener('change',()=>maRender(t));
   t.querySelector('.reset')?.addEventListener('click',()=>{
-    const spec=JSON.parse(t.querySelector('script.spec').textContent);
-    t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{const d=spec.defaults[r.dataset.key];r.querySelector('.lo').value=d.low;r.querySelector('.hi').value=d.high;});
+    const spec=maSpec(t);
+    t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{const d=spec.defaults[r.dataset.key];if(d){r.querySelector('.lo').value=d.low;r.querySelector('.hi').value=d.high;}});
     maRender(t);
   });
-  const spec=JSON.parse(t.querySelector('script.spec').textContent);
-  t.querySelector('.selA').value=spec.selA;t.querySelector('.selB').value=spec.selB;
+  const spec=maSpec(t);
+  if(t.querySelector('.selA'))t.querySelector('.selA').value=spec.selA;
+  if(t.querySelector('.selB'))t.querySelector('.selB').value=spec.selB;
   maRender(t);
 });
 """
@@ -856,9 +853,9 @@ def render_report(report: Report, filename: str) -> str:
     if tables:
         a("<h2>Worksheet <span class=muted style='font-weight:400;font-size:14px'>"
           "— each calculation with the model's own rows, and what it flags</span></h2>")
-        a("<p class=legend>Each calculation shows the company's <b style='color:#5f574b'>model rows</b> "
-          "(hover any value for its exact <code>Sheet!Cell</code>) and the <b>NEW</b> derived row, then a "
-          "one-line flag. Click a section to expand it.</p>")
+        a("<p class=legend>Four broad groups. Each shows the company's <b style='color:#5f574b'>model rows</b> "
+          "once, then the calculations built on them. A calc with a <b style='color:#b11226'>red title</b> has a "
+          "cell that stands out — <b>hover that cell</b> for the reason. Click a group to expand it.</p>")
         # group preserving family order
         fams: list[str] = []
         by_fam: dict[str, list] = {}
@@ -869,23 +866,9 @@ def render_report(report: Report, filename: str) -> str:
             by_fam[t.family].append(t)
         for fam in fams:
             group = by_fam[fam]
-            uniq: dict[tuple, str] = {}        # unique (text, sev) -> sev; matches the deduped display
-            for t in group:
-                ft, fs = _table_flag(t, findings_by_id)
-                if fs:
-                    uniq[(ft, fs)] = fs
-            worst = min((_SEV_RANK.get(s, 9) for s in uniq.values()), default=9)
-            n_flag = len(uniq)
-            # badge colored by the worst flag in the family; all collapsed by
-            # default so the report is a scannable list you click to expand
-            if n_flag:
-                bcolor = _SEV_COLOR_STR["high"] if worst <= 1 else _SEV_COLOR_STR["medium"]
-                badge = f"<span class=fambadge style='background:{bcolor}'>{n_flag} flag{'s' if n_flag != 1 else ''}</span>"
-            else:
-                badge = "<span class=fambadge style='background:#1a7f4b'>clean</span>"
             a("<details class=famsec>")
             a(f"<summary><span class=famname>{e(fam)}</span> "
-              f"<span class=muted>· {len(group)} calc{'s' if len(group) != 1 else ''}</span> {badge}</summary>")
+              f"<span class=muted>· {len(group)} calc{'s' if len(group) != 1 else ''}</span></summary>")
             a(render_family(fam, group, findings_by_id))
             a("</details>")
 
@@ -895,11 +878,12 @@ def render_report(report: Report, filename: str) -> str:
           "— how the outputs move when you change the model's inputs</span></h2>")
         a("<p class=legend>Each input below is one of the model's <b>own cells</b> (hover a bar for its "
           "<code>Sheet!Cell</code>). Where the workbook's formulas can be evaluated, flexing an input "
-          "<b>recomputes the outputs through the model's own formulas</b> — an exact what-if; otherwise the "
-          "model's revenue/cost lines are flexed directly (the per-tornado note says which). The <b>tornado</b> "
-          "shows how far each input moves the output — <span style='color:#c4543a'>red = adverse end</span>, "
-          "<span style='color:#5a9e74'>green = favorable end</span>; the <b>two-way grid</b> moves two at once. "
-          "Edit any range and both views re-run live.</p>")
+          "<b>recomputes the outputs through the model's own formulas</b> — an exact what-if, and you can "
+          "<b>pick which output and year</b> to view; otherwise the model's revenue/cost lines are flexed "
+          "directly (the per-tornado note says which). The <b>tornado</b> shows one bar per input — its length "
+          "is how far that input moves the selected output (±20% by default; the swing is the same up or down, "
+          "so a single bar says it all). The <b>two-way grid</b> moves two inputs at once. Edit any range and "
+          "everything re-runs live.</p>")
         for i, t in enumerate(report.sensitivities):
             a(render_tornado(t, i))
             for cav in t.caveats:

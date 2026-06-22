@@ -38,7 +38,7 @@ _TOKEN_RE = re.compile(
     | (?P<str>"(?:[^"]|"")*")
     | (?P<num>\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+)
     | (?P<ref>(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+
-              (?::\$?[A-Za-z]{1,3}\$?\d+)?)
+              (?::(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+)?)
     | (?P<func>[A-Za-z_][A-Za-z0-9_.]*)(?=\s*\()
     | (?P<bool>TRUE|FALSE)
     | (?P<op><=|>=|<>|[-+*/^%&=<>])
@@ -250,10 +250,13 @@ def _prod(vals):
 # Recompute model
 # --------------------------------------------------------------------------
 # the sheet name, if present, MUST be followed by "!" — otherwise a 2-letter
-# column range like AR7:AR11 gets misread as "sheet A, cell R7:AR11"
+# column range like AR7:AR11 gets misread as "sheet A, cell R7:AR11". The second
+# endpoint of a range may carry its own sheet qualifier ('P&L'!Y7:'P&L'!AA7);
+# we assume it's the same sheet as the first and ignore it.
 _CELL = re.compile(r"^(?:(?:'(?P<sq>[^']*)'|(?P<nq>[A-Za-z_][A-Za-z0-9_.]*))!)?"
                    r"\$?(?P<col>[A-Za-z]{1,3})\$?(?P<row>\d+)"
-                   r"(?::\$?(?P<col2>[A-Za-z]{1,3})\$?(?P<row2>\d+))?$")
+                   r"(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)!)?"
+                   r"\$?(?P<col2>[A-Za-z]{1,3})\$?(?P<row2>\d+))?$")
 
 
 def _col_to_idx(col: str) -> int:

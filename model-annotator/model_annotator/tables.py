@@ -31,41 +31,55 @@ from .schema import (
 )
 from .structure import StructureResult
 
-# metric_id -> (family key, human family title). Order here drives report order.
+# metric_id -> (family key, human family title). Four broad groups that share
+# the same source rows; order here drives report order. Longest matching key wins
+# (see _family), so specific ids land in the right bucket.
+_GROWTH = "Growth & revenue quality"
+_MARGIN = "Margins & profitability"
+_CASH = "Cash, burn & capital"
+_VAL = "Valuation, returns & team"
+
 FAMILIES: list[tuple[str, str]] = [
-    ("growth", "Growth"),
-    ("cagr", "Growth"),
-    ("margin", "Margins & unit economics"),
-    ("runway", "Runway & burn"),
-    ("cumulative", "Capital consumed & raised"),
-    ("cushion", "Capital consumed & raised"),
-    ("peak", "Capital consumed & raised"),
-    ("grant", "Grant dependence"),
-    ("revenue_ex_grants", "Grant dependence"),
-    ("capex", "Capex & depreciation"),
-    ("ebitda_before", "Capex & depreciation"),
-    ("opex_ex_capex", "Capex & depreciation"),
-    ("segment", "Segments & concentration"),
-    ("terminal_concentration", "Segments & concentration"),
-    ("blended_asp", "Segments & concentration"),
-    ("capacity", "Capacity & market share"),
-    ("market_share", "Capacity & market share"),
-    ("operational", "Capacity & market share"),
-    ("revenue_per_capacity", "Capacity & market share"),
-    ("exit_value", "Valuation"),
-    ("present_value", "Valuation"),
-    ("tax", "Taxes"),
-    ("effective_tax", "Taxes"),
-    ("revenue_per_employee", "Team"),
-    ("implied_fte", "Team"),
-    ("payroll", "Team"),
-    ("working_capital", "Working capital"),
-    ("receivables", "Working capital"),
-    ("ar_", "Working capital"),
-    ("cash_conversion", "Cash conversion"),
-    ("avg_monthly_cash", "Runway & burn"),
-    ("opex_over_revenue", "Margins & unit economics"),
-    ("llm_directed", "LLM-directed (company-specific)"),
+    # 1) top line: how fast it grows and how real the revenue is
+    ("growth", _GROWTH),
+    ("cagr", _GROWTH),
+    ("segment", _GROWTH),
+    ("terminal_concentration", _GROWTH),
+    ("blended_asp", _GROWTH),
+    ("grant", _GROWTH),
+    ("revenue_ex_grants", _GROWTH),
+    ("capacity", _GROWTH),
+    ("market_share", _GROWTH),
+    ("operational", _GROWTH),
+    ("revenue_per_capacity", _GROWTH),
+    # 2) profitability and unit economics
+    ("margin", _MARGIN),
+    ("opex_over_revenue", _MARGIN),
+    ("opex_ex_capex", _MARGIN),
+    ("ebitda_before", _MARGIN),
+    ("rule_of_40", _MARGIN),
+    ("operating_leverage", _MARGIN),
+    ("tax", _MARGIN),
+    ("effective_tax", _MARGIN),
+    # 3) cash, burn, capital intensity
+    ("runway", _CASH),
+    ("avg_monthly_cash", _CASH),
+    ("cumulative", _CASH),
+    ("cushion", _CASH),
+    ("peak", _CASH),
+    ("capex", _CASH),
+    ("working_capital", _CASH),
+    ("receivables", _CASH),
+    ("ar_", _CASH),
+    ("inventory", _CASH),
+    ("cash_conversion", _CASH),
+    # 4) value created and the team behind it
+    ("exit_value", _VAL),
+    ("present_value", _VAL),
+    ("revenue_per_employee", _VAL),
+    ("implied_fte", _VAL),
+    ("payroll", _VAL),
+    ("llm_directed", _GROWTH),
 ]
 
 

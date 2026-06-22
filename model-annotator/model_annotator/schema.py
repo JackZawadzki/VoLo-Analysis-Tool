@@ -424,6 +424,9 @@ class Tornado(BaseModel):
     offset: float = 0.0                   # constant that anchors the base to the model's own output row
     out2_base: Optional[float] = None     # recompute mode: base value of the secondary output (revenue)
     out2_label: str = "Revenue"           # recompute mode: name of the secondary output
+    # recompute mode only: how every driver moves EVERY mapped output at EVERY
+    # period, so the UI can let the analyst pick which output/year to view.
+    cube: Optional[dict] = None
     drivers: list[SensitivityDriver] = Field(default_factory=list)  # sorted by |shapley| desc
     downside: float = 0.0                 # output with every driver at its adverse end
     upside: float = 0.0                   # output with every driver at its favorable end
