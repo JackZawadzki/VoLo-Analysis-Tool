@@ -181,17 +181,23 @@ def render_markdown(report: Report) -> str:
 
     # ---- sensitivity ----
     if report.sensitivities:
-        a("## Sensitivity — what moves the output (Shapley), off the model's own inputs")
+        a("## Sensitivity — how the outputs move when you change the model's own inputs")
+        a("")
+        a("Each input is one of the model's own cells, flexed across its range. "
+          "*Output @ adverse* and *@ favorable* are the output when that single input "
+          "sits at its worst / best end (both directions, not just downside).")
         a("")
         for t in report.sensitivities:
             a(f"**{t.output_label}** — base {_fmt_v(t.output_base)} {t.output_unit}; "
               f"all-adverse {_fmt_v(t.downside)}, all-favorable {_fmt_v(t.upside)}. `{t.formula_note}`")
             a("")
-            a("| Input (model cell) | Base | Range low → high | Shapley contribution to downside |")
-            a("|---|---|---|---|")
+            a("| Input (model cell) | Base | Range low → high | Output @ adverse | Output @ favorable |")
+            a("|---|---|---|---|---|")
             for d in t.drivers:
+                adv = d.output_low if d.coef >= 0 else d.output_high
+                fav = d.output_high if d.coef >= 0 else d.output_low
                 a(f"| {d.label} ({', '.join(d.input_refs)}) | {_fmt_v(d.base)} | "
-                  f"{_fmt_v(d.low)} → {_fmt_v(d.high)} | {_fmt_v(d.shapley)} |")
+                  f"{_fmt_v(d.low)} → {_fmt_v(d.high)} | {_fmt_v(adv)} | {_fmt_v(fav)} |")
             a("")
             for cav in t.caveats:
                 a(f"- *{cav}*")

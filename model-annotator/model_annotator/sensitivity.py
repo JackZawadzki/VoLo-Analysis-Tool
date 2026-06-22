@@ -178,30 +178,34 @@ def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
         t = _terminal(rev)
         tp = t[0] if t else None
 
-    # ---- Output 1: terminal EBITDA, decomposed to EVERY line item ----------
+    # ---- Output 1: terminal EBITDA ----------------------------------------
+    # Decompose revenue/COGS/opex into line items ONLY when those items
+    # reconcile to the model's own total for that group; otherwise the mapped
+    # "components" overlap (a subtotal like "TOTAL Salaries" plus its parts, or
+    # an LLM-mapped bucket), which would double-count — so fall back to the one
+    # total cell. This keeps every driver a real, non-overlapping model line.
+    def _group(comp_items, total_item, coef, key_prefix, total_label):
+        comps = _components(comp_items, sheet, tp, coef, key_prefix, U)
+        tt = _terminal_for(total_item, tp) if total_item is not None else None
+        if comps and tt is not None:
+            comp_sum = sum(s.base for s in comps)            # bases are abs for costs
+            total_abs = abs(tt[1])
+            if total_abs > 1 and abs(comp_sum - total_abs) <= 0.02 * total_abs:
+                return comps                                  # clean, non-overlapping decomposition
+        if tt is not None:                                    # overlap or gap -> use the single total
+            return [_Spec(key_prefix, f"{total_label} ({tp})", [tt[2]],
+                          abs(tt[1]) if coef < 0 else tt[1], coef, U,
+                          adverse="high" if coef < 0 else "low")]
+        return comps
+
     if rev is not None and tp is not None:
         specs: list[_Spec] = []
-        segs = [it for it in mapping.get_all("revenue_segment") if it.sheet == sheet]
-        if segs:
-            specs += _components(segs, sheet, tp, +1.0, "seg", U)
-        else:
-            rt = _terminal_for(rev, tp)
-            if rt:
-                specs.append(_Spec("revenue", f"Total revenue ({tp})", [rt[2]], rt[1], +1.0, U, adverse="low"))
-        cogs_comp = [it for it in mapping.get_all("cogs_component") if it.sheet == sheet]
-        if cogs_comp:
-            specs += _components(cogs_comp, sheet, tp, -1.0, "cogs", U)
-        else:
-            ct = _terminal_for(mapping.get("cogs_total", sheet), tp) if mapping.get("cogs_total", sheet) else None
-            if ct:
-                specs.append(_Spec("cogs", f"Total COGS ({tp})", [ct[2]], abs(ct[1]), -1.0, U, adverse="high"))
-        opex_comp = [it for it in mapping.get_all("opex_component") if it.sheet == sheet]
-        if opex_comp:
-            specs += _components(opex_comp, sheet, tp, -1.0, "opex", U)
-        else:
-            ot = _terminal_for(mapping.get("opex_total", sheet), tp) if mapping.get("opex_total", sheet) else None
-            if ot:
-                specs.append(_Spec("opex", f"Total opex ({tp})", [ot[2]], abs(ot[1]), -1.0, U, adverse="high"))
+        specs += _group([it for it in mapping.get_all("revenue_segment") if it.sheet == sheet],
+                        rev, +1.0, "rev", "Total revenue")
+        specs += _group([it for it in mapping.get_all("cogs_component") if it.sheet == sheet],
+                        mapping.get("cogs_total", sheet), -1.0, "cogs", "Total COGS")
+        specs += _group([it for it in mapping.get_all("opex_component") if it.sheet == sheet],
+                        mapping.get("opex_total", sheet), -1.0, "opex", "Total opex")
 
         if len(specs) >= 2:
             base_out = _eval_linear(specs, {})
