@@ -160,8 +160,17 @@ tr.subhdr td.lab{font-family:Georgia,serif;font-size:10.5px;font-weight:700;text
 .rl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px}
 .prov{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#b0a489;margin-top:2px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px;cursor:help}
-.cf{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10px;color:#a89f8c;font-weight:400;margin-top:2px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:262px;cursor:help}
+.cf{font-family:"SF Mono",Menlo,Consolas,monospace;font-size:10.5px;color:#8a7f6f;font-weight:400;margin-top:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;cursor:help}
+.measures{font-size:11px;color:#7d756a;font-style:italic;margin-top:3px;line-height:1.4;
+  white-space:normal;max-width:300px}
+table.grid th.num,table.grid td.num{text-align:right;color:#b0a489;font-size:10.5px;width:24px;
+  padding:5px 6px 5px 4px;font-variant-numeric:tabular-nums;position:sticky;left:0;background:var(--panel)}
+table.grid thead th.num{background:#efe9dd;z-index:2}
+table.grid td.lab{left:24px}     /* label column sits right of the # column */
+table.grid th.lab{left:24px}
+.scalarv{color:var(--ink);font-weight:700}
+.hzn{color:var(--muted);font-weight:400;font-size:11px;margin-left:8px}
 tr.src td{color:#5f574b}
 tr.src td.lab{color:#3a3128;font-weight:500}
 tr.der td{font-weight:600;color:var(--ink);border-top:1px solid #ece4d3}
@@ -422,15 +431,24 @@ def _prov(sr) -> tuple[str, str]:
     return "model", "from the workbook"
 
 
+def _renumber_comp(comp: str, idmap: dict) -> str:
+    """Rewrite a computation so its canonical inputs read as the numbered rows in
+    this section, e.g. 'gross_profit[t] / revenue_total[t]'  ->  '(3) / (1)'."""
+    out = comp
+    for cid in sorted(idmap, key=len, reverse=True):
+        out = re.sub(r"\b" + re.escape(cid) + r"\b", f"({idmap[cid]})", out)
+    out = out.replace("[t-1]", "ₜ₋₁").replace("[t]", "")  # tidy period subscripts
+    return out
+
+
 def render_family(fam: str, tables: list, findings_by_id=None) -> str:
     """One section per family: the model's own cited rows ONCE at the top, then
-    every calculation built on them. A row used by several calcs is shown once,
-    so the section stays compact. Source provenance is on a hover."""
+    every calculation built on them. Every row is numbered, so a calculation can
+    name the rows it uses (e.g. '(3) / (1)'). Source provenance is on a hover."""
     findings_by_id = findings_by_id or {}
     o: list[str] = []
     a = o.append
     periods = tables[0].periods if tables else []
-    ncol = len(periods) + 1
 
     # dedupe source rows across all calcs in this family, keep workbook order
     seen: dict[tuple, object] = {}
@@ -441,18 +459,36 @@ def render_family(fam: str, tables: list, findings_by_id=None) -> str:
                 seen[key] = sr
     sources = sorted(seen.values(), key=lambda s: (s.sheet or "", s.row_index or 0))
 
+    # number every row (sources first, then calcs) and map canonical id -> number
+    idmap: dict[str, int] = {}
+    src_no: dict[int, int] = {}
+    der_no: dict[int, int] = {}
+    n = 0
+    for sr in sources:
+        n += 1
+        src_no[id(sr)] = n
+        if sr.canonical_id:
+            idmap.setdefault(sr.canonical_id, n)
+    for t in tables:
+        n += 1
+        der_no[id(t)] = n
+        if t.metric_id:
+            idmap.setdefault(t.metric_id, n)
+
     a("<div class=scroll><table class=grid><thead><tr>")
-    a("<th class=lab>row</th>")
+    a("<th class=num>#</th><th class=lab>row</th>")
     for p in periods:
         a(f"<th>{e(p)}</th>")
     a("</tr></thead><tbody>")
+    sub = f"<td class=num></td><td class=lab>{{}}</td><td colspan={len(periods)}></td>"
 
     # ---- the model's own rows, once ----
     if sources:
-        a(f"<tr class=subhdr><td class=lab>From the workbook</td><td colspan={len(periods)}></td></tr>")
+        a(f"<tr class=subhdr>{sub.format('From the workbook')}</tr>")
         for sr in sources:
             short, full = _prov(sr)
-            a(f"<tr class=src><td class=lab><div class=rl title='{e(sr.label)}'>{e(sr.label)}</div>"
+            a(f"<tr class=src><td class=num>{src_no[id(sr)]}</td>"
+              f"<td class=lab><div class=rl title='{e(sr.label)}'>{e(sr.label)}</div>"
               f"<div class=prov title='{e(full)}'>{e(short)}</div></td>")
             by_p = {c.period: c for c in sr.cells}
             for p in periods:
@@ -465,15 +501,32 @@ def render_family(fam: str, tables: list, findings_by_id=None) -> str:
     # ---- calculations built on those rows ----
     # No flag rows or badges (they cluttered): a standout cell keeps its hover
     # comment, and a calc that has any standout gets a red title so it's scannable.
-    a(f"<tr class=subhdr><td class=lab>Calculations</td><td colspan={len(periods)}></td></tr>")
+    a(f"<tr class=subhdr>{sub.format('Calculations')}</tr>")
     for t in tables:
         dr = t.derived_row
         by_p = {c.period: c for c in dr.cells} if dr else {}
         flagged = bool(dr) and any(c.highlighted and c.comment for c in dr.cells)
         labcls = "lab flagged" if flagged else "lab"
-        a(f"<tr class=der><td class='{labcls}'>"
+        comp = _renumber_comp(t.computation, idmap) if t.computation else ""
+        measures = f"<div class=measures>{e(t.rationale)}</div>" if t.rationale else ""
+        a(f"<tr class=der><td class=num>{der_no[id(t)]}</td><td class='{labcls}'>"
           f"<div class=rl title='{e(t.title)}'>{e(t.title)}</div>"
-          f"<div class=cf title='{e(t.computation)}'>{e(t.computation)}</div></td>")
+          f"<div class=cf title='{e(t.computation)}'>= {e(comp)}</div>{measures}</td>")
+        # scalar metric (one figure for the whole horizon) -> a single spanning cell
+        vals = [c for c in dr.cells if c.value is not None] if dr else []
+        if len(vals) == 1 and len(periods) > 2:
+            c = vals[0]
+            txt = _cell_text(c.value, dr.is_percent)
+            if c.highlighted and c.comment:
+                sev = (c.severity.value if c.severity else "medium")
+                a(f"<td class='hl s-{sev}' colspan={len(periods)} style='text-align:left'>{txt}"
+                  f"<span class=hzn>· one figure over {e(periods[0])}–{e(periods[-1])}</span>"
+                  f"<span class=tip>{e(c.comment)}</span></td>")
+            else:
+                a(f"<td class=scalarv colspan={len(periods)} style='text-align:left'>{txt}"
+                  f"<span class=hzn>· one figure over {e(periods[0])}–{e(periods[-1])}</span></td>")
+            a("</tr>")
+            continue
         for p in periods:
             c = by_p.get(p)
             if c is None or c.value is None:
