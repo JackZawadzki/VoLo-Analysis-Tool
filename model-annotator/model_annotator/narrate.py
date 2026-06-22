@@ -7,6 +7,7 @@ the template text on any mismatch.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from .llm import LLMClient, polish_with_verification
@@ -163,10 +164,17 @@ def build_executive_summary(report: Report, llm: Optional[LLMClient] = None):
     summary = ExecutiveSummary(text=template, source="template", headline_flags=flags)
 
     if llm is not None and llm.available:
-        facts = (f"Business: {what}\nHorizon: {span}\nTrust score: {wm.trust_score:.2f}\n"
+        # Note: trust score is deliberately NOT given to the LLM — it was removed
+        # from the product, and the model would otherwise reintroduce it verbatim.
+        facts = (f"Business: {what}\nHorizon: {span}\n"
                  f"Flags (worst first): {flags or 'none'}\nTrends: {trends or 'n/a'}")
         polished = llm._call(_SUMMARY_SYSTEM, facts, max_tokens=400, effort="low")
         from .llm import numerals_consistent
+        if polished:
+            # belt-and-suspenders: trust score is gone from the product, so drop any
+            # sentence that mentions it even if the model reintroduces the phrase
+            sents = re.split(r'(?<=[.!?])\s+', polished.strip())
+            polished = " ".join(s for s in sents if "trust score" not in s.lower()).strip()
         if polished and numerals_consistent(polished, facts + " " + template):
             summary.text = polished.strip()
             summary.source = "llm"

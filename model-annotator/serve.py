@@ -241,22 +241,53 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .prog .barfill{height:100%;width:0;background:linear-gradient(90deg,#c98a5e,#9c4221);border-radius:8px;transition:width .35s ease}
 .prog .plabel{margin-top:10px;color:#3a3128;font-size:14px}
 .prog .ppct{color:var(--muted);font-variant-numeric:tabular-nums}
+/* landing page */
+.hero{margin-bottom:24px}
+.feats{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.feat{font-size:12px;color:#6b6253;background:#efe9dd;border:1px solid var(--line);border-radius:999px;padding:4px 12px}
+.drop{display:block;border:2px dashed #c8bfae;border-radius:16px;background:var(--panel);padding:46px 24px;text-align:center;cursor:pointer;transition:.15s}
+.dropicon{width:46px;height:46px;margin:0 auto 12px;border-radius:50%;background:#efe9dd;display:flex;align-items:center;justify-content:center;color:#a8895f;font-size:22px}
+.dropt{font-size:19px;font-family:Georgia,serif;color:var(--ink)}
+.opts{display:flex;gap:22px;align-items:flex-start;margin-top:20px;flex-wrap:wrap}
+.btn.big{padding:12px 22px;font-size:15px;border-radius:9px}
+.llm{display:flex;gap:10px;align-items:flex-start;max-width:560px;cursor:pointer;background:#fbf8f2;border:1px solid var(--line);border-radius:10px;padding:11px 14px}
+.llm input{margin-top:3px;flex:none}
+.llm.dis{opacity:.6}
+.llmh{font-size:13.5px;color:#3a3128;font-weight:600}
+.llmh .st{font-weight:400;color:var(--muted);font-size:12px;margin-left:4px}
+.llmexpl{display:block;color:var(--muted);font-size:12px;line-height:1.5;margin-top:4px}
+.llmexpl b{color:#5f574b}
 """
 
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <title>model-annotator</title><style>{css}</style></head><body><div class=wrap>
-<h1>model-annotator</h1>
-<p class=sub>Automated financial-model diligence. Drop a startup's Excel model and get the analysis a senior VC analyst performs by hand — tie-outs, derived metrics, findings with evidence and the questions to ask management.</p>
+<div class=hero>
+  <h1>model-annotator</h1>
+  <p class=sub>Automated financial-model diligence — drop a startup's Excel model and get the analysis a senior VC analyst does by hand, every number traced back to the cell it came from.</p>
+  <div class=feats>
+    <span class=feat>Arithmetic tie-outs</span>
+    <span class=feat>Derived analyst metrics</span>
+    <span class=feat>Sensitivity &amp; tornado</span>
+    <span class=feat>Flags + questions to ask</span>
+  </div>
+</div>
 <form id=f method=post action=/annotate enctype=multipart/form-data>
   <label class=drop id=drop>
     <input type=file name=model id=file accept=".xlsx,.xlsm" required>
-    <div style="font-size:18px;font-family:Georgia,serif">Drop an .xlsx / .xlsm model here</div>
-    <div class=muted id=fname style="margin-top:8px">or click to choose a file</div>
+    <div class=dropicon>⬆</div>
+    <div class=dropt>Drop an .xlsx / .xlsm model here</div>
+    <div class=muted id=fname style="margin-top:6px">or click to choose a file</div>
   </label>
-  <div class=row style="margin-top:16px">
-    <button class=btn type=submit id=go>Annotate model</button>
-    <label class=muted style="font-size:13.5px"><input type=checkbox name=llm {llm_checked} {llm_dis}> LLM polish {llm_note}</label>
+  <div class=opts>
+    <button class="btn big" type=submit id=go>Annotate model →</button>
+    <label class="llm {llm_dis_cls}">
+      <input type=checkbox name=llm {llm_checked} {llm_dis}>
+      <span>
+        <span class=llmh>LLM polish<span class=st>{llm_note}</span></span>
+        <span class=llmexpl>Uses Claude to read the model's structure, decide which calculations matter <i>for this company</i>, and write the summary &amp; flags in plain English. <b>Every figure still comes from your workbook — the AI never computes or changes a number.</b> Leave it off for a fully deterministic run.</span>
+      </span>
+    </label>
   </div>
   <div class=prog id=prog>
     <div class=bartrack><div class=barfill id=barfill></div></div>
@@ -270,24 +301,34 @@ const drop=document.getElementById('drop'),file=document.getElementById('file'),
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{{e.preventDefault();drop.classList.remove('hover')}}));
 drop.addEventListener('drop',e=>{{file.files=e.dataTransfer.files;fn.textContent=file.files[0]?.name||''}});
 file.addEventListener('change',()=>fn.textContent=file.files[0]?.name||'or click to choose a file');
+const go=document.getElementById('go');
 const fill=document.getElementById('barfill'),plabel=document.getElementById('plabel'),ppct=document.getElementById('ppct');
 function setProg(frac,label){{fill.style.width=Math.round(frac*100)+'%';ppct.textContent=Math.round(frac*100)+'%';if(label)plabel.textContent=label;}}
+function fail(msg){{ plabel.textContent=msg; plabel.style.color='#b11226'; go.disabled=false; }}
 document.getElementById('f').addEventListener('submit',async (e)=>{{
   e.preventDefault();
-  if(!file.files[0])return;
-  document.getElementById('go').disabled=true;
+  if(!file.files[0]){{ fail('Choose an .xlsx / .xlsm file first.'); return; }}
+  go.disabled=true; plabel.style.color='';
   document.getElementById('prog').style.display='block';
   setProg(0.02,'Uploading…');
   const fd=new FormData(); fd.append('model',file.files[0]);
   if(document.querySelector('input[name=llm]')?.checked) fd.append('llm','on');
   let job;
-  try{{ const r=await fetch('/start',{{method:'POST',body:fd}}); job=(await r.json()).job; }}
-  catch(err){{ plabel.textContent='Upload failed: '+err; return; }}
+  try{{
+    const r=await fetch('/start',{{method:'POST',body:fd}});
+    let data={{}}; try{{ data=await r.json(); }}catch(_){{}}
+    if(!r.ok || data.error || !data.job){{ fail('Could not start: '+(data.error||('server error '+r.status))); return; }}
+    job=data.job;
+  }} catch(err){{ fail('Upload failed (is the server running?): '+err); return; }}
+  let misses=0;
   const poll=setInterval(async ()=>{{
-    let s; try{{ s=await (await fetch('/progress?job='+job)).json(); }}catch(e){{return;}}
+    let s; try{{ s=await (await fetch('/progress?job='+job)).json(); }}catch(e){{ if(++misses>8){{clearInterval(poll);fail('Lost contact with the server. Click Annotate to retry.');}} return; }}
     setProg(s.frac||0, s.phase||'Working…');
     if(s.status==='done'){{ clearInterval(poll); setProg(1,'Done'); window.location.href='/result?job='+job; }}
-    else if(s.status==='error'){{ clearInterval(poll); plabel.textContent='Error: '+(s.error||'unknown'); plabel.style.color='#b11226'; }}
+    else if(s.status==='error'){{ clearInterval(poll);
+      fail(s.error==='unknown job'
+        ? 'That run was lost — the server was restarted. Click Annotate model to run it again.'
+        : 'Error: '+(s.error||'unknown')); }}
   }}, 400);
 }});
 </script>
@@ -300,7 +341,8 @@ def render_index(recent_html: str = "") -> str:
         recent=recent_html,
         llm_checked="checked" if USE_LLM else "",
         llm_dis="" if USE_LLM else "disabled",
-        llm_note="(enabled)" if USE_LLM else "(start with --llm + ANTHROPIC_API_KEY)",
+        llm_dis_cls="" if USE_LLM else "dis",
+        llm_note="on" if USE_LLM else "off — start the server with --llm + ANTHROPIC_API_KEY",
     )
 
 
