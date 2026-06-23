@@ -75,6 +75,7 @@ const _GLOSSARY = {
     total_loss: "Probability of losing the entire investment (MOIC = 0). Driven by stage-specific survival rates adjusted for TRL. For early-stage deals, typically 40-70%.",
     p_below_1x: "Probability the deal returns less than the capital invested (MOIC < 1x) — i.e. you lose money, whether a total wipeout or a partial loss. Includes the total-loss paths plus any path that exits below cost.",
     bridge_probability: "Share of simulated paths where the company needs at least one bridge round (an off-cycle raise between priced rounds) before resolving. A realized financing-distress signal computed from the dilution simulation — distinct from the TRL `extra_bridge_prob` input that feeds the model.",
+    dilution_to_exit: "How much of VoLo's stake erodes between entry and exit, for the typical company that survives all the way to a horizon exit. Computed round-by-round in the dilution simulation: each priced round multiplies ownership by (1 − round_size / post-money) plus an ESOP top-up, with bridge rounds adding more erosion; round sizes and pre-money are drawn from Carta sector lognormals. Shown as 1 − (median exit ownership / entry ownership). It is conditional on survival (the ~few percent of paths that reach a full exit), so read it as 'a surviving company typically gives up this much', not an average across all outcomes.",
     gt_1x: "Probability of returning at least the invested capital. P(MOIC ≥ 1x). The complement of total loss plus partial loss outcomes.",
     gt_3x: "Probability of a 3x+ return. The primary threshold for venture fund economics — a 3x return on a single deal roughly covers a portfolio of losses.",
     gt_5x: "Probability of a 5x+ return. Strong outperformance threshold.",
@@ -3649,18 +3650,17 @@ function wizRenderReport(r) {
                 <div class="rpt-impact-sub">Total Loss ${infoTip('total_loss')}</div>
                 <div class="rpt-impact-lbl">MOIC = 0</div>
             </div>
-            <div class="rpt-impact-card">
-                <div class="rpt-impact-val" style="color:${_pReturnsCapital!=null?_goodColor(_pReturnsCapital):'inherit'};">${_pReturnsCapital!=null?pctFmt(_pReturnsCapital):'N/A'}</div>
-                <div class="rpt-impact-sub">Returns Capital ${infoTip('gt_1x')}</div>
-                <div class="rpt-impact-lbl">MOIC &ge; 1x</div>
-            </div>
+            ${_dilReal && _totalDil != null ? `<div class="rpt-impact-card">
+                <div class="rpt-impact-val" style="color:${_totalDil>=50?'#d97706':'inherit'};">${fmt(_totalDil,0)}%</div>
+                <div class="rpt-impact-sub">Dilution to Exit ${infoTip('dilution_to_exit')}</div>
+                <div class="rpt-impact-lbl">median, surviving cos</div>
+            </div>` : ''}
         </div>
         <table class="rpt-table" style="margin-top:14px;">
             <thead><tr><th>Risk Dimension</th><th>Value</th><th>Read</th></tr></thead><tbody>
             <tr><td colspan="3" style="background:var(--accent-light,#f0f4ec);font-weight:700;font-size:0.7rem;letter-spacing:0.04em;text-transform:uppercase;">Capital at Risk</td></tr>
             <tr><td>Lose money (MOIC &lt; 1x)</td><td class="rpt-num">${pctFmt(_pBelow1)}</td><td>Share of paths returning less than the capital invested.</td></tr>
             <tr><td>Total loss (MOIC = 0)</td><td class="rpt-num">${pctFmt(_pTotal)}</td><td>Share of paths that zero out entirely.</td></tr>
-            <tr><td>Returns capital (MOIC &ge; 1x)</td><td class="rpt-num">${pctFmt(_pReturnsCapital)}</td><td>Share of paths that at least return the money in.</td></tr>
             ${_dilRows}${_finRows}${_noPathNote}
         </tbody></table>
         ${trace('Model calibration — how TRL set the penalties (configuration, not deal risk)', `
@@ -3716,9 +3716,9 @@ function wizRenderReport(r) {
                     <div style="width:64px;font-size:11px;font-weight:700;text-align:right;flex-shrink:0;">${fmt(_sw,2)}x</div>
                 </div>`;
             });
-            html += `<div style="display:flex;gap:10px;margin-top:3px;"><div style="width:140px;flex-shrink:0;"></div><div style="flex:1;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;"><span>&larr; lower MOIC</span><span>base ${fmt(baseMoic,2)}x</span><span>higher MOIC &rarr;</span></div><div style="width:64px;font-size:10px;color:#9ca3af;text-align:right;flex-shrink:0;">swing</div></div></div>`;
+            html += `<div style="display:flex;gap:10px;margin-top:3px;"><div style="width:140px;flex-shrink:0;"></div><div style="flex:1;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;"><span>&larr; lower MOIC</span><span>base (mean) ${fmt(baseMoic,2)}x</span><span>higher MOIC &rarr;</span></div><div style="width:64px;font-size:10px;color:#9ca3af;text-align:right;flex-shrink:0;">swing</div></div></div>`;
             html += `<table class="rpt-table">
-                <thead><tr><th>Input Variable</th><th>Base MOIC</th><th>If &minus;20%</th><th>If +20%</th><th>Swing</th></tr></thead>
+                <thead><tr><th>Input Variable</th><th>Base Mean MOIC</th><th>If &minus;20%</th><th>If +20%</th><th>Swing</th></tr></thead>
                 <tbody>`;
             trows.forEach(t => {
                 const spread = Math.abs((t.moic_up || 0) - (t.moic_down || 0));
@@ -3731,7 +3731,7 @@ function wizRenderReport(r) {
                 </tr>`;
             });
             html += `</tbody></table>
-            <p class="rpt-narrative" style="margin-top:8px;">Base case: ${fmt(baseMoic, 2)}x expected MOIC, ${pctFmt(baseP3x)} P(&gt;3x). Most sensitive to <strong>${trows[0]?.input || 'N/A'}</strong> (${fmt(Math.abs((trows[0]?.moic_up || 0) - (trows[0]?.moic_down || 0)), 2)}x swing).</p>
+            <p class="rpt-narrative" style="margin-top:8px;">Base case: <strong>${fmt(baseMoic, 2)}x</strong> mean MOIC for this check${moic.p50_all ? ` (median ${fmt(moic.p50_all, 2)}x &mdash; the mean runs higher because of the right tail)` : ''}. Most sensitive to <strong>${trows[0]?.input || 'N/A'}</strong> (${fmt(Math.abs((trows[0]?.moic_up || 0) - (trows[0]?.moic_down || 0)), 2)}x swing). <span style="color:#9ca3af;">Note: this is the per&#8209;deal gross MOIC; the fund&#8209;level net TVPI (a lower number) lives in Portfolio Impact.</span></p>
             ${trace('Sensitivity &mdash; methodology', `
                 <p>One&#8209;at&#8209;a&#8209;time perturbation: each input is moved &plusmn;20&ndash;30% on its own and the fund is re&#8209;simulated at 5,000 paths, measuring the change in expected MOIC. The baseline is re&#8209;run at the <strong>same path count and seed</strong> as the perturbations (common random numbers), so each leg is the input's own effect, not sampling noise. The red/green bars are the &minus;/+ moves; swing = |MOIC&#8314; &minus; MOIC&#8331;|.</p>
                 <p>For most inputs MOIC scales linearly, so the two bars mirror. <strong>Pre&#8209;money is genuinely convex</strong> &mdash; ownership = check / (pre&#8209;money + round), so a lower valuation helps more than a higher one hurts, and its bars are visibly uneven. One caveat: on very high&#8209;upside deals the model's 500x per&#8209;path MOIC cap can shorten the upside bar on TAM/penetration/exit&#8209;multiple (the tail is censored), so a one&#8209;sided look there reflects the cap, not the economics.</p>
