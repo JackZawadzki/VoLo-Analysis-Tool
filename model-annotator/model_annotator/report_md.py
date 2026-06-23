@@ -126,7 +126,7 @@ def render_markdown(report: Report) -> str:
             a(f"- **Metric families prioritized:** {', '.join(plan.priorities)}")
         for c in plan.custom_computations:
             status = "computed" if c.executed else f"skipped — {c.skip_reason}"
-            a(f"- **LLM-directed computation** `{c.metric_id}` ({status}): {c.rationale}")
+            a(f"- **Additional calculation** ({status}): {c.rationale}")
         a("")
 
     # ---- analyst worksheet ----

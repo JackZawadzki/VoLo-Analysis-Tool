@@ -240,12 +240,11 @@ def execute_plan_computations(plan: AnalysisPlan, mapping: MappingResult,
             note += f" [cross-sheet: {num.sheet}÷{den.sheet}, units reconciled]"
         out.append(mk(
             comp.metric_id,
-            f"LLM-directed: {comp.name.replace('_', ' ')}",
-            applicability=f"requested by the analysis planner: {comp.rationale[:160]}",
+            (comp.name.replace('_', ' ').strip().capitalize() or "Custom ratio"),
+            applicability=comp.rationale[:160],
             inputs=(num.refs + den.refs)[:60],
-            computation=f"{num.label.strip()[:40]!r}[t] / {den.label.strip()[:40]!r}[t] "
-                        "(LLM chose the ratio; Python computed it"
-                        + (", cross-sheet units reconciled)" if cross else ")"),
+            computation=f"{num.label.strip()[:40]!r}[t] / {den.label.strip()[:40]!r}[t]"
+                        + (" (cross-sheet, units reconciled)" if cross else ""),
             series=series,
             units="ratio",
             notes=note,

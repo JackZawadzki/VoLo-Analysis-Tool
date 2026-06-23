@@ -139,7 +139,17 @@ def annotate(
     # ---- Phase 4: derived metrics ------------------------------------------
     _p("Computing derived analyst metrics", 0.74)
     metrics = compute_metrics(wbd, structure, mapping, benchmarks)
-    metrics.metrics.extend(execute_plan_computations(plan, mapping, structure))
+    # Fold in the planner's company-specific calcs, but drop any that merely
+    # re-derive a standard library metric (e.g. a custom 'revenue per employee'
+    # when revenue_per_employee already exists) — the standard one is well-defined
+    # and the duplicate, computed a different way, only confuses.
+    import re as _re
+    _std = {m.metric_id for m in metrics.metrics}
+    _std |= {_re.sub(r"[^a-z0-9]+", "_", (m.label or "").lower()).strip("_") for m in metrics.metrics}
+    for _calc in execute_plan_computations(plan, mapping, structure):
+        if _calc.metric_id.split("::", 1)[-1] in _std:
+            continue
+        metrics.metrics.append(_calc)
 
     # ---- Phases 5-7: findings / acquittals / severity-dedup ----------------
     _p("Surfacing flags and acquittals", 0.84)

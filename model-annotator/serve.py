@@ -582,8 +582,6 @@ def render_annotation_table(t, findings_by_id=None) -> str:
     if t.rationale:
         a(f"<div class=why>{e(t.rationale)}</div>")
     a(f"<div class=comp>computed as <span class=fx>{e(t.computation)}</span></div>")
-    if t.llm_directed:
-        a("<span class='chip ll'>LLM-directed</span>")
     for fid in t.related_finding_ids:
         a(f"<a class=chip href='#{e(fid)}'>see {e(fid)}</a>")
     a("</div>")
