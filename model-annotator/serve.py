@@ -223,6 +223,16 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .shap .vv{color:var(--muted);font-variant-numeric:tabular-nums;text-align:left;font-size:11.5px}
 .shap .spark{height:24px}
 .shap .spark svg{display:block}
+.shap.child{display:none}
+.shap.child.show{display:grid}
+.shap.child .nm{color:#6b6256;font-style:italic}
+.bexp,.rexp{cursor:pointer;display:inline-block;color:var(--accent);font-size:10px;width:10px;transition:transform .12s}
+.shap.agg.expanded .bexp,.rtbl tr.agg.expanded .rexp{transform:rotate(90deg)}
+.rtbl tr.child{display:none}
+.rtbl tr.child.show{display:table-row}
+.rtbl tr.child .rl{padding-left:16px;color:#6b6256}
+.rtbl tr.agg .rl{cursor:pointer}
+.rtbl tr.agg.expanded input.lo,.rtbl tr.agg.expanded input.hi{opacity:.35;pointer-events:none}
 /* two-way grid */
 .twoway{margin-top:6px}
 .twoway .sel{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12.5px;color:var(--muted)}
@@ -682,21 +692,32 @@ def render_tornado(t, idx: int) -> str:
         for nm in out_names:
             a(f"<th class=oimph>{e(nm)} <span class=muted>(worst · base · best)</span></th>")
     a("</tr></thead><tbody>")
-    for d in (cube["drivers"] if cube else None) or t.drivers:
-        if cube:
-            key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
-            lo, hi, is_frac = base * 0.8, base * 1.2, False
-        else:
-            key, label, refs, base = d.key, d.label, d.input_refs, d.base
-            lo, hi, is_frac = d.low, d.high, d.unit == 'fraction'
-        a(f"<tr data-key='{e(key)}'>"
-          f"<td class=l><div class=rl>{e(label)}</div><div class=rcite>{e(', '.join(refs))}</div></td>"
+    def _range_row(key, label, refs, base, lo, hi, is_frac, kind="", parent=""):
+        trcls = f" class='{kind}'" if kind else ""
+        pa = f" data-parent='{e(parent)}'" if parent else ""
+        mark = "<span class=rexp>▸</span> " if kind == "agg" else ("└ " if kind == "child" else "")
+        a(f"<tr data-key='{e(key)}'{pa}{trcls}>"
+          f"<td class=l><div class=rl>{mark}{e(label)}</div><div class=rcite>{e(', '.join(refs))}</div></td>"
           f"<td><input type=number class=lo step=any value='{round(lo,6)}'></td>"
           f"<td class=rbase>{_cell_text(base, is_frac)}</td>"
           f"<td><input type=number class=hi step=any value='{round(hi,6)}'></td>")
         for _ in range(out_cols):
             a("<td class=oimp></td>")
         a("</tr>")
+
+    for d in (cube["drivers"] if cube else None) or t.drivers:
+        if cube:
+            key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
+            lo, hi, is_frac = base * 0.8, base * 1.2, False
+            kids = d.get("children", [])
+        else:
+            key, label, refs, base = d.key, d.label, d.input_refs, d.base
+            lo, hi, is_frac = d.low, d.high, d.unit == 'fraction'
+            kids = []
+        _range_row(key, label, refs, base, lo, hi, is_frac, kind=("agg" if kids else ""))
+        for c in kids:
+            _range_row(c["key"], c["label"], c.get("refs", []), c["value"],
+                       c["value"] * 0.8, c["value"] * 1.2, False, kind="child", parent=key)
     a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
     # single bar per input: length = swing of the selected output
@@ -704,14 +725,23 @@ def render_tornado(t, idx: int) -> str:
                  "as % of that year's revenue (so every year is on its own scale)</span>" if cube else "")
     a("<div class=subh>How far each input moves the <span class=outname>output</span> "
       f"<span class=muted style='font-weight:400'>(sorted by impact)</span>{spark_hdr}</div>")
+    def _bar(key, label, refs, kind="", parent=""):
+        spark = "<div class=spark></div>" if cube else ""
+        cls = "shap" + (" hascube" if cube else "") + (f" {kind}" if kind else "")
+        pa = f" data-parent='{e(parent)}'" if parent else ""
+        mark = "<span class=bexp>▸</span> " if kind == "agg" else ""
+        a(f"<div class='{cls}' data-key='{e(key)}'{pa}>"
+          f"<div class=nm title='model cell {e(', '.join(refs))}'>{mark}{e(label)}</div>"
+          f"<div class=tk><div class=bar1></div></div>"
+          f"<div class=vv></div>{spark}</div>")
+
     a("<div class=shapbars>")
     for d in drv:
         refs = d.get("refs") if cube else d["refs"]
-        spark = "<div class=spark></div>" if cube else ""
-        a(f"<div class='shap{' hascube' if cube else ''}' data-key='{e(d['key'])}'>"
-          f"<div class=nm title='model cell {e(', '.join(refs))}'>{e(d['label'])}</div>"
-          f"<div class=tk><div class=bar1></div></div>"
-          f"<div class=vv></div>{spark}</div>")
+        kids = d.get("children", []) if cube else []
+        _bar(d["key"], d["label"], refs, kind=("agg" if kids else ""))
+        for c in kids:
+            _bar(c["key"], c["label"], c.get("refs", []), kind="child", parent=d["key"])
     a("</div>")
 
     # two-way grid
@@ -771,11 +801,19 @@ function maSpec(torn){
   const olabel=(cube.outputs.find(x=>x.key===out)||{}).label||out;
   const cum=per==='__cum__', PS=cube.periods;
   const base=cum?PS.reduce((s,p)=>s+(((cube.base[out]||{})[p])||0),0):((cube.base[out]||{})[per]);
-  const drivers=cube.drivers.map(d=>{
-    let lo,hi;
-    if(cum){lo=0;hi=0;PS.forEach(p=>{const c=(d.out[out]||{})[p];if(c){lo+=c.low;hi+=c.high;}});}
-    else{const cell=((d.out[out]||{})[per])||{low:base,high:base};lo=cell.low;hi=cell.high;}
-    return {key:d.key,label:d.label,base:d.value,low:d.value*0.8,high:d.value*1.2,outLow:lo,outHigh:hi};
+  // active drivers: an expanded aggregate is replaced by its children (so the
+  // group and its segments are never both counted), collapsed shows the aggregate
+  const drivers=[];
+  cube.drivers.forEach(d=>{
+    const kids=d.children||[];
+    const bar=torn.querySelector('.shap[data-key="'+CSS.escape(d.key)+'"]');
+    const exp=kids.length&&bar&&bar.classList.contains('expanded');
+    (exp?kids:[d]).forEach(dd=>{
+      let lo,hi;
+      if(cum){lo=0;hi=0;PS.forEach(p=>{const c=(dd.out[out]||{})[p];if(c){lo+=c.low;hi+=c.high;}});}
+      else{const cell=((dd.out[out]||{})[per])||{low:base,high:base};lo=cell.low;hi=cell.high;}
+      drivers.push({key:dd.key,label:dd.label,base:dd.value,low:dd.value*0.8,high:dd.value*1.2,outLow:lo,outHigh:hi});
+    });
   });
   const plabel=cum?('Cumulative '+PS[0]+'–'+PS[PS.length-1]):per;
   return {formula:'cube_view',unit:raw.unit,base:base||0,outLabel:olabel,period:plabel,drivers:drivers,selA:raw.selA,selB:raw.selB,
@@ -857,6 +895,9 @@ function maRender(torn){
   const eff=spec.drivers.map(d=>{const lo=maEval(spec,{[d.key]:cur[d.key].lo}),hi=maEval(spec,{[d.key]:cur[d.key].hi});return {key:d.key,lo,hi,swing:Math.abs(hi-lo)};});
   const maxs=Math.max(...eff.map(e=>e.swing),1e-9);
   const box=torn.querySelector('.shapbars');
+  // only the active drivers get a bar (expanded aggregates show their children)
+  const activeKeys=new Set(spec.drivers.map(d=>d.key));
+  box.querySelectorAll('.shap').forEach(r=>{r.style.display=activeKeys.has(r.dataset.key)?'grid':'none';});
   eff.sort((a,b)=>b.swing-a.swing);
   eff.forEach(e=>{const row=box.querySelector('.shap[data-key="'+CSS.escape(e.key)+'"]');if(!row)return;box.appendChild(row);
     row.querySelector('.bar1').style.width=(e.swing/maxs*100)+'%';
@@ -883,9 +924,20 @@ function maRender(torn){
   for(let i=0;i<N;i++){h+='<tr><td class=axl>'+fp(av[i])+'</td>';for(let j=0;j<N;j++){const v=cells[i][j];const tn=mx>mn?(v-mn)/(mx-mn):0.5;h+='<td style="background:'+maColor(tn)+';color:#fff">'+maFmt(v)+'</td>';}h+='</tr>';}
   torn.querySelector('.gridbox').innerHTML=h+'</table>';
 }
+function maToggle(torn,key){
+  const bar=torn.querySelector('.shap.agg[data-key="'+CSS.escape(key)+'"]');
+  const on=!(bar&&bar.classList.contains('expanded'));
+  torn.querySelectorAll('[data-key="'+CSS.escape(key)+'"]').forEach(el=>el.classList.toggle('expanded',on));
+  torn.querySelectorAll('tr.child[data-parent="'+CSS.escape(key)+'"]').forEach(el=>el.classList.toggle('show',on));
+  maRender(torn);
+}
 document.querySelectorAll('.torn').forEach(t=>{
   t.addEventListener('input',()=>maRender(t));
   t.addEventListener('change',()=>maRender(t));
+  t.querySelectorAll('.bexp,.rexp').forEach(x=>x.addEventListener('click',e=>{
+    e.stopPropagation();const o=x.closest('[data-key]');if(o)maToggle(t,o.dataset.key);}));
+  t.querySelectorAll('.rtbl tr.agg .rl').forEach(x=>x.addEventListener('click',()=>{
+    const o=x.closest('[data-key]');if(o)maToggle(t,o.dataset.key);}));
   t.querySelector('.reset')?.addEventListener('click',()=>{
     const spec=maSpec(t);
     t.querySelectorAll('.ranges tr[data-key]').forEach(r=>{const d=spec.defaults[r.dataset.key];if(d){r.querySelector('.lo').value=d.low;r.querySelector('.hi').value=d.high;}});
