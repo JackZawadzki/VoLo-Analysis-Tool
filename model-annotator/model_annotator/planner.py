@@ -214,17 +214,28 @@ def execute_plan_computations(plan: AnalysisPlan, mapping: MappingResult,
         cross = num.sheet != den.sheet
         ns, ds = _scale(num.sheet), _scale(den.sheet)
         series = {}
+        signflip: list[str] = []
         for p in common:
             nv, dv = num.value_for(p), den.value_for(p)
-            if nv is not None and dv is not None and abs(dv * ds) > EPS:
-                series[p] = (nv * ns) / (dv * ds)
-            else:
+            if nv is None or dv is None:
                 series[p] = None
+                continue
+            d = dv * ds
+            if abs(d) <= EPS:                       # near-zero denominator -> artifact
+                series[p] = None
+            elif d < 0 and (nv * ns) < 0:           # neg/neg would read as a healthy positive -> undefined
+                series[p] = None
+                signflip.append(p)
+            else:
+                series[p] = (nv * ns) / d
         if not any(v is not None for v in series.values()):
             comp.executed = False
             comp.skip_reason = "no overlapping numeric periods between the two rows"
             continue
         note = comp.rationale
+        if signflip:
+            note += (f" [undefined in {', '.join(signflip)}: both numerator and denominator are negative "
+                     "there, so the ratio is not a meaningful positive rate — suppressed]")
         if cross:
             note += f" [cross-sheet: {num.sheet}÷{den.sheet}, units reconciled]"
         out.append(mk(

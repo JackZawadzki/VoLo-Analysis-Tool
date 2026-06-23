@@ -103,6 +103,23 @@ def test_revenue_nature_classification():
     assert M._revenue_nature("Consumer electronics") == "product"   # default commercial
 
 
+# --- ex-X ratio: suppress when the excluded item exceeds the base -----------
+def test_ex_ratio_suppresses_signflip_when_excluded_exceeds_base():
+    P4 = ["2026", "2027", "2028", "2029"]
+    # gross_profit - grants  (numerator); revenue - grants  (commercial base)
+    num = {"2026": 90.0, "2027": -1376.0, "2028": -1000.0, "2029": 500.0}
+    base = {"2026": 100.0, "2027": -1106.0, "2028": -440.0, "2029": 3370.0}
+    series, undef = M.ex_ratio(num, base, P4)
+    # 2027/28: grants exceed revenue -> base negative -> undefined, NOT +124%/+227%
+    assert undef == ["2027", "2028"]
+    assert series["2027"] is None and series["2028"] is None
+    # the neg/neg sign-flip would otherwise produce a healthy-looking positive:
+    assert (-1376.0) / (-1106.0) > 1.0
+    # valid (positive-base) periods still compute normally
+    assert abs(series["2026"] - 0.9) < 1e-9
+    assert abs(series["2029"] - 500.0 / 3370.0) < 1e-9
+
+
 # --- 2.1 captions conditional on the actual pattern -------------------------
 def test_rising_only_when_data_rises():
     rising = {"2026": 0.1, "2027": 0.2, "2028": 0.3, "2029": 0.4, "2030": 0.5, "2031": 0.6}

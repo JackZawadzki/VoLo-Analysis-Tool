@@ -127,6 +127,28 @@ def ratio(a: dict[str, Optional[float]], b: dict[str, Optional[float]],
     return out
 
 
+def ex_ratio(num: dict[str, Optional[float]], base: dict[str, Optional[float]],
+             periods: list[str]) -> tuple[dict[str, Optional[float]], list[str]]:
+    """Ratio whose denominator is a SUBTRACTION-derived base (an 'ex-X' / net
+    figure, e.g. revenue minus grants). A period is UNDEFINED when that base is
+    <= EPS: the excluded item meets or exceeds the whole, so the base is zero or
+    negative and a ratio on it is meaningless. This also blocks the neg/neg
+    sign-flip — (negative numerator) / (negative base) would otherwise render as
+    a healthy POSITIVE margin. Returns (series, undefined_periods)."""
+    out: dict[str, Optional[float]] = {}
+    undef: list[str] = []
+    for p in periods:
+        n, d = num.get(p), base.get(p)
+        if n is None or d is None:
+            out[p] = None
+        elif d <= EPS:                 # zero or NEGATIVE base -> undefined
+            out[p] = None
+            undef.append(p)
+        else:
+            out[p] = n / d
+    return out, undef
+
+
 def combine(periods: list[str], fn: Callable[..., Optional[float]],
             *series: dict[str, Optional[float]]) -> dict[str, Optional[float]]:
     out: dict[str, Optional[float]] = {}
@@ -776,13 +798,20 @@ def _grants(ctx: Ctx, out: MetricsResult) -> None:
         notes="the commercial growth rate once 100%-margin grant revenue is removed; blank in years where ex-grant revenue is zero or negative (grants exceed total revenue, so there is no commercial base to grow from)"))
     gp = ctx.series("gross_profit")
     if gp:
-        gm_ex = combine(P, lambda g, gr, e: (g - gr) / e if abs(e) > EPS else None, gp, grants, ex)
+        gm_num = combine(P, lambda g, gr: g - gr, gp, grants)
+        gm_ex, gm_undef = ex_ratio(gm_num, ex, P)         # ex = revenue - grants (the commercial base)
+        note = None
+        if gm_undef:
+            note = (f"undefined in {', '.join(gm_undef)}: grants exceed revenue, so the commercial base "
+                    "(revenue ex-grants) is zero or negative — a margin on it is meaningless. The company "
+                    "has effectively no commercial revenue those years; see Grants / revenue.")
         out.metrics.append(mk(
             "gross_margin_ex_grants", "Gross margin ex-grants (grants treated as 100% margin)",
             applicability="grants and gross_profit mapped",
             inputs=grant_refs + ctx.refs("gross_profit", "revenue_total"),
-            computation="(gross_profit[t] - grants[t]) / revenue_ex_grants[t]",
-            series=gm_ex, units="fraction"))
+            computation="(gross_profit[t] - grants[t]) / revenue_ex_grants[t]; "
+                        "undefined where revenue ex-grants <= 0 (grants exceed revenue)",
+            series=gm_ex, units="fraction", notes=note))
 
 
 def _capex_in_opex(ctx: Ctx, out: MetricsResult) -> None:
