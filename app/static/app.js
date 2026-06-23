@@ -3699,7 +3699,7 @@ function wizRenderReport(r) {
         if (_hasSens) {
             const trows = [...sens.tornado].sort((a,b)=>Math.abs((b.moic_up||0)-(b.moic_down||0))-Math.abs((a.moic_up||0)-(a.moic_down||0)));
             html += `<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:18px 0 6px;">1 &middot; Sensitivity to your assumptions</div>
-            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">How much each assumption swings expected MOIC across a &plusmn;20&ndash;30% move, biggest first &mdash; the levers most worth pinning down. <span style="white-space:nowrap;">&uarr;/&darr;</span> shows which direction of the input raises MOIC; <span style="color:#d97706;">asym</span> flags an input whose downside and upside differ (the table has the full split).</p>`;
+            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">How much each assumption swings expected MOIC across a &plusmn;20&ndash;30% move, biggest first &mdash; the levers most worth pinning down. <span style="white-space:nowrap;">&uarr;/&darr;</span> shows which direction of the input raises MOIC; <span style="color:#d97706;">asym</span> flags an input whose downside and upside differ materially (the table has the full split).</p>`;
             // Single "impact" bars: bar length = MOIC swing across the +/- range, sorted.
             const _swMax = Math.max(0.01, ...trows.map(t => Math.abs((t.moic_up||0)-(t.moic_down||0))));
             html += `<div style="margin:6px 0 16px;">`;
@@ -3709,7 +3709,11 @@ function wizRenderReport(r) {
                 const _w = (_sw/_swMax)*100;
                 const _upBetter = _u >= 0;                 // does raising the input raise MOIC?
                 const _dir = _upBetter ? '&uarr;' : '&darr;';
-                const _asym = Math.abs(Math.abs(_d) - Math.abs(_u)) > 0.06 && Math.max(Math.abs(_d), Math.abs(_u)) > 0.1;
+                // Flag asymmetry RELATIVE to the swing, not by an absolute gap — at
+                // large swings (high-upside deals) a tiny sampling wiggle is a big
+                // absolute number but a meaningless fraction. Only genuine convexity
+                // (e.g. pre-money, ~16% of its swing) clears the bar; noise (<5%) doesn't.
+                const _asym = _sw > 0.1 && (Math.abs(Math.abs(_d) - Math.abs(_u)) / _sw) > 0.12;
                 html += `<div style="display:flex;align-items:center;gap:10px;margin:3px 0;">
                     <div style="width:140px;font-size:11px;text-align:right;color:#374151;flex-shrink:0;">${t.input} <span title="${_upBetter ? 'higher raises MOIC' : 'lower raises MOIC'}" style="color:#9ca3af;">${_dir}</span></div>
                     <div style="flex:1;height:14px;background:rgba(0,0,0,0.05);border-radius:2px;">
