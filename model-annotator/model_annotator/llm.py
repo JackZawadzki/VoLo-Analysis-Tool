@@ -75,7 +75,18 @@ class LLMClient:
             )
             return next((b.text for b in resp.content if b.type == "text"), None)
         except anthropic.APIError as exc:
-            log.warning("LLM call failed (%s); continuing deterministically", type(exc).__name__)
+            msg = str(exc).lower()
+            # a credit/auth failure won't recover within the run — disable the
+            # client so the rest of the pipeline is honestly deterministic (and
+            # the report stops claiming the LLM was used) instead of retrying.
+            if any(k in msg for k in ("credit balance", "billing", "quota")) or \
+                    getattr(exc, "status_code", None) in (401, 403):
+                self.disabled_reason = ("Anthropic API unavailable (credit/billing) — ran "
+                                        "deterministically without LLM")
+                self._client = None
+                log.warning("LLM disabled mid-run: %s", self.disabled_reason)
+            else:
+                log.warning("LLM call failed (%s); continuing deterministically", type(exc).__name__)
             return None
         except Exception:
             log.warning("LLM call failed unexpectedly; continuing deterministically", exc_info=True)

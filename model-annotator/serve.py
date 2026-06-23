@@ -867,39 +867,36 @@ document.querySelectorAll('.torn').forEach(t=>{
 """
 
 
+def _company_name(filename: str) -> str:
+    """A clean company name from a workbook filename (drop dates, versions, and
+    boilerplate like 'Financial Model' / 'Projections' / 'Data Room')."""
+    import os
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    s = re.sub(r"\(.*?\)", " ", stem)                                  # parentheticals
+    s = re.sub(r"\d{4}[-_./]\d{1,2}[-_./]\d{1,2}", " ", s)            # 2026-06-01
+    s = re.sub(r"\b\d{6,8}\b", " ", s)                                 # 20260507
+    s = re.sub(r"[_\-]+", " ", s)
+    noise = re.compile(r"^(financ\w*|model\w*|plan|projection\w*|forecast\w*|analysis|data ?room|"
+                       r"non.?nda|nda|cvt|note|new|final|draft|copy|v\d*|rev\d*|q[1-4]|fy\d*)$", re.I)
+    out: list[str] = []
+    for t in s.split():
+        if noise.match(t) or re.fullmatch(r"\d+(\.\d+)?", t):
+            break
+        out.append(t)
+    return " ".join(out).strip() or stem
+
+
 def render_report(report: Report, filename: str) -> str:
-    from model_annotator.narrate import read_this_first, trust_sentence
     wm = report.workbook_map
     o: list[str] = []
     a = o.append
+    company = _company_name(filename)
     a("<!doctype html><html><head><meta charset=utf-8>"
       "<meta name=viewport content='width=device-width,initial-scale=1'>"
-      f"<title>{e(filename)} — annotation</title><style>{PAGE_CSS}</style></head><body><div class=wrap>")
-    a(f"<a href=/ class='btn ghost' style='float:right'>&larr; new file</a>")
-    a(f"<h1>{e(filename)}</h1>")
-
-    sev_counts: dict[str, int] = {}
-    for f in report.findings:
-        sev_counts[f.severity.value] = sev_counts.get(f.severity.value, 0) + 1
-
-    units = ""
-    if wm.primary_statement_sheet and wm.primary_statement_sheet in wm.units:
-        u = wm.units[wm.primary_statement_sheet]
-        units = f"{e(u.label)} ({u.confidence:.2f})"
+      f"<title>{e(company)} — Analysis</title><style>{PAGE_CSS}</style></head><body><div class=wrap>")
+    a("<a href=/ class='btn ghost' style='float:right'>&larr; new file</a>")
+    a(f"<h1>{e(company)} <span class=muted style='font-weight:400'>— Analysis</span></h1>")
     periods = wm.period_axis.periods if wm.period_axis else []
-    span = f"{e(periods[0])} – {e(periods[-1])}" if periods else "none"
-
-    n_flags = sum(1 for f in report.findings if f.severity.value in ("critical", "high", "medium"))
-    a("<div class=card><div class=row style='justify-content:flex-start;gap:30px;align-items:flex-start'>")
-    a("<div class=kpis>")
-    a(f"<div class=kpi><b>{n_flags}</b><span>flags</span></div>")
-    a(f"<div class=kpi><b>{len([t for t in report.annotation_tables])}</b><span>calculations</span></div>")
-    a(f"<div class=kpi><b>{len(periods)}</b><span>periods</span></div>")
-    a("</div></div>")
-    a(f"<div class=muted style='margin-top:12px'>Primary statements <b>{e(wm.primary_statement_sheet)}</b> · "
-      f"periods {span} ({e(wm.period_axis.granularity.value) if wm.period_axis else '–'}) · "
-      f"units {units or 'unknown'} · LLM {'used' if report.llm_used else 'off'}</div>")
-    a("</div>")
 
     # executive summary
     es = report.executive_summary
@@ -920,26 +917,7 @@ def render_report(report: Report, filename: str) -> str:
               f"{e(f.title)}{q}</li>")
         a("</ul></div>")
 
-    # analysis plan — why these calculations
-    plan = report.analysis_plan
-    if plan is not None:
-        a("<h2>Analysis plan <span class=muted style='font-weight:400;font-size:14px'>— why these calculations</span></h2>")
-        a("<div class=card>")
-        src = ("LLM business read of the workbook's structure (labels only — never values)"
-               if plan.source == "llm" else "deterministic structural heuristic (no LLM)")
-        a(f"<div class=muted style='margin-bottom:8px'>Source: {e(src)}</div>")
-        a(f"<div><b>Archetype:</b> {e(plan.archetype)} <span class=muted>(benchmarks: <code>{e(plan.benchmark_archetype)}</code>)</span></div>")
-        if plan.rationale:
-            a(f"<div style='margin-top:6px'>{e(plan.rationale)}</div>")
-        if plan.risks_to_probe:
-            a("<div style='margin-top:8px'><b>Risks worth probing:</b> " + "; ".join(e(r) for r in plan.risks_to_probe) + "</div>")
-        if plan.custom_computations:
-            a("<ul class=ev style='margin-top:8px'>")
-            for c in plan.custom_computations:
-                status = "computed" if c.executed else f"skipped — {e(c.skip_reason or '')}"
-                a(f"<li><code>{e(c.metric_id)}</code> <span class=muted>({status})</span> — {e(c.rationale)}</li>")
-            a("</ul>")
-        a("</div>")
+    # (Analysis-plan section removed — the worksheet + flags speak for themselves.)
 
     # analyst worksheet — each calculation with its source rows AND its own flag line,
     # grouped into collapsible family sections

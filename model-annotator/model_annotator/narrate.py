@@ -109,12 +109,44 @@ def trust_sentence(report: Report) -> str:
 
 
 _SUMMARY_SYSTEM = (
-    "You write the one-paragraph executive summary at the top of a venture analyst's "
-    "model-diligence report. You are given the computed facts (business read, the flagged "
-    "issues with severity, and key trends). Write 3-5 sentences: what the model is, the most "
-    "important flags (lead with the worst), and the general trajectory. Neutral, specific, "
-    "investor-facing. Keep every number/percentage EXACTLY as given; introduce no new numbers. "
-    "Reply with the paragraph only.")
+    "You write the executive summary at the top of a venture analyst's model-diligence report. "
+    "You are given the computed facts: a business read, the flagged issues (worst first), and the "
+    "key quantitative reads the calculations produced. Write 3-4 tight sentences that tell a partner "
+    "WHAT THE ANALYSIS REVEALED ABOUT THIS COMPANY: what it is and where it's headed, the most "
+    "important thing the flags expose (lead with the worst), and the 2-3 reads that most affect the "
+    "decision (mix, survival/runway, margin, concentration). Specific and investor-facing, not a list "
+    "of metric names. Keep every number EXACTLY as given; introduce no new numbers. Reply with the "
+    "paragraph only.")
+
+
+def _summary_numerals_ok(polished: str, facts_text: str, periods: list[str]) -> bool:
+    """Tolerant numeral check for the EXECUTIVE SUMMARY only (finding narratives
+    stay strict): allow any in-range year and small rounding of a given figure,
+    so the model can write real prose ('troughs at ~$0.6M in 2028') without being
+    rejected — it still may not invent an unrelated number."""
+    from .llm import extract_numerals
+
+    def fl(s):
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    allowed = [fl(x) for x in extract_numerals(facts_text)]
+    allowed = [a for a in allowed if a is not None]
+    yrs = [int(p[:4]) for p in periods if p[:4].isdigit()]
+    lo, hi = (min(yrs), max(yrs)) if yrs else (0, 0)
+    for tok in extract_numerals(polished):
+        v = fl(tok)
+        if v is None:                                   # cell ref / odd token — require exact
+            if tok not in extract_numerals(facts_text):
+                return False
+            continue
+        if lo and lo <= v <= hi and v == int(v):        # any year in the model span
+            continue
+        if any(abs(v - a) <= 0.03 * max(abs(a), 1.0) for a in allowed):   # rounding of a given figure
+            continue
+        return False
+    return True
 
 
 def build_executive_summary(report: Report, llm: Optional[LLMClient] = None):
@@ -133,49 +165,83 @@ def build_executive_summary(report: Report, llm: Optional[LLMClient] = None):
     ranked = report.sorted_findings()
     flags = [f"{f.title}" for f in ranked if f.severity in (Severity.critical, Severity.high)][:4]
 
-    # trends from the metrics
+    # the reads that most change the decision: growth, mix, survival, margin, concentration
     by = {m.metric_id: m for m in report.derived_metrics}
+
+    def _last(series):
+        vals = [v for v in (series or {}).values() if v is not None]
+        return vals[-1] if vals else None
+
     trends: list[str] = []
     cagr = by.get("revenue_cagr")
     if cagr and cagr.scalar is not None:
         trends.append(f"revenue compounds at {cagr.scalar:.0%} over the horizon")
-    gm = by.get("gross_margin")
-    if gm and gm.series:
-        vals = [v for v in gm.series.values() if v is not None]
-        if vals:
-            trends.append(f"gross margin ends near {vals[-1]:.0%}")
+    # revenue mix shift — usually the real story
+    mix_best = None
+    for mid, m in by.items():
+        if mid.startswith("revenue_mix_") and m.series:
+            vals = [v for v in m.series.values() if v is not None]
+            if len(vals) >= 2 and (max(vals) - min(vals)) >= 0.20:
+                if mix_best is None or (max(vals) - min(vals)) > mix_best[0]:
+                    mix_best = (max(vals) - min(vals), mid.replace("revenue_mix_", "").replace("_", "-"), vals[-1])
+    if mix_best:
+        trends.append(f"{mix_best[1]} revenue rises to {mix_best[2]:.0%} of the top line")
+    # survival
+    def _money(v):
+        a = abs(v)
+        return (f"{v/1e6:.1f}M" if a >= 1e6 else f"{v/1e3:.0f}K" if a >= 1e3 else f"{v:.0f}")
+    mc = by.get("minimum_cash")
+    if mc and mc.scalar is not None:
+        trends.append(f"cash troughs around {_money(mc.scalar)}" + (" and goes negative" if mc.scalar < 0 else ""))
+    rw = by.get("runway_forward_months") or by.get("runway_same_period_months")
+    if rw and rw.series:
+        rvals = [v for v in rw.series.values() if v is not None]
+        if rvals and min(rvals) < 12:
+            lo = min(rvals)
+            trends.append(f"runway tightens to ~{lo:.1f} month{'s' if lo >= 2 else ''} at its low point")
+    # profitability + concentration
+    em = by.get("ebitda_margin")
+    if em and _last(em.series) is not None:
+        lbl = em.label.replace(" margin", "").lower()
+        trends.append(f"{lbl} margin ends near {_last(em.series):.0%}")
     grant = by.get("grant_share_of_revenue")
     if grant and grant.series:
         peak = max((v for v in grant.series.values() if v is not None), default=None)
         if peak and peak > 0.30:
             trends.append(f"grants supply up to {peak:.0%} of revenue")
+    conc = by.get("terminal_concentration")
+    if conc and conc.scalar is not None and conc.scalar > 0.5:
+        trends.append(f"one segment is {conc.scalar:.0%} of terminal revenue")
 
-    # deterministic template
+    # deterministic template (the LLM polishes this into prose; numbers are fixed)
     article = "an" if what[:1].lower() in "aeiou" else "a"
     parts = [f"This is {article} {what} spanning {span}."]
     if flags:
-        parts.append("Key flags: " + "; ".join(flags) + ".")
+        parts.append("The analysis flags: " + "; ".join(flags) + ".")
     else:
-        parts.append("No critical or high-severity flags surfaced.")
+        parts.append("No critical or high-severity issues surfaced in the checks run.")
     if trends:
-        parts.append("Trajectory: " + "; ".join(trends) + ".")
+        parts.append("Key reads: " + "; ".join(trends) + ".")
     template = " ".join(parts)
 
     summary = ExecutiveSummary(text=template, source="template", headline_flags=flags)
 
     if llm is not None and llm.available:
-        # Note: trust score is deliberately NOT given to the LLM — it was removed
-        # from the product, and the model would otherwise reintroduce it verbatim.
-        facts = (f"Business: {what}\nHorizon: {span}\n"
-                 f"Flags (worst first): {flags or 'none'}\nTrends: {trends or 'n/a'}")
-        polished = llm._call(_SUMMARY_SYSTEM, facts, max_tokens=400, effort="low")
+        # Give the model the full year list (so it may cite the trough/raise year)
+        # and the business read, so it can describe THIS company. Trust score is
+        # deliberately withheld (removed from the product).
+        business = (plan.rationale if plan and getattr(plan, "rationale", None) and plan.source == "llm"
+                    else what)
+        facts = (f"Business: {business}\nHorizon: {span} (years available to cite: {', '.join(periods)})\n"
+                 f"Flags (worst first): {flags or 'none'}\nKey reads: {trends or 'n/a'}")
+        polished = llm._call(_SUMMARY_SYSTEM, facts, max_tokens=1024, effort="low")
         from .llm import numerals_consistent
         if polished:
             # belt-and-suspenders: trust score is gone from the product, so drop any
             # sentence that mentions it even if the model reintroduces the phrase
             sents = re.split(r'(?<=[.!?])\s+', polished.strip())
             polished = " ".join(s for s in sents if "trust score" not in s.lower()).strip()
-        if polished and numerals_consistent(polished, facts + " " + template):
+        if polished and _summary_numerals_ok(polished, facts + " " + template, periods):
             summary.text = polished.strip()
             summary.source = "llm"
     return summary
