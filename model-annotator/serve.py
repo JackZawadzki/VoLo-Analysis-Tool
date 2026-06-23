@@ -256,7 +256,15 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .oimp .idl{font-size:10.5px;color:var(--muted);margin-top:2px}
 .oimp .nochg{color:#c5bca8;font-size:11px}
 .ranges button{background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12.5px;margin-top:8px}
-.ranges details summary{cursor:pointer;color:var(--muted);font-size:12.5px;margin-top:8px}
+.ranges details summary{cursor:pointer;list-style:none;margin:2px 0 4px}
+.ranges details summary::-webkit-details-marker{display:none}
+.ranges .rsum-btn{display:inline-flex;align-items:center;gap:7px;background:#f3ede1;border:1px solid var(--accent);
+  color:var(--accent);border-radius:8px;padding:7px 14px;font-size:13.5px;font-weight:600}
+.ranges details[open] .rsum-btn{background:var(--accent);color:#fff}
+.ranges .rsum-btn:hover{background:var(--accent);color:#fff}
+.ranges .rsum-chev{display:inline-block;transition:transform .15s;font-size:11px}
+.ranges details[open] .rsum-chev{transform:rotate(90deg)}
+.ranges .rsum-sub{display:block;color:var(--muted);font-size:12px;margin-top:5px}
 /* progress bar */
 .prog{display:none;margin-top:22px}
 .prog .bartrack{height:12px;background:#e7e0d2;border-radius:8px;overflow:hidden}
@@ -660,8 +668,10 @@ def render_tornado(t, idx: int) -> str:
 
     # analyst input ranges FIRST (collapsed by default) — these drive both charts
     a("<div class=ranges><details>"
-      "<summary>Edit input ranges <span class=muted style='font-weight:400'>— base in the middle, worst &amp; "
-      "best around it; drives the charts below</span></summary>")
+      "<summary class=rsum><span class=rsum-btn><span class=rsum-chev>▸</span> ✎ Edit input ranges "
+      "&amp; what's being tested</span>"
+      "<span class=rsum-sub>set each input's low/high — drives the tornado &amp; two-way charts below</span>"
+      "</summary>")
     a("<div class=rhint>Set each input's <b>low</b> and <b>high</b>; <b>base</b> is the model's own value. The "
       "output is shown <b>worst · base · best</b>, and the tornado &amp; two-way charts below re-run live as you "
       "edit. <span class=muted>Red = output falls, green = output rises.</span></div>")

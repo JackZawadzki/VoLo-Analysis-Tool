@@ -181,6 +181,53 @@ def _row_label(sd, row: int) -> str:
     return f"row {row}"
 
 
+def _sheet_bands(structure, sheet: str, max_col: int) -> list[tuple[int, int]]:
+    """Horizontal table bands on a sheet, as (col_lo, col_hi) column ranges,
+    derived from the detected period axes' spans. Sheets that stack two tables
+    side-by-side (a blank-column gap between their period headers) yield TWO
+    bands; ordinary sheets yield ONE band spanning the whole row (identical to
+    the previous whole-row behaviour). This lets a driver's input cells be kept
+    inside the table its label heads, instead of bleeding into a neighbouring
+    table that merely shares the physical row."""
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+    spans: list[tuple[int, int]] = []
+    for ax in (structure.axes.get(sheet) or []):
+        cols = []
+        for ref in ax.header_cells:
+            try:
+                cl, _r = coordinate_from_string(ref.split("!")[-1])
+                cols.append(column_index_from_string(cl))
+            except Exception:
+                continue
+        if cols:
+            spans.append((min(cols), max(cols)))
+    if not spans:
+        return [(1, max_col)]
+    spans.sort()
+    merged: list[list[int]] = [list(spans[0])]
+    for lo, hi in spans[1:]:
+        if lo <= merged[-1][1] + 1:                 # overlapping / adjacent -> one table
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    if len(merged) <= 1:                            # single table -> whole-row scan (unchanged)
+        return [(1, max_col)]
+    return [(lo, hi) for lo, hi in merged]
+
+
+def _band_label(sd, row: int, band_lo: int) -> str:
+    """Label for a driver whose data sits in the band starting at band_lo: the
+    nearest non-empty text cell to the LEFT of the band on this row, so a
+    second-table driver is named from its OWN table's label (not the leftmost
+    label, which belongs to the first table). Falls back to the row label."""
+    if band_lo > 1:
+        for c in range(band_lo - 1, 0, -1):
+            rec = sd.cell(row, c)
+            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+                return rec.value.strip()[:38]
+    return _row_label(sd, row)
+
+
 def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Optional[Tornado]:
     """Flex the model's REAL input cells and recompute EVERY mapped output at
     EVERY period exactly through the workbook's own formulas, so the UI can let
@@ -259,28 +306,34 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         sd = wbd.sheets.get(sn)
         if cen is None or sd is None:
             continue
-        cells = []          # (node, col, value) for the row's typed-input cells
+        bands = _sheet_bands(structure, sn, sd.max_col)
+        # the row's typed-input cells, grouped into the table band they live in,
+        # so a label in one table is never paired with a value from another
+        row_cells = []      # (node, col, value)
         for c in range(1, sd.max_col + 1):
             if cen.kind(r, c) == CellKind.typed_input:
                 rec = sd.cell(r, c)
                 if rec is not None and is_number(rec.value):
-                    cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
-        nz = [x for x in cells if x[2] != 0]
-        if not nz:
-            continue
-        cells.sort(key=lambda x: x[1])
-        v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
+                    row_cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
+        for (blo, bhi) in bands:
+            cells = [x for x in row_cells if blo <= x[1] <= bhi]
+            nz = [x for x in cells if x[2] != 0]
+            if not nz:
+                continue
+            cells.sort(key=lambda x: x[1])
+            v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
 
-        def ov(factor, _cells=cells):
-            return {nd: val * factor for (nd, _c, val) in _cells}
+            def ov(factor, _cells=cells):
+                return {nd: val * factor for (nd, _c, val) in _cells}
 
-        lo = model.outputs_with_overrides(ov(0.8), all_nodes)
-        hi = model.outputs_with_overrides(ov(1.2), all_nodes)
-        swing = abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))   # rank by terminal EBITDA swing
-        if swing < max(1.0, 1e-4 * abs(eb_base or 1)):
-            continue
-        cand.append(dict(sn=sn, r=r, v0=v0, cells=cells, ref=graph.node_ref(cells[-1][0]),
-                         lo=lo, hi=hi, label=_row_label(sd, r), swing=swing))
+            lo = model.outputs_with_overrides(ov(0.8), all_nodes)
+            hi = model.outputs_with_overrides(ov(1.2), all_nodes)
+            swing = abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))   # rank by terminal EBITDA swing
+            if swing < max(1.0, 1e-4 * abs(eb_base or 1)):
+                continue
+            cand.append(dict(sn=sn, r=r, band=blo, v0=v0, cells=cells,
+                             ref=graph.node_ref(cells[-1][0]),
+                             lo=lo, hi=hi, label=_band_label(sd, r, blo), swing=swing))
     if not cand:
         return None
     cand.sort(key=lambda d: -d["swing"])
@@ -314,12 +367,13 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                              "high": d["hi"].get(out_nodes[(okey, p)])}
                          for p in periods if (okey, p) in out_nodes}
                   for okey, _l, _it in out_specs}
-        cube["drivers"].append({"key": f"in:{d['sn']}:{d['r']}", "label": d["label"],
+        dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}"
+        cube["drivers"].append({"key": dkey, "label": d["label"],
                                 "refs": [d["ref"]], "value": d["v0"], "out": outmat})
         eb_lo, eb_hi = d["lo"].get(eb_node), d["hi"].get(eb_node)
         rv_lo, rv_hi = d["lo"].get(rev_node), d["hi"].get(rev_node)
         drivers.append(SensitivityDriver(
-            key=f"in:{d['sn']}:{d['r']}", label=f"{d['label']} ({tp})",
+            key=dkey, label=f"{d['label']} ({tp})",
             input_refs=[d["ref"]], base=d["v0"], low=d["v0"] * 0.8, high=d["v0"] * 1.2,
             low_pct=-0.20, high_pct=0.20,
             output_low=eb_lo, output_high=eb_hi, swing=d["swing"],
