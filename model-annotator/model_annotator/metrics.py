@@ -222,6 +222,24 @@ def mask(series: dict[str, Optional[float]], drop: set[str]) -> dict[str, Option
     return {p: (None if p in drop else v) for p, v in series.items()}
 
 
+def pre_horizon_nonzero(wbd, item) -> Optional[float]:
+    """If the cells immediately LEFT of a row's first forecast cell (the
+    historical/actuals columns) carry a non-zero value, return it — used to catch
+    a working-capital line that was real, then switched off in the plan."""
+    if item is None or not item.coords:
+        return None
+    r, c0 = item.coords[0]
+    sd = wbd.sheets.get(item.sheet)
+    if sd is None:
+        return None
+    for c in range(c0 - 1, max(0, c0 - 4), -1):
+        rec = sd.cell(r, c)
+        v = rec.value if rec else None
+        if isinstance(v, (int, float)) and abs(v) > EPS:
+            return float(v)
+    return None
+
+
 def _rising(series: dict[str, Optional[float]], periods: list[str], min_rel: float = 0.15) -> bool:
     """True if the series ends materially higher than it starts — so an
     interpretive caption ('rising intensity…') only appears when the data rises."""
@@ -504,6 +522,13 @@ def _capital_efficiency(ctx: Ctx, out: MetricsResult) -> None:
 def _runway(ctx: Ctx, out: MetricsResult) -> None:
     P = ctx.periods
     end = ctx.series("ending_cash")
+    cash_src = "ending_cash"
+    if end is None:
+        # fall back to the cash-on-hand at period start: real models often carry
+        # only a 'beginning cash' line, but survival is the first question and the
+        # trajectory is the same answer.
+        end = ctx.series("beginning_cash")
+        cash_src = "beginning_cash"
     opex = ctx.series("opex_total")
     mpp = ctx.months_per_period
 
@@ -515,13 +540,14 @@ def _runway(ctx: Ctx, out: MetricsResult) -> None:
         if pts:
             mp, mv = min(pts, key=lambda kv: kv[1])
             neg = mv < 0
+            src_note = "" if cash_src == "ending_cash" else " (from beginning-of-period cash; no ending-cash row mapped)"
             out.metrics.append(mk(
                 "minimum_cash", f"Minimum cash across the plan ({mp})",
-                applicability="ending_cash mapped", inputs=ctx.refs("ending_cash"),
-                computation="min over periods of ending_cash[t]",
+                applicability=f"{cash_src} mapped", inputs=ctx.refs(cash_src),
+                computation=f"min over periods of {cash_src}[t]",
                 scalar=mv, units=ctx.units_label(),
                 notes=(f"trough in {mp}; cash goes NEGATIVE — the model assumes a raise lands before then"
-                       if neg else f"trough in {mp}; stays positive across the plan")))
+                       if neg else f"trough in {mp}; stays positive across the plan") + src_note))
     if end and opex:
         same = combine(P, lambda e, o: e / (abs(o) / mpp) if abs(o) > EPS else None, end, opex)
         out.metrics.append(mk(
@@ -1310,10 +1336,17 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
     # (an all-zero / all-blank line is a conclusion-shaped row with nothing
     # behind it). The interpretive caption is conditional on the actual pattern.
     ar = ctx.series("accounts_receivable")
-    if ar and rev and is_supported(ar, P):
+    ar_item = ctx.mapping.get("accounts_receivable")
+    ar_switched_off = bool(ar) and not is_supported(ar, P) and pre_horizon_nonzero(ctx.wbd, ar_item) is not None
+    if ar and rev and (is_supported(ar, P) or ar_switched_off):
         arr = ratio(ar, rev, P)
-        note = ("implied days sales outstanding — rising, tying up more cash in receivables"
-                if _rising(arr, P) else "implied days sales outstanding (broadly flat)")
+        if ar_switched_off:
+            hv = pre_horizon_nonzero(ctx.wbd, ar_item)
+            note = (f"receivables were ~{hv:,.0f} pre-forecast but are held at ZERO across the plan — "
+                    "collection is assumed instant; working capital does not build with revenue")
+        else:
+            note = ("implied days sales outstanding — rising, tying up more cash in receivables"
+                    if _rising(arr, P) else "implied days sales outstanding (broadly flat)")
         cov = coverage_note(ar, P)
         out.metrics.append(mk(
             "ar_over_revenue", "Accounts receivable / revenue",

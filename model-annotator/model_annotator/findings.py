@@ -21,7 +21,7 @@ from .graph import FormulaGraph, errors_feeding_sheets, orphan_formula_rows
 from .ingest import WorkbookData, is_number
 from .integrity import IntegrityResult
 from .mapping import LineItem, MappingResult
-from .metrics import EPS, MetricsResult, find_scalar_assumptions
+from .metrics import EPS, MetricsResult, find_scalar_assumptions, pre_horizon_nonzero
 from .schema import (
     Acquittal,
     AssumptionEntry,
@@ -173,6 +173,45 @@ def _rule_units_inconsistency(ctx: FCtx, cands: list[Candidate]) -> None:
     # transparently in the Tie-outs table and as a limitation (see __init__),
     # so nothing is hidden; it just isn't presented as a model flag.
     return
+
+
+def _rule_working_capital_switched_off(ctx: FCtx, cands: list[Candidate]) -> None:
+    """A working-capital line (AR / inventory / payables) that was non-zero —
+    historically or earlier in the plan — but is held at zero across the forecast.
+    Zeroing it makes cash collection a free assumption (every sale converts to
+    cash instantly), so it's a real, red-worthy contradiction, not a null row."""
+    P = ctx.periods()
+    if not P:
+        return
+    for cid, name in (("accounts_receivable", "Accounts receivable"),
+                      ("inventory", "Inventory"), ("accounts_payable", "Accounts payable")):
+        for it in ctx.mapping.get_all(cid):
+            vals = [it.value_for(p) for p in P]
+            nz = [v for v in vals if isinstance(v, (int, float)) and abs(v) > EPS]
+            # transition non-zero -> zero inside the forecast
+            seen, trans = False, False
+            for v in vals:
+                if isinstance(v, (int, float)) and abs(v) > EPS:
+                    seen = True
+                elif seen and (v is None or abs(v or 0) <= EPS):
+                    trans = True
+            hist = pre_horizon_nonzero(ctx.wbd, it)
+            if (not nz and hist is not None) or trans:
+                hv = hist if hist is not None else next((v for v in nz), None)
+                where = "historically" if (not nz and hist is not None) else "earlier in the plan"
+                cands.append(Candidate(
+                    category="working_capital_switched_off",
+                    severity=Severity.high,
+                    title=f"{name} modeled to zero across the forecast",
+                    narrative=(f"{name} was non-zero {where}"
+                               + (f" (~{hv:,.0f})" if hv else "")
+                               + " but is held at zero across the forecast. Zeroing working capital "
+                               "makes cash collection a free assumption — every sale converts to cash "
+                               "instantly, with nothing tied up in receivables/inventory."),
+                    management_question=(f"What collection/payment terms support {name.lower()} staying at "
+                                         "zero while revenue scales, and should working capital build with it?"),
+                    evidence=ctx.cite_series(it, P)[:6], confidence=0.8))
+                break       # one per canonical
 
 
 def _rule_grant_dependence(ctx: FCtx, cands: list[Candidate]) -> None:
@@ -979,6 +1018,7 @@ def _rule_cost_tier_mismatch(ctx: FCtx, cands: list[Candidate]) -> None:
 
 RULES = [
     _rule_tie_out_failures, _rule_missing_cached, _rule_units_inconsistency,
+    _rule_working_capital_switched_off,
     _rule_grant_dependence, _rule_growth_whiplash, _rule_hockey_stick,
     _rule_financing_cliff, _rule_concentration, _rule_market_share_basis,
     _rule_frozen_costs, _rule_expense_decoupling, _rule_capex_in_opex,

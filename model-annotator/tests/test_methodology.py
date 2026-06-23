@@ -52,6 +52,35 @@ def test_coverage_note_flags_partial():
     assert M.coverage_note(full, P) is None
 
 
+# --- 1.2 working capital switched off (non-zero historically, zero in plan) --
+class _Cell:
+    def __init__(self, v):
+        self.value = v
+
+
+class _Sheet:
+    def __init__(self, grid):
+        self.grid = grid
+
+    def cell(self, r, c):
+        return _Cell(self.grid.get((r, c)))
+
+
+class _Wbd:
+    def __init__(self, sheets):
+        self.sheets = sheets
+
+
+def test_pre_horizon_nonzero_detects_switched_off_wc():
+    it = _item("Accounts receivable", [0, 0, 0, 0, 0, 0])
+    it.sheet = "BALANCE"
+    it.coords = [(10, c) for c in range(7, 13)]      # forecast cols 7..12 (all 0)
+    wbd = _Wbd({"BALANCE": _Sheet({(10, 5): 34263.0, (10, 6): 252125.0, (10, 7): 0.0})})
+    assert M.pre_horizon_nonzero(wbd, it) == 252125.0   # nearest-left historical nonzero
+    wbd0 = _Wbd({"BALANCE": _Sheet({(10, 7): 0.0})})    # no history -> not switched off
+    assert M.pre_horizon_nonzero(wbd0, it) is None
+
+
 # --- 3.3 near-zero-denominator artifact -> n/m (pre-scale) -------------------
 def test_prescale_masks_tiny_denominator_years():
     rev = {"2026": 100_000.0, "2027": 280_000.0, "2028": 560_000.0,
