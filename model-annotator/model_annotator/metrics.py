@@ -506,6 +506,22 @@ def _runway(ctx: Ctx, out: MetricsResult) -> None:
     end = ctx.series("ending_cash")
     opex = ctx.series("opex_total")
     mpp = ctx.months_per_period
+
+    # Survival: the lowest cash balance across the plan and WHEN it happens — the
+    # first question for any pre-profitability company. A negative trough means
+    # the plan needs a raise before that year or it runs out of money.
+    if end:
+        pts = [(p, end[p]) for p in P if end.get(p) is not None]
+        if pts:
+            mp, mv = min(pts, key=lambda kv: kv[1])
+            neg = mv < 0
+            out.metrics.append(mk(
+                "minimum_cash", f"Minimum cash across the plan ({mp})",
+                applicability="ending_cash mapped", inputs=ctx.refs("ending_cash"),
+                computation="min over periods of ending_cash[t]",
+                scalar=mv, units=ctx.units_label(),
+                notes=(f"trough in {mp}; cash goes NEGATIVE — the model assumes a raise lands before then"
+                       if neg else f"trough in {mp}; stays positive across the plan")))
     if end and opex:
         same = combine(P, lambda e, o: e / (abs(o) / mpp) if abs(o) > EPS else None, end, opex)
         out.metrics.append(mk(
@@ -667,6 +683,16 @@ def _cumulative_capital(ctx: Ctx, out: MetricsResult) -> None:
             applicability="FCF and EBITDA available", inputs=fcf_inputs + ctx.refs("ebitda_or_ebit"),
             computation=f"({fcf_comp}) / ebitda[t] where ebitda > 0",
             series=conv, units="fraction"))
+        # cumulative: over the whole plan, does profitability become cash, or is
+        # it absorbed by working capital and capex?
+        conv_cum = combine(P, lambda f, e: f / e if e > EPS else None,
+                           cumulative(fcf, P), cumulative(ebitda, P))
+        out.metrics.append(mk(
+            "cash_conversion_cumulative", "Cumulative FCF conversion (Σ FCF / Σ EBITDA)",
+            applicability="FCF and EBITDA available", inputs=fcf_inputs + ctx.refs("ebitda_or_ebit"),
+            computation="cumsum(FCF)[t] / cumsum(EBITDA)[t] where cumulative EBITDA > 0",
+            series=conv_cum, units="fraction",
+            notes="whether reported profit turns into cash over the plan, or is eaten by working capital and capex"))
 
 
 def _grants(ctx: Ctx, out: MetricsResult) -> None:
@@ -773,6 +799,73 @@ def _capex_in_opex(ctx: Ctx, out: MetricsResult) -> None:
                 inputs=cap_refs + ctx.refs("opex_total", "revenue_total"),
                 computation="(opex_total[t] - expensed_capex[t]) / revenue_total[t]",
                 series=ratio(ex_capex, rev, P), units="fraction"))
+
+
+_NATURE_KEYS = [
+    ("grant", ("grant", "subsid", "subvent", "tax credit", "r&d credit", "sred")),
+    ("recurring", ("royalt", "recurring", "subscription", "saas", "arr", "mrr", "licen",
+                   "maintenance", "retainer", "hosting", "renewal", "support contract")),
+    ("services", ("service", "consulting", "professional fee", "implementation", "training",
+                  "integration", "installation service")),
+    ("one-time", ("one-time", "one time", "onetime", "non-recurring", "setup", "nre",
+                  "turnkey", "milestone", "upfront", "perpetual", "hardware sale", "equipment sale")),
+]
+
+
+def _revenue_nature(label: str) -> str:
+    """Classify a revenue stream by nature so we can talk about MIX, not just
+    growth. Heuristic on the label; 'product' is the default commercial bucket."""
+    l = (label or "").lower()
+    for nature, keys in _NATURE_KEYS:
+        if any(k in l for k in keys):
+            return nature
+    return "product"
+
+
+def _revenue_mix(ctx: Ctx, out: MetricsResult) -> None:
+    """Revenue MIX by nature over time (recurring / one-time / services / grant /
+    product). A shift in composition — e.g. recurring going 0% -> 78% — is usually
+    the real story that top-line growth alone hides."""
+    P = ctx.periods
+    rev = ctx.series("revenue_total")
+    if rev is None:
+        return
+    segs = [it for it in ctx.items("revenue_segment") if it.sheet == ctx.sheet]
+    if len(segs) < 2:
+        return
+    segs, _ = resolve_hierarchy(segs, P)
+    buckets: dict[str, list[LineItem]] = {}
+    for it in segs:
+        buckets.setdefault(_revenue_nature(it.instance or it.label), []).append(it)
+    if len(buckets) < 2:                       # need an actual mix to decompose
+        return
+    emitted = 0
+    for nature in ("recurring", "one-time", "services", "product", "grant"):
+        items = buckets.get(nature)
+        if not items:
+            continue
+        tot: dict[str, Optional[float]] = {}
+        for p in P:
+            vals = [it.value_for(p) for it in items if it.value_for(p) is not None]
+            tot[p] = sum(vals) if vals else None
+        share = ratio(tot, rev, P)
+        if not any((share.get(p) or 0) >= 0.05 for p in P):   # immaterial — skip
+            continue
+        vals = [share[p] for p in P if share.get(p) is not None]
+        shift = (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
+        names = ", ".join((it.instance or it.label).strip() for it in items[:3])
+        note = f"share of revenue from {nature} streams"
+        if shift >= 0.20:
+            note += f" — composition shifts ~{shift*100:.0f}pp over the plan (the real story under the top line)"
+        out.metrics.append(mk(
+            f"revenue_mix_{nature.replace('-', '_')}", f"Revenue mix: {nature} share",
+            applicability=f"{nature} streams: {names}",
+            inputs=[r for it in items for r in it.refs][:40] + ctx.refs("revenue_total"),
+            computation=f"sum({nature} segment rows)[t] / revenue_total[t]",
+            series=share, units="fraction", notes=note))
+        emitted += 1
+    if emitted:
+        out.notes.append("revenue decomposed by nature (recurring / one-time / services / grant / product)")
 
 
 def _segments(ctx: Ctx, out: MetricsResult) -> None:
@@ -1270,8 +1363,8 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
 
 
 BUILDERS = [_core_growth_and_margins, _capital_efficiency, _runway, _cumulative_capital,
-            _grants, _capex_in_opex, _segments, _segment_detail, _labor, _capacity_and_share,
-            _valuation, _taxes, _headcount, _working_capital]
+            _grants, _capex_in_opex, _revenue_mix, _segments, _segment_detail, _labor,
+            _capacity_and_share, _valuation, _taxes, _headcount, _working_capital]
 
 
 def compute_metrics(

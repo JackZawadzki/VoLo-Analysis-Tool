@@ -43,6 +43,7 @@ FAMILIES: list[tuple[str, str]] = [
     # 1) top line: how fast it grows and how real the revenue is
     ("growth", _GROWTH),
     ("cagr", _GROWTH),
+    ("revenue_mix", _GROWTH),
     ("segment", _GROWTH),
     ("terminal_concentration", _GROWTH),
     ("blended_asp", _GROWTH),
@@ -63,6 +64,7 @@ FAMILIES: list[tuple[str, str]] = [
     ("effective_tax", _MARGIN),
     # 3) cash, burn, capital intensity
     ("runway", _CASH),
+    ("minimum_cash", _CASH),
     ("avg_monthly_cash", _CASH),
     ("cumulative", _CASH),
     ("cushion", _CASH),
@@ -104,7 +106,14 @@ _HEADLINE = {
     "runway_forward_months", "burn_multiple", "cash_conversion",
     "terminal_concentration", "cushion_ratio", "rule_of_40",
     "operational_contracted_ratio",
+    # 2.3 — where diligence lives: mix, survival, conversion, concentration
+    "revenue_mix_recurring", "revenue_mix_one_time", "revenue_mix_grant",
+    "minimum_cash", "cash_conversion_cumulative",
 }
+
+
+def _is_headline(metric_id: str) -> bool:
+    return metric_id in _HEADLINE or metric_id.startswith("revenue_mix_")
 
 
 def _worth_a_table(t: AnnotationTable) -> bool:
@@ -115,7 +124,7 @@ def _worth_a_table(t: AnnotationTable) -> bool:
         c.highlighted and c.severity is not None and c.severity.value in ("critical", "high")
         for c in t.derived_row.cells)
     return bool(t.related_finding_ids or strong_hl or t.llm_directed
-                or t.metric_id in _HEADLINE
+                or _is_headline(t.metric_id)
                 or t.metric_id.startswith("market_share_recomputed"))
 
 

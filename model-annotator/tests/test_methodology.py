@@ -63,6 +63,17 @@ def test_prescale_masks_tiny_denominator_years():
     assert masked["2026"] is None and masked["2031"] == -5.0
 
 
+# --- 2.3 revenue mix by nature ---------------------------------------------
+def test_revenue_nature_classification():
+    assert M._revenue_nature("Royalty income") == "recurring"
+    assert M._revenue_nature("ARR — subscriptions") == "recurring"
+    assert M._revenue_nature("Software license & maintenance") == "recurring"
+    assert M._revenue_nature("Turnkey sale") == "one-time"
+    assert M._revenue_nature("R&D grant") == "grant"
+    assert M._revenue_nature("Consulting services") == "services"
+    assert M._revenue_nature("Consumer electronics") == "product"   # default commercial
+
+
 # --- 2.1 captions conditional on the actual pattern -------------------------
 def test_rising_only_when_data_rises():
     rising = {"2026": 0.1, "2027": 0.2, "2028": 0.3, "2029": 0.4, "2030": 0.5, "2031": 0.6}
