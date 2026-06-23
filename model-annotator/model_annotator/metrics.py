@@ -71,6 +71,7 @@ class Ctx:
         items = self.items(cid)
         if not items:
             return [], None
+        items, _parents = resolve_hierarchy(items, self.periods)  # never sum a subtotal with its parts
         out: dict[str, Optional[float]] = {}
         for p in self.periods:
             vals = [it.value_for(p) for it in items]
@@ -151,6 +152,84 @@ def cumulative(s: dict[str, Optional[float]], periods: list[str]) -> dict[str, O
 def terminal_scale(s: dict[str, Optional[float]], periods: list[str]) -> float:
     vals = [abs(s[p]) for p in periods if s.get(p) is not None]
     return max(vals) if vals else 0.0
+
+
+def resolve_hierarchy(items: list[LineItem], periods: list[str], tol: float = 0.02):
+    """Detect subtotal rows and return (leaves, parents_dropped).
+
+    A row is a subtotal if, in every period where it and >=2 of the other rows
+    are populated, it equals the sum of the others (within ``tol``). Aggregating
+    a category total must use ONE level only — never a subtotal together with its
+    own components (which double-counts). Illustrative failure: a payroll calc that
+    summed 'Total salaries' AND its three component salary rows = 2x payroll.
+    """
+    if len(items) < 2:
+        return list(items), []
+    arr = {id(it): [it.value_for(p) for p in periods] for it in items}
+    parents: set[int] = set()
+    for i, it in enumerate(items):
+        others = [o for j, o in enumerate(items) if j != i]
+        checked = matched = 0
+        for k in range(len(periods)):
+            mine = arr[id(it)][k]
+            comp = [arr[id(o)][k] for o in others]
+            comp = [c for c in comp if c is not None]
+            if mine is None or len(comp) < 2:
+                continue
+            checked += 1
+            s = sum(comp)
+            if abs(mine - s) <= tol * max(abs(mine), abs(s), 1.0):
+                matched += 1
+        if checked >= 1 and matched == checked:
+            parents.add(id(it))
+    leaves = [it for it in items if id(it) not in parents]
+    dropped = [it for it in items if id(it) in parents]
+    return (leaves or list(items)), dropped
+
+
+def coverage(series: dict[str, Optional[float]], periods: list[str]) -> tuple[int, int, int]:
+    """(periods populated, periods materially non-zero, total periods)."""
+    n_pop = sum(1 for p in periods if series.get(p) is not None)
+    n_nz = sum(1 for p in periods if series.get(p) is not None and abs(series[p]) > EPS)
+    return n_pop, n_nz, len(periods)
+
+
+def is_supported(series: dict[str, Optional[float]], periods: list[str]) -> bool:
+    """A ratio/insight row earns its place only if its source is materially
+    non-zero in at least one period — an all-zero / all-blank source is a
+    conclusion-shaped row with no data behind it (drop it, don't interpret it)."""
+    _, n_nz, _ = coverage(series, periods)
+    return n_nz >= 1
+
+
+def coverage_note(series: dict[str, Optional[float]], periods: list[str]) -> Optional[str]:
+    n_pop, _, n = coverage(series, periods)
+    return None if n_pop == n else f"{n_pop} of {n} periods populated — partial coverage"
+
+
+def prescale_periods(rev: dict[str, Optional[float]], periods: list[str],
+                     frac: float = 0.05) -> set[str]:
+    """Periods where revenue is below ``frac`` of peak revenue — a near-zero
+    denominator that turns a real margin into an artifact (e.g. -1573%). Such
+    periods are 'n/m (pre-scale)', not operating ratios."""
+    peak = terminal_scale(rev, periods)
+    if peak <= 0:
+        return set()
+    return {p for p in periods if rev.get(p) is not None and abs(rev[p]) < frac * peak}
+
+
+def mask(series: dict[str, Optional[float]], drop: set[str]) -> dict[str, Optional[float]]:
+    return {p: (None if p in drop else v) for p, v in series.items()}
+
+
+def _rising(series: dict[str, Optional[float]], periods: list[str], min_rel: float = 0.15) -> bool:
+    """True if the series ends materially higher than it starts — so an
+    interpretive caption ('rising intensity…') only appears when the data rises."""
+    vals = [series[p] for p in periods if series.get(p) is not None]
+    if len(vals) < 2:
+        return False
+    base = max(abs(vals[0]), abs(vals[-1]), EPS)
+    return (vals[-1] - vals[0]) / base > min_rel
 
 
 def _years_between(a: str, b: str) -> Optional[float]:
@@ -249,14 +328,23 @@ def _core_growth_and_margins(ctx: Ctx, out: MetricsResult) -> None:
             inputs=ctx.refs("revenue_total", "cogs_total"),
             computation="(revenue_total[t] - |cogs_total[t]|) / revenue_total[t]",
             series=gm, units="fraction"))
+    # near-zero-revenue years turn real margins into artifacts (e.g. -1573%);
+    # mask them as n/m so the revenue-denominated ratios stay readable
+    pre = prescale_periods(rev, P) if rev else set()
     ebitda = ctx.series("ebitda_or_ebit")
+    eb_item = ctx.item("ebitda_or_ebit")
     if rev and ebitda:
+        # label by what the operand actually is: an EBIT row is NOT EBITDA (they
+        # diverge by D&A), and calling it EBITDA is a real misstatement
+        is_ebitda = bool(eb_item) and "ebitda" in (eb_item.label or "").lower()
+        m_label = "EBITDA margin" if is_ebitda else "EBIT margin"
+        m_note = None if is_ebitda else "row is EBIT, not EBITDA (D&A not added back); labeled accordingly"
         out.metrics.append(mk(
-            "ebitda_margin", "EBITDA margin",
+            "ebitda_margin", m_label,
             applicability="revenue_total and ebitda_or_ebit mapped",
             inputs=ctx.refs("revenue_total", "ebitda_or_ebit"),
-            computation="ebitda[t] / revenue_total[t]",
-            series=ratio(ebitda, rev, P), units="fraction"))
+            computation=("ebitda[t] / revenue_total[t]" if is_ebitda else "ebit[t] / revenue_total[t]"),
+            series=mask(ratio(ebitda, rev, P), pre), units="fraction", notes=m_note))
     opex = ctx.series("opex_total")
     if rev and opex:
         out.metrics.append(mk(
@@ -264,7 +352,7 @@ def _core_growth_and_margins(ctx: Ctx, out: MetricsResult) -> None:
             applicability="revenue_total and opex_total mapped",
             inputs=ctx.refs("revenue_total", "opex_total"),
             computation="opex_total[t] / revenue_total[t]",
-            series=ratio(opex, rev, P), units="fraction"))
+            series=mask(ratio(opex, rev, P), pre), units="fraction"))
 
     # Full-horizon CAGR (analysts always state the multi-year compounding rate)
     for cid, mid, label in (("revenue_total", "revenue_cagr", "Revenue CAGR (full horizon)"),
@@ -305,17 +393,27 @@ def _core_growth_and_margins(ctx: Ctx, out: MetricsResult) -> None:
             series=oplev, units="incremental fraction",
             notes="how much of each new revenue dollar drops to EBITDA"))
 
-    # Rule of 40: revenue growth % + EBITDA margin %
+    # Rule of 40: a SCALED recurring-revenue heuristic. Withhold it unless the
+    # company is actually in that regime — on a pre-/hyper-scale business (growth
+    # in the hundreds of %, deeply negative margins) it is mathematically valid
+    # but analytically meaningless (e.g. -540%), and dilutes the real signal.
     if rev and ebitda:
         rg = growth(rev, P)
         em = ratio(ebitda, rev, P)
-        out.metrics.append(mk(
-            "rule_of_40", "Rule of 40 (revenue growth % + EBITDA margin %)",
-            applicability="revenue and EBITDA mapped",
-            inputs=ctx.refs("revenue_total", "ebitda_or_ebit"),
-            computation="revenue_growth[t] + ebitda_margin[t]",
-            series=combine(P, lambda g, m: g + m, rg, em), units="fraction",
-            notes="growth-stage health check; >=0.40 is the conventional bar"))
+        applicable = [p for p in P if rg.get(p) is not None and em.get(p) is not None
+                      and -0.10 <= rg[p] <= 1.0 and em[p] > -0.5]
+        if len(applicable) >= 2:
+            r40 = combine(P, lambda g, m: g + m, rg, em)
+            out.metrics.append(mk(
+                "rule_of_40", "Rule of 40 (revenue growth % + EBITDA margin %)",
+                applicability=f"scaled-regime periods present ({len(applicable)})",
+                inputs=ctx.refs("revenue_total", "ebitda_or_ebit"),
+                computation="revenue_growth[t] + ebitda_margin[t]",
+                series=mask(r40, set(P) - set(applicable)), units="fraction",
+                notes="growth-stage health check; >=0.40 is the conventional bar"))
+        else:
+            out.notes.append("Rule of 40 withheld: company is pre-/hyper-scale (growth or margins "
+                             "far outside the scaled recurring-revenue regime the metric assumes).")
 
 
 def _capital_efficiency(ctx: Ctx, out: MetricsResult) -> None:
@@ -368,14 +466,16 @@ def _capital_efficiency(ctx: Ctx, out: MetricsResult) -> None:
                 series=bm, units="x",
                 notes="dollars burned per incremental dollar of revenue; <1 is efficient, >2 is heavy"))
 
-    if rev and capex:
+    if rev and capex and is_supported(capex, P):
+        pre = prescale_periods(rev, P)
+        cov = coverage_note(capex, P)
         out.metrics.append(mk(
             "capex_over_revenue", "Capex / revenue",
             applicability="capex and revenue mapped",
             inputs=ctx.refs("capex", "revenue_total"),
             computation="|capex[t]| / revenue_total[t]",
-            series=combine(P, lambda c, r: abs(c) / r if abs(r) > EPS else None, capex, rev),
-            units="fraction", notes="capital intensity of the build"))
+            series=mask(combine(P, lambda c, r: abs(c) / r if abs(r) > EPS else None, capex, rev), pre),
+            units="fraction", notes="capital intensity of the build" + ("; " + cov if cov else "")))
         out.metrics.append(mk(
             "cumulative_capex", "Cumulative capex",
             applicability="capex mapped", inputs=ctx.refs("capex"),
@@ -800,6 +900,9 @@ def _labor(ctx: Ctx, out: MetricsResult) -> None:
     rev = ctx.series("revenue_total")
     if not labor or rev is None:
         return
+    # resolve the salary hierarchy first: never sum a 'Total salaries' subtotal
+    # together with its component rows (that double-counts payroll).
+    labor, parents = resolve_hierarchy(labor, P)
     payroll: dict[str, Optional[float]] = {}
     for p in P:
         vals = [it.value_for(p) for it in labor]
@@ -807,13 +910,18 @@ def _labor(ctx: Ctx, out: MetricsResult) -> None:
         payroll[p] = sum(vals) if vals else None
     refs = [r for it in labor for r in it.refs][:50]
     names = ", ".join(it.label.strip() for it in labor[:3])
+    pre = prescale_periods(rev, P)
+    note = "should fall over time as the company gains operating leverage"
+    if parents:
+        out.notes.append("hierarchy_resolved (payroll): treated as subtotal and dropped to avoid "
+                         "double-counting: " + "; ".join(it.label.strip() for it in parents))
     out.metrics.append(mk(
         "payroll_over_revenue", "Payroll / revenue",
         applicability=f"labor opex rows mapped: {names}",
         inputs=refs + ctx.refs("revenue_total"),
-        computation="sum(payroll rows)[t] / revenue_total[t]",
-        series=combine(P, lambda pay, r: abs(pay) / r if abs(r) > EPS else None, payroll, rev),
-        units="fraction", notes="should fall over time as the company gains operating leverage"))
+        computation="sum(component salary rows)[t] / revenue_total[t]",
+        series=mask(combine(P, lambda pay, r: abs(pay) / r if abs(r) > EPS else None, payroll, rev), pre),
+        units="fraction", notes=note))
     out.metrics.append(mk(
         "payroll_growth", "Payroll growth",
         applicability=f"labor opex rows mapped: {names}", inputs=refs,
@@ -1105,17 +1213,24 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
 
     # When AR/AP/inventory ARE present, compute the efficiency ratios the
     # analyst runs (Sample: AR/Revenue, AR/Beginning Cash).
+    # AR/inventory ratios are only emitted when the source carries real data
+    # (an all-zero / all-blank line is a conclusion-shaped row with nothing
+    # behind it). The interpretive caption is conditional on the actual pattern.
     ar = ctx.series("accounts_receivable")
-    if ar and rev:
+    if ar and rev and is_supported(ar, P):
+        arr = ratio(ar, rev, P)
+        note = ("implied days sales outstanding — rising, tying up more cash in receivables"
+                if _rising(arr, P) else "implied days sales outstanding (broadly flat)")
+        cov = coverage_note(ar, P)
         out.metrics.append(mk(
             "ar_over_revenue", "Accounts receivable / revenue",
             applicability="accounts_receivable and revenue mapped",
             inputs=ctx.refs("accounts_receivable", "revenue_total"),
             computation="accounts_receivable[t] / revenue_total[t]",
-            series=ratio(ar, rev, P), units="fraction",
-            notes="implied days sales outstanding; a rising ratio ties up more cash in receivables"))
+            series=arr, units="fraction",
+            notes=note + ("; " + cov if cov else "")))
         beg = ctx.series("beginning_cash")
-        if beg:
+        if beg and is_supported(beg, P):
             out.metrics.append(mk(
                 "ar_over_beginning_cash", "Accounts receivable / beginning cash",
                 applicability="accounts_receivable and beginning_cash mapped",
@@ -1124,14 +1239,18 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
                 series=ratio(ar, beg, P), units="fraction",
                 notes="receivables as a share of the cash on hand — liquidity strain if it climbs"))
     inv = ctx.series("inventory")
-    if inv and rev:
+    if inv and rev and is_supported(inv, P):
+        invr = ratio(inv, rev, P)
+        note = ("inventory intensity is rising — can signal demand softening or overbuild"
+                if _rising(invr, P) else "inventory intensity is flat/declining")
+        cov = coverage_note(inv, P)
         out.metrics.append(mk(
             "inventory_over_revenue", "Inventory / revenue",
             applicability="inventory and revenue mapped",
             inputs=ctx.refs("inventory", "revenue_total"),
             computation="inventory[t] / revenue_total[t]",
-            series=ratio(inv, rev, P), units="fraction",
-            notes="rising inventory intensity can signal demand softening or overbuild"))
+            series=invr, units="fraction",
+            notes=note + ("; " + cov if cov else "")))
 
     if rev and "accounts_receivable" not in present:
         days_list = (ctx.benchmarks or {}).get("receivables_scenario_days") or [30, 60]
