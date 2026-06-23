@@ -204,9 +204,12 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .torn h3{margin:0 0 2px}
 .torn .out{color:var(--muted);font-size:13px;margin-bottom:6px}
 .torn .out b{color:var(--ink);font-size:15px}
-.torn .duo{display:flex;gap:18px;color:var(--muted);font-size:12.5px;margin-bottom:12px}
+.torn .duo{display:flex;gap:26px;align-items:baseline;justify-content:center;color:var(--muted);font-size:13px;margin:4px 0 4px}
 .torn .duo .dn{color:#b11226}
 .torn .duo .up{color:#1a7f4b}
+.torn .duo .basew{color:#3a3128;font-weight:600}
+.torn .duo .base{font-size:15px}
+.torn .fnote{text-align:center;color:var(--muted);font-size:12px;margin-bottom:14px}
 .subh{font-family:Georgia,serif;font-size:14px;font-weight:600;margin:14px 0 8px;color:#3a3128}
 /* output / year selector (recompute mode) */
 .osel{font-size:13px;color:#3a3128;margin:2px 0 12px}
@@ -248,6 +251,7 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .oimp .iv{font-weight:700}
 .oimp .iv.dn{color:#b11226}
 .oimp .iv.up{color:#1a7f4b}
+.oimp .ivb{font-weight:600;color:#3a3128}
 .oimp .iar{color:#c0b59c;margin:0 6px}
 .oimp .idl{font-size:10.5px;color:var(--muted);margin-top:2px}
 .oimp .nochg{color:#c5bca8;font-size:11px}
@@ -639,10 +643,51 @@ def render_tornado(t, idx: int) -> str:
         a(f"<div class=osel>Output: <select class=outsel>{oopts}</select> "
           f"&nbsp; Year: <select class=persel>{popts}</select></div>")
 
-    a(f"<div class=out>{e(t.formula_note)} — base <b class=base>{_cell_text(t.output_base, False)}</b> "
-      f"<span class=muted>{e(t.output_unit)}</span></div>")
-    a("<div class=duo><span class=dn>▼ all-adverse: <b class=dnv></b></span>"
-      "<span class=up>▲ all-favorable: <b class=upv></b></span></div>")
+    drv = cube["drivers"] if cube else [{"key": d.key, "label": d.label, "refs": d.input_refs} for d in t.drivers]
+    if cube:
+        out_cols = 1
+    else:
+        out_names = ["Revenue", "EBITDA"] if t.formula == "linear_sum" else ["Valuation"]
+        out_cols = len(out_names)
+
+    # summary: worst | base | best, with base centered
+    a("<div class=duo>"
+      "<span class=dn>▼ worst-case <b class=dnv></b></span>"
+      f"<span class=basew>base <b class=base>{_cell_text(t.output_base, False)}</b> "
+      f"<span class=muted>{e(t.output_unit)}</span></span>"
+      "<span class=up>▲ best-case <b class=upv></b></span></div>")
+    a(f"<div class=fnote>{e(t.formula_note)}</div>")
+
+    # analyst input ranges FIRST (collapsed by default) — these drive both charts
+    a("<div class=ranges><details>"
+      "<summary>Edit input ranges <span class=muted style='font-weight:400'>— base in the middle, worst &amp; "
+      "best around it; drives the charts below</span></summary>")
+    a("<div class=rhint>Set each input's <b>low</b> and <b>high</b>; <b>base</b> is the model's own value. The "
+      "output is shown <b>worst · base · best</b>, and the tornado &amp; two-way charts below re-run live as you "
+      "edit. <span class=muted>Red = output falls, green = output rises.</span></div>")
+    a("<table class=rtbl><thead><tr><th class=l>input (model cell)</th><th>low</th><th>base</th><th>high</th>")
+    if cube:
+        a("<th class=oimph><span class=outname3>output</span> <span class=muted>(worst · base · best)</span></th>")
+    else:
+        for nm in out_names:
+            a(f"<th class=oimph>{e(nm)} <span class=muted>(worst · base · best)</span></th>")
+    a("</tr></thead><tbody>")
+    for d in (cube["drivers"] if cube else None) or t.drivers:
+        if cube:
+            key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
+            lo, hi, is_frac = base * 0.8, base * 1.2, False
+        else:
+            key, label, refs, base = d.key, d.label, d.input_refs, d.base
+            lo, hi, is_frac = d.low, d.high, d.unit == 'fraction'
+        a(f"<tr data-key='{e(key)}'>"
+          f"<td class=l><div class=rl>{e(label)}</div><div class=rcite>{e(', '.join(refs))}</div></td>"
+          f"<td><input type=number class=lo step=any value='{round(lo,6)}'></td>"
+          f"<td class=rbase>{_cell_text(base, is_frac)}</td>"
+          f"<td><input type=number class=hi step=any value='{round(hi,6)}'></td>")
+        for _ in range(out_cols):
+            a("<td class=oimp></td>")
+        a("</tr>")
+    a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
     # single bar per input: length = swing of the selected output
     spark_hdr = (" <span class=muted style='font-weight:400'>· the mini line is that input's effect each year, "
@@ -650,7 +695,6 @@ def render_tornado(t, idx: int) -> str:
     a("<div class=subh>How far each input moves the <span class=outname>output</span> "
       f"<span class=muted style='font-weight:400'>(sorted by impact)</span>{spark_hdr}</div>")
     a("<div class=shapbars>")
-    drv = cube["drivers"] if cube else [{"key": d.key, "label": d.label, "refs": d.input_refs} for d in t.drivers]
     for d in drv:
         refs = d.get("refs") if cube else d["refs"]
         spark = "<div class=spark></div>" if cube else ""
@@ -669,41 +713,6 @@ def render_tornado(t, idx: int) -> str:
       f"columns: <select class=selB>{opts}</select> "
       "<span class=muted>green = higher <span class=outname2>output</span>, red = lower</span></div>")
     a("<div class=gridbox></div></div>")
-
-    if cube:
-        out_cols = 1                       # one column, header is the selected output
-    else:
-        out_names = ["Revenue", "EBITDA"] if t.formula == "linear_sum" else ["Valuation"]
-        out_cols = len(out_names)
-
-    a("<div class=ranges><details open>"
-      "<summary>Edit input ranges — and see how each input moves the output</summary>")
-    a("<div class=rhint>Flex any input's low/high. Each cell is the resulting output when that one input "
-      "sits at its <b>low → high</b> end (everything else at base); <b>Δ</b> is the swing from base. "
-      "<span class=muted>Red = output falls, green = output rises.</span></div>")
-    a("<table class=rtbl><thead><tr><th class=l>input (model cell)</th><th>base</th><th>low</th><th>high</th>")
-    if cube:
-        a("<th class=oimph><span class=outname3>output</span> <span class=muted>(low → high)</span></th>")
-    else:
-        for nm in out_names:
-            a(f"<th class=oimph>{e(nm)} <span class=muted>(low → high)</span></th>")
-    a("</tr></thead><tbody>")
-    for d in (cube["drivers"] if cube else None) or t.drivers:
-        if cube:
-            key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
-            lo, hi, is_frac = base * 0.8, base * 1.2, False
-        else:
-            key, label, refs, base = d.key, d.label, d.input_refs, d.base
-            lo, hi, is_frac = d.low, d.high, d.unit == 'fraction'
-        a(f"<tr data-key='{e(key)}'>"
-          f"<td class=l><div class=rl>{e(label)}</div><div class=rcite>{e(', '.join(refs))}</div></td>"
-          f"<td class=rbase>{_cell_text(base, is_frac)}</td>"
-          f"<td><input type=number class=lo step=any value='{round(lo,6)}'></td>"
-          f"<td><input type=number class=hi step=any value='{round(hi,6)}'></td>")
-        for _ in range(out_cols):
-            a("<td class=oimp></td>")
-        a("</tr>")
-    a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
     if cube:
         spec = {"formula": "cube", "cube": cube, "unit": t.output_unit, "selA": keyA, "selB": keyB}
@@ -781,11 +790,14 @@ function maImpacts(torn,spec,cur){
     const cells=tr.querySelectorAll('.oimp');
     fns.forEach((o,oi)=>{
       const cell=cells[oi];if(!cell)return;
-      const b=o.fn({}),lo=o.fn({[d.key]:cur[d.key].lo}),hi=o.fn({[d.key]:cur[d.key].hi}),dhi=hi-b;
+      // worst | base | best (base centered) — lower output is the worse case
+      const b=o.fn({}),lo=o.fn({[d.key]:cur[d.key].lo}),hi=o.fn({[d.key]:cur[d.key].hi});
+      const worst=Math.min(lo,hi),best=Math.max(lo,hi),sw=best-worst;
       if(Math.abs(lo-b)<1e-6&&Math.abs(hi-b)<1e-6){cell.innerHTML='<span class=nochg>— no effect</span>';return;}
-      cell.innerHTML='<span class="iv '+(lo<b?'dn':'up')+'">'+maFmt(lo)+'</span><span class=iar>→</span>'
-        +'<span class="iv '+(hi<b?'dn':'up')+'">'+maFmt(hi)+'</span>'
-        +'<div class=idl>Δ '+(dhi>=0?'+':'')+maFmt(dhi)+'</div>';
+      cell.innerHTML='<span class="iv dn">'+maFmt(worst)+'</span><span class=iar>·</span>'
+        +'<span class=ivb>'+maFmt(b)+'</span><span class=iar>·</span>'
+        +'<span class="iv up">'+maFmt(best)+'</span>'
+        +'<div class=idl>swing '+maFmt(sw)+'</div>';
     });
   });
 }
