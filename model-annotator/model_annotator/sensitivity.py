@@ -215,6 +215,47 @@ def _sheet_bands(structure, sheet: str, max_col: int) -> list[tuple[int, int]]:
     return [(lo, hi) for lo, hi in merged]
 
 
+def _aggregate_groups(sd, blo: int, bhi: int, leaf_rows: list[int]) -> list[tuple[int, list[int]]]:
+    """Roll leaf input rows up to the model's own total. Returns (total_row,
+    member_rows) for each row whose per-band-period values equal the SUM of >=2 of
+    the given leaf rows sitting just above it (blank rows tolerated) -- e.g. the
+    per-segment 'new clients' rows summing into 'TOTAL New clients'. Sum-based, so
+    it needs no naming convention; a row is never grouped into more than one total."""
+    cols = list(range(blo, bhi + 1))
+
+    def vec(r):
+        out = []
+        for c in cols:
+            rec = sd.cell(r, c)
+            v = rec.value if rec is not None else None
+            out.append(v if isinstance(v, (int, float)) and not isinstance(v, bool) else None)
+        return out
+    leafset = sorted(set(leaf_rows))
+    if len(leafset) < 2:
+        return []
+    groups: list[tuple[int, list[int]]] = []
+    used: set[int] = set()
+    for A in range(min(leafset) + 1, max(leafset) + 12):
+        if A in leafset:                       # a total is not itself a leaf input
+            continue
+        av = vec(A)
+        if not any(x not in (None, 0) for x in av):
+            continue
+        members = [r for r in leafset if 0 < A - r <= 12 and r not in used]
+        if len(members) < 2:
+            continue
+        s = [0.0] * len(cols)
+        for m in members:
+            for i, x in enumerate(vec(m)):
+                s[i] += (x or 0)
+        present = [i for i in range(len(cols)) if av[i] is not None]
+        if present and max(abs((av[i] or 0) - s[i]) for i in present) <= \
+                0.02 * max(max((abs(av[i]) for i in present), default=1.0), 1.0):
+            groups.append((A, members))
+            used.update(members)
+    return groups
+
+
 def _band_label(sd, row: int, band_lo: int) -> str:
     """Label for a driver whose data sits in the band starting at band_lo: the
     nearest non-empty text cell to the LEFT of the band on this row, so a
@@ -300,52 +341,100 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         if len(distinct) >= 40:
             break
 
-    cand = []
+    from openpyxl.utils import get_column_letter
+
+    # ---- gather leaf input candidates per (row, band) (band-confined) ------
+    leaves = []
     for sn, r in distinct:
         cen = structure.censuses.get(sn)
         sd = wbd.sheets.get(sn)
         if cen is None or sd is None:
             continue
-        bands = _sheet_bands(structure, sn, sd.max_col)
-        # the row's typed-input cells, grouped into the table band they live in,
-        # so a label in one table is never paired with a value from another
-        row_cells = []      # (node, col, value)
-        for c in range(1, sd.max_col + 1):
-            if cen.kind(r, c) == CellKind.typed_input:
-                rec = sd.cell(r, c)
-                if rec is not None and is_number(rec.value):
-                    row_cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
-        for (blo, bhi) in bands:
-            cells = [x for x in row_cells if blo <= x[1] <= bhi]
+        for (blo, bhi) in _sheet_bands(structure, sn, sd.max_col):
+            cells = []
+            for c in range(blo, bhi + 1):
+                if cen.kind(r, c) == CellKind.typed_input:
+                    rec = sd.cell(r, c)
+                    if rec is not None and is_number(rec.value):
+                        cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
             nz = [x for x in cells if x[2] != 0]
             if not nz:
                 continue
             cells.sort(key=lambda x: x[1])
             v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
+            leaves.append(dict(sn=sn, r=r, band=blo, bhi=bhi, cells=cells, v0=v0,
+                               ref=graph.node_ref(cells[-1][0]), label=_band_label(sd, r, blo)))
 
-            def ov(factor, _cells=cells):
-                return {nd: val * factor for (nd, _c, val) in _cells}
-
-            lo = model.outputs_with_overrides(ov(0.8), all_nodes)
-            hi = model.outputs_with_overrides(ov(1.2), all_nodes)
-            swing = abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))   # rank by terminal EBITDA swing
-            if swing < max(1.0, 1e-4 * abs(eb_base or 1)):
+    # ---- roll segment leaves up to the model's own total (sum-based) -------
+    # so the analyst flexes the meaningful aggregate ('TOTAL New clients') with its
+    # segments as expandable children, not one near-identical bar per segment.
+    by_band: dict[tuple, list] = {}
+    for lf in leaves:
+        by_band.setdefault((lf["sn"], lf["band"], lf["bhi"]), []).append(lf)
+    child_of = {}                          # id(leaf) -> aggregate dict
+    aggregates = []
+    for (sn, blo, bhi), lfs in by_band.items():
+        sd = wbd.sheets.get(sn)
+        rowmap = {lf["r"]: lf for lf in lfs}
+        for agg_row, members in _aggregate_groups(sd, blo, bhi, list(rowmap.keys())):
+            mem = [rowmap[m] for m in members if m in rowmap]
+            if len(mem) < 2:
                 continue
-            cand.append(dict(sn=sn, r=r, band=blo, v0=v0, cells=cells,
-                             ref=graph.node_ref(cells[-1][0]),
-                             lo=lo, hi=hi, label=_band_label(sd, r, blo), swing=swing))
+            av = sd.cell(agg_row, bhi).value
+            agg = dict(sn=sn, r=agg_row, band=blo,
+                       cells=[c for lf in mem for c in lf["cells"]],
+                       v0=float(av) if is_number(av) else sum(lf["v0"] for lf in mem),
+                       ref=f"{sn}!{get_column_letter(bhi)}{agg_row}",
+                       label=_band_label(sd, agg_row, blo), children=mem)
+            aggregates.append(agg)
+            for lf in mem:
+                child_of[id(lf)] = agg
+
+    def _flex(cells):
+        ov_lo = {nd: val * 0.8 for (nd, _c, val) in cells}
+        ov_hi = {nd: val * 1.2 for (nd, _c, val) in cells}
+        lo = model.outputs_with_overrides(ov_lo, all_nodes)
+        hi = model.outputs_with_overrides(ov_hi, all_nodes)
+        return lo, hi, abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))
+
+    gate = max(1.0, 1e-4 * abs(eb_base or 1))
+    cand = []
+    # aggregates first; demote to standalone members if the rolled-up flex is inert
+    for agg in aggregates:
+        lo, hi, sw = _flex(agg["cells"])
+        if sw < gate:
+            for lf in agg["children"]:
+                child_of.pop(id(lf), None)
+            continue
+        kids = []
+        for lf in agg["children"]:
+            klo, khi, ksw = _flex(lf["cells"])
+            kids.append(dict(lf, lo=klo, hi=khi, swing=ksw))
+        cand.append(dict(agg, lo=lo, hi=hi, swing=sw, children=kids))
+    for lf in leaves:                       # ungrouped leaves -> standalone drivers
+        if id(lf) in child_of:
+            continue
+        lo, hi, sw = _flex(lf["cells"])
+        if sw < gate:
+            continue
+        cand.append(dict(lf, lo=lo, hi=hi, swing=sw, children=[]))
     if not cand:
         return None
     cand.sort(key=lambda d: -d["swing"])
     cand = cand[:MAX_DRIVERS]
-    # disambiguate duplicate labels (e.g. two 'Edge computing' rows) by cell, so
-    # the dropdowns and bars don't show two identical names
+    # disambiguate duplicate labels (e.g. two 'Edge computing' rows) by cell
     lab_counts: dict[str, int] = {}
     for d in cand:
         lab_counts[d["label"]] = lab_counts.get(d["label"], 0) + 1
     for d in cand:
         if lab_counts[d["label"]] > 1:
             d["label"] = f"{d['label']} ({d['ref'].split('!')[-1]})"
+
+    def _outmat(d):
+        return {okey: {p: {"low": d["lo"].get(out_nodes[(okey, p)]),
+                           "high": d["hi"].get(out_nodes[(okey, p)])}
+                       for p in periods if (okey, p) in out_nodes}
+                for okey, _l, _it in out_specs}
 
     # cube: every driver's effect on every output at every period (for the UI)
     cube = {
@@ -363,13 +452,11 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     adv_ov: dict[int, float] = {}
     fav_ov: dict[int, float] = {}
     for d in cand:
-        outmat = {okey: {p: {"low": d["lo"].get(out_nodes[(okey, p)]),
-                             "high": d["hi"].get(out_nodes[(okey, p)])}
-                         for p in periods if (okey, p) in out_nodes}
-                  for okey, _l, _it in out_specs}
         dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}"
-        cube["drivers"].append({"key": dkey, "label": d["label"],
-                                "refs": [d["ref"]], "value": d["v0"], "out": outmat})
+        kids = [{"key": f"{dkey}::{c['r']}", "label": c["label"], "refs": [c["ref"]],
+                 "value": c["v0"], "out": _outmat(c)} for c in d.get("children", [])]
+        cube["drivers"].append({"key": dkey, "label": d["label"], "refs": [d["ref"]],
+                                "value": d["v0"], "out": _outmat(d), "children": kids})
         eb_lo, eb_hi = d["lo"].get(eb_node), d["hi"].get(eb_node)
         rv_lo, rv_hi = d["lo"].get(rev_node), d["hi"].get(rev_node)
         drivers.append(SensitivityDriver(

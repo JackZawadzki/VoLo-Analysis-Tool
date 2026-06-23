@@ -103,6 +103,23 @@ def test_revenue_nature_classification():
     assert M._revenue_nature("Consumer electronics") == "product"   # default commercial
 
 
+# --- sensitivity: roll segment leaves up to their model total (sum-based) ----
+def test_aggregate_groups_rolls_segments_into_total():
+    from model_annotator import sensitivity as S
+    grid = {}
+    seg = {1: [1, 2, 2, 3, 4, 6], 2: [0, 0, 1, 2, 3, 4], 3: [0, 1, 1, 2, 3, 4]}
+    for rr, vals in seg.items():
+        for j, v in enumerate(vals):
+            grid[(rr, 11 + j)] = v
+    for j, v in enumerate([1, 3, 4, 7, 10, 14]):       # row 5 = sum of 1+2+3 (row 4 blank)
+        grid[(5, 11 + j)] = v
+    sd = _Sheet(grid)
+    assert S._aggregate_groups(sd, 11, 16, [1, 2, 3]) == [(5, [1, 2, 3])]
+    # rows that do NOT sum to a sibling total are left alone (e.g. per-unit prices)
+    prices = _Sheet({(1, 11): 2.5, (2, 11): 12, (3, 11): 6, (5, 11): 99})
+    assert S._aggregate_groups(prices, 11, 11, [1, 2, 3]) == []
+
+
 # --- ex-X ratio: suppress when the excluded item exceeds the base -----------
 def test_ex_ratio_suppresses_signflip_when_excluded_exceeds_base():
     P4 = ["2026", "2027", "2028", "2029"]
