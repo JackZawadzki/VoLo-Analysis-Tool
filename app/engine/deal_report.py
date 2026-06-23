@@ -1019,7 +1019,7 @@ def _compute_sensitivity(
     Perturb each key input +/-20% and re-run a fast simulation to measure
     impact on Expected MOIC and P(>3x). Returns tornado chart data.
     """
-    fast_n = 1000
+    fast_n = 5000
     perturbations = []
 
     inputs_to_test = [
@@ -1032,6 +1032,31 @@ def _compute_sensitivity(
         ("Exit Multiple High", "mult_high", exit_multiple_range[1], 0.25),
     ]
 
+    # Common-random-numbers baseline. Measure every perturbation against an
+    # UNPERTURBED run at the SAME path count and seed as the perturbations — NOT
+    # the caller's larger main-run mean. Differencing two means estimated at
+    # different sample sizes (perturbed at fast_n vs base at the main n_simulations)
+    # injects a constant offset into every delta, which manufactured a spurious
+    # across-the-board "downside moves more than upside" skew. With a matched base
+    # the (linear) multiplicative inputs come out symmetric and only genuinely
+    # convex ones — e.g. pre-money, where entry ownership = check/(pre+round) —
+    # keep an honest asymmetry. fast_n raised to 5000 to cut sampling noise.
+    _base_kwargs = dict(
+        archetype=archetype, tam_millions=tam_millions, trl=trl,
+        entry_stage=entry_stage, check_size_millions=check_size_millions,
+        pre_money_millions=pre_money_millions, sector_profile=sector_profile,
+        carta_data=carta_data, penetration_share=penetration_share,
+        exit_multiple_range=exit_multiple_range, exit_year_range=exit_year_range,
+        n_simulations=fast_n, random_seed=random_seed,
+        round_size_m=round_size_m,
+    )
+    try:
+        _base_res = run_simulation(**_base_kwargs)
+        base_moic = _base_res.get("moic_unconditional", {}).get("expected", base_moic)
+        base_p3x = _base_res.get("probability", {}).get("gt_3x", base_p3x)
+    except Exception as exc:
+        logger.debug("Sensitivity base run failed, keeping caller's base: %s", exc)
+
     for label, key, base_val, delta_pct in inputs_to_test:
         if base_val == 0:
             continue
@@ -1039,15 +1064,7 @@ def _compute_sensitivity(
         for direction in [-1, 1]:
             perturbed_val = base_val * (1 + direction * delta_pct)
 
-            kwargs = dict(
-                archetype=archetype, tam_millions=tam_millions, trl=trl,
-                entry_stage=entry_stage, check_size_millions=check_size_millions,
-                pre_money_millions=pre_money_millions, sector_profile=sector_profile,
-                carta_data=carta_data, penetration_share=penetration_share,
-                exit_multiple_range=exit_multiple_range, exit_year_range=exit_year_range,
-                n_simulations=fast_n, random_seed=random_seed,
-                round_size_m=round_size_m,
-            )
+            kwargs = dict(_base_kwargs)
 
             if key == "tam_millions":
                 kwargs["tam_millions"] = perturbed_val

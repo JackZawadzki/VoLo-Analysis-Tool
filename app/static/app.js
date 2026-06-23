@@ -3699,24 +3699,26 @@ function wizRenderReport(r) {
         if (_hasSens) {
             const trows = [...sens.tornado].sort((a,b)=>Math.abs((b.moic_up||0)-(b.moic_down||0))-Math.abs((a.moic_up||0)-(a.moic_down||0)));
             html += `<div style="font-size:0.72rem;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:var(--text-secondary,#6b7280);margin:18px 0 6px;">1 &middot; Sensitivity to your assumptions</div>
-            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Each input perturbed &plusmn;20&ndash;30% one at a time; bars show the MOIC swing (<span style="color:#dc2626;font-weight:600;">red = downside</span>, <span style="color:#16a34a;font-weight:600;">green = upside</span>). Widest = most worth getting right.</p>`;
-            // Tornado chart: diverging bars centered on the base MOIC, sorted by swing.
-            const _torMax = Math.max(0.01, ...trows.map(t => Math.max(Math.abs(Math.min(t.moic_down||0, t.moic_up||0, 0)), Math.max(t.moic_down||0, t.moic_up||0, 0))));
+            <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">How much each assumption swings expected MOIC across a &plusmn;20&ndash;30% move, biggest first &mdash; the levers most worth pinning down. <span style="white-space:nowrap;">&uarr;/&darr;</span> shows which direction of the input raises MOIC; <span style="color:#d97706;">asym</span> flags an input whose downside and upside differ (the table has the full split).</p>`;
+            // Single "impact" bars: bar length = MOIC swing across the +/- range, sorted.
+            const _swMax = Math.max(0.01, ...trows.map(t => Math.abs((t.moic_up||0)-(t.moic_down||0))));
             html += `<div style="margin:6px 0 16px;">`;
             trows.forEach(t => {
-                const _lo = Math.min(t.moic_down||0, t.moic_up||0, 0), _hi = Math.max(t.moic_down||0, t.moic_up||0, 0);
-                const _lw = (Math.abs(_lo)/_torMax)*50, _rw = (_hi/_torMax)*50;
-                const _sw = Math.abs((t.moic_up||0)-(t.moic_down||0));
+                const _d = t.moic_down||0, _u = t.moic_up||0;
+                const _sw = Math.abs(_u - _d);
+                const _w = (_sw/_swMax)*100;
+                const _upBetter = _u >= 0;                 // does raising the input raise MOIC?
+                const _dir = _upBetter ? '&uarr;' : '&darr;';
+                const _asym = Math.abs(Math.abs(_d) - Math.abs(_u)) > 0.06 && Math.max(Math.abs(_d), Math.abs(_u)) > 0.1;
                 html += `<div style="display:flex;align-items:center;gap:10px;margin:3px 0;">
-                    <div style="width:128px;font-size:11px;text-align:right;color:#374151;flex-shrink:0;">${t.input}</div>
-                    <div style="position:relative;flex:1;height:16px;background:linear-gradient(90deg,transparent calc(50% - 0.5px),#cbd5e1 calc(50% - 0.5px),#cbd5e1 calc(50% + 0.5px),transparent calc(50% + 0.5px));">
-                        <div style="position:absolute;right:50%;top:2px;height:12px;width:${_lw}%;background:rgba(220,38,38,0.78);border-radius:2px 0 0 2px;"></div>
-                        <div style="position:absolute;left:50%;top:2px;height:12px;width:${_rw}%;background:rgba(22,163,74,0.78);border-radius:0 2px 2px 0;"></div>
+                    <div style="width:140px;font-size:11px;text-align:right;color:#374151;flex-shrink:0;">${t.input} <span title="${_upBetter ? 'higher raises MOIC' : 'lower raises MOIC'}" style="color:#9ca3af;">${_dir}</span></div>
+                    <div style="flex:1;height:14px;background:rgba(0,0,0,0.05);border-radius:2px;">
+                        <div style="height:14px;width:${_w}%;background:var(--accent,#5B7744);border-radius:2px;"></div>
                     </div>
-                    <div style="width:44px;font-size:11px;font-weight:700;text-align:right;flex-shrink:0;">${fmt(_sw,2)}x</div>
+                    <div style="width:104px;font-size:11px;text-align:right;flex-shrink:0;"><span style="font-weight:700;">${fmt(_sw,2)}x</span>${_asym ? ` <span style="color:#d97706;font-size:10px;" title="&minus;20%: ${signFmt(t.moic_down,2)}  /  +20%: ${signFmt(t.moic_up,2)}">asym</span>` : ''}</div>
                 </div>`;
             });
-            html += `<div style="display:flex;gap:10px;margin-top:3px;"><div style="width:128px;flex-shrink:0;"></div><div style="flex:1;display:flex;justify-content:space-between;font-size:10px;color:#9ca3af;"><span>&larr; lower MOIC</span><span>base ${fmt(baseMoic,2)}x</span><span>higher MOIC &rarr;</span></div><div style="width:44px;font-size:10px;color:#9ca3af;text-align:right;flex-shrink:0;">swing</div></div></div>`;
+            html += `<div style="display:flex;gap:10px;margin-top:4px;"><div style="width:140px;flex-shrink:0;"></div><div style="flex:1;font-size:10px;color:#9ca3af;">MOIC swing across the &plusmn;range</div><div style="width:104px;font-size:10px;color:#9ca3af;text-align:right;flex-shrink:0;">swing</div></div></div>`;
             html += `<table class="rpt-table">
                 <thead><tr><th>Input Variable</th><th>Base MOIC</th><th>If &minus;20%</th><th>If +20%</th><th>Swing</th></tr></thead>
                 <tbody>`;
@@ -3731,7 +3733,11 @@ function wizRenderReport(r) {
                 </tr>`;
             });
             html += `</tbody></table>
-            <p class="rpt-narrative" style="margin-top:8px;">Base case: ${fmt(baseMoic, 2)}x expected MOIC, ${pctFmt(baseP3x)} P(&gt;3x). Most sensitive to <strong>${trows[0]?.input || 'N/A'}</strong> (${fmt(Math.abs((trows[0]?.moic_up || 0) - (trows[0]?.moic_down || 0)), 2)}x swing).</p>`;
+            <p class="rpt-narrative" style="margin-top:8px;">Base case: ${fmt(baseMoic, 2)}x expected MOIC, ${pctFmt(baseP3x)} P(&gt;3x). Most sensitive to <strong>${trows[0]?.input || 'N/A'}</strong> (${fmt(Math.abs((trows[0]?.moic_up || 0) - (trows[0]?.moic_down || 0)), 2)}x swing).</p>
+            ${trace('Sensitivity &mdash; methodology', `
+                <p>One&#8209;at&#8209;a&#8209;time perturbation: each input is moved &plusmn;20&ndash;30% on its own and the fund is re&#8209;simulated at 5,000 paths, measuring the change in expected MOIC. The baseline is re&#8209;run at the <strong>same path count and seed</strong> as the perturbations (common random numbers), so each bar is the input's own effect rather than sampling noise. Swing = |MOIC&#8314; &minus; MOIC&#8331;|.</p>
+                <p>The bar is the total swing across the range; for most inputs MOIC scales linearly, so the &minus;20% and +20% effects are mirror images and a single bar captures it. <strong>Pre&#8209;money is the genuine exception</strong> (flagged <span style="color:#d97706;">asym</span>): entry ownership = check / (pre&#8209;money + round), so a lower valuation lifts your return more than a higher one lowers it &mdash; that asymmetry is real, not noise. The table below always shows the full &minus;20% / +20% split.</p>
+            `)}`;
         }
         if (_hasVar) {
             const vExp = sim.variance_explanations || {};
@@ -3746,13 +3752,13 @@ function wizRenderReport(r) {
                 html += `<tr><td style="text-transform:capitalize;font-weight:600;">${k.replace(/_/g, ' ')}</td><td>${bar}<span class="rpt-num">${fmt(v * 100, 0)}%</span></td><td style="font-size:12px;color:var(--text-secondary,#6b7280);">${typeof vExp[k] === 'object' ? (vExp[k]?.explanation || '') : (vExp[k] || '')}</td></tr>`;
             });
             html += `</tbody></table>
-            <p class="rpt-narrative" style="margin-top:8px;"><strong style="text-transform:capitalize;">${vrows[0] ? vrows[0][0].replace(/_/g,' ') : 'N/A'}</strong> dominates the spread (~${topShare}% of variation).</p>`;
+            <p class="rpt-narrative" style="margin-top:8px;"><strong style="text-transform:capitalize;">${vrows[0] ? vrows[0][0].replace(/_/g,' ') : 'N/A'}</strong> dominates the spread (~${topShare}% of variation).</p>
+            ${trace('Spread drivers &mdash; methodology', `
+                <p>For each of the model's internal stochastic factors, the absolute Spearman rank&#8209;correlation with MOIC is computed across the surviving&#8209;exit paths, then normalized so the factors sum to 100%. Spearman (rank&#8209;based) is robust to MOIC's skew and to monotone&#8209;but&#8209;nonlinear effects.</p>
+                <p><strong>Read it as a ranking with rough weights, not an exact variance budget</strong> &mdash; it is a share of total rank&#8209;correlation, not a Sobol/variance partition. Shares are relative: if a factor has no usable variation for a deal it is dropped and the others rescale to 100%. The factors are what the model rolls dice on internally &mdash; not your input assumptions (those are panel 1).</p>
+            `)}`;
         }
-        html += `${trace('Methodology', `
-            <p><strong>Sensitivity (panel 1)</strong>: one&#8209;at&#8209;a&#8209;time perturbation (&plusmn;20&ndash;30%), 1,000&#8209;path fast MC (same seed), measuring &Delta;E[MOIC]. Swing = |MOIC&#8314; &minus; MOIC&#8331;|. Ranking is stable; point estimates carry more noise than the ${(sim.n_simulations||5000).toLocaleString()}&#8209;path main run.</p>
-            <p><strong>Variance drivers (panel 2)</strong>: Spearman rank&#8209;correlation between each sampled factor and MOIC across the full run, normalized to shares. The two panels use different factor sets by design &mdash; panel 1 covers controllable <em>inputs</em>, panel 2 the model's internal <em>stochastic</em> factors (including emergent ones like exit timing and margin).</p>
-        `)}
-        </div>`;
+        html += `</div>`;
     }
 
     // ── SECTION 2: ADOPTION S-CURVE & REVENUE SANITY CHECK ──────────────────
