@@ -12,6 +12,7 @@ import html
 import io
 import json
 import logging
+import os
 import re
 import tempfile
 import traceback
@@ -258,29 +259,35 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .prog .plabel{margin-top:10px;color:#3a3128;font-size:14px}
 .prog .ppct{color:var(--muted);font-variant-numeric:tabular-nums}
 /* landing page */
-.hero{margin-bottom:24px}
-.feats{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
-.feat{font-size:12px;color:#6b6253;background:#efe9dd;border:1px solid var(--line);border-radius:999px;padding:4px 12px}
-.drop{display:block;border:2px dashed #c8bfae;border-radius:16px;background:var(--panel);padding:46px 24px;text-align:center;cursor:pointer;transition:.15s}
-.dropicon{width:46px;height:46px;margin:0 auto 12px;border-radius:50%;background:#efe9dd;display:flex;align-items:center;justify-content:center;color:#a8895f;font-size:22px}
+.land{max-width:680px;margin:0 auto;padding-top:30px}
+.hero{text-align:center;margin-bottom:26px}
+.hero h1{font-size:33px;line-height:1.1;letter-spacing:-.02em;margin:0 0 10px}
+.vbadge{display:inline-block;font-family:-apple-system,sans-serif;font-size:12px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#c98a5e,#9c4221);border-radius:999px;padding:3px 10px;vertical-align:middle;
+  margin-left:10px;letter-spacing:.04em;box-shadow:0 1px 3px rgba(156,66,33,.3)}
+.hero .sub{max-width:600px;margin:0 auto;color:var(--muted);font-size:15px;line-height:1.6}
+.feats{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;justify-content:center}
+.feat{font-size:12px;color:#6b6253;background:#efe9dd;border:1px solid var(--line);border-radius:999px;padding:5px 13px}
+.drop{display:block;border:2px dashed #cbbfa8;border-radius:18px;background:linear-gradient(180deg,#fffdf9,#fbf7ef);
+  padding:52px 24px;text-align:center;cursor:pointer;transition:.15s;box-shadow:0 1px 2px rgba(60,49,40,.04)}
+.drop.hover{border-color:var(--accent);background:#fbf3ea;box-shadow:0 4px 18px rgba(156,66,33,.10)}
+.dropicon{width:50px;height:50px;margin:0 auto 14px;border-radius:50%;background:#efe7d8;display:flex;
+  align-items:center;justify-content:center;color:#a8895f;font-size:23px}
 .dropt{font-size:19px;font-family:Georgia,serif;color:var(--ink)}
-.opts{display:flex;gap:22px;align-items:flex-start;margin-top:20px;flex-wrap:wrap}
-.btn.big{padding:12px 22px;font-size:15px;border-radius:9px}
-.llm{display:flex;gap:10px;align-items:flex-start;max-width:560px;cursor:pointer;background:#fbf8f2;border:1px solid var(--line);border-radius:10px;padding:11px 14px}
-.llm input{margin-top:3px;flex:none}
-.llm.dis{opacity:.6}
-.llmh{font-size:13.5px;color:#3a3128;font-weight:600}
-.llmh .st{font-weight:400;color:var(--muted);font-size:12px;margin-left:4px}
-.llmexpl{display:block;color:var(--muted);font-size:12px;line-height:1.5;margin-top:4px}
-.llmexpl b{color:#5f574b}
+.actions{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:22px}
+.btn.big{padding:13px 30px;font-size:15.5px;border-radius:10px;box-shadow:0 2px 8px rgba(156,66,33,.18)}
+.btn.big:hover{background:#883a1d}
+.poweredby{font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
+.poweredby b{color:#5f574b}
+.poweredby .dot{color:#c8bfae;margin:0 6px}
 """
 
 INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>model-annotator</title><style>{css}</style></head><body><div class=wrap>
+<title>VoLo Financial Analysis Tool</title><style>{css}</style></head><body><div class="wrap land">
 <div class=hero>
-  <h1>model-annotator</h1>
-  <p class=sub>Automated financial-model diligence — drop a startup's Excel model and get the analysis a senior VC analyst does by hand, every number traced back to the cell it came from.</p>
+  <h1>VoLo Financial Analysis Tool<span class=vbadge>V3</span></h1>
+  <p class=sub>Drop a startup's Excel model and get the diligence a senior VC analyst does by hand — tie-outs, derived metrics, sensitivity, and the questions to ask management, with every number traced back to the cell it came from.</p>
   <div class=feats>
     <span class=feat>Arithmetic tie-outs</span>
     <span class=feat>Derived analyst metrics</span>
@@ -295,15 +302,9 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
     <div class=dropt>Drop an .xlsx / .xlsm model here</div>
     <div class=muted id=fname style="margin-top:6px">or click to choose a file</div>
   </label>
-  <div class=opts>
-    <button class="btn big" type=submit id=go>Annotate model →</button>
-    <label class="llm {llm_dis_cls}">
-      <input type=checkbox name=llm {llm_checked} {llm_dis}>
-      <span>
-        <span class=llmh>LLM polish<span class=st>{llm_note}</span></span>
-        <span class=llmexpl>Uses Claude to read the model's structure, decide which calculations matter <i>for this company</i>, and write the summary &amp; flags in plain English. <b>Every figure still comes from your workbook — the AI never computes or changes a number.</b> Leave it off for a fully deterministic run.</span>
-      </span>
-    </label>
+  <div class=actions>
+    <button class="btn big" type=submit id=go>Analyze model →</button>
+    <div class=poweredby>Reads structure &amp; writes the summary with <b>Claude</b><span class=dot>·</span>every figure still comes from your workbook</div>
   </div>
   <div class=prog id=prog>
     <div class=bartrack><div class=barfill id=barfill></div></div>
@@ -327,8 +328,7 @@ document.getElementById('f').addEventListener('submit',async (e)=>{{
   go.disabled=true; plabel.style.color='';
   document.getElementById('prog').style.display='block';
   setProg(0.02,'Uploading…');
-  const fd=new FormData(); fd.append('model',file.files[0]);
-  if(document.querySelector('input[name=llm]')?.checked) fd.append('llm','on');
+  const fd=new FormData(); fd.append('model',file.files[0]); fd.append('llm','on');
   let job;
   try{{
     const r=await fetch('/start',{{method:'POST',body:fd}});
@@ -338,12 +338,12 @@ document.getElementById('f').addEventListener('submit',async (e)=>{{
   }} catch(err){{ fail('Upload failed (is the server running?): '+err); return; }}
   let misses=0;
   const poll=setInterval(async ()=>{{
-    let s; try{{ s=await (await fetch('/progress?job='+job)).json(); }}catch(e){{ if(++misses>8){{clearInterval(poll);fail('Lost contact with the server. Click Annotate to retry.');}} return; }}
+    let s; try{{ s=await (await fetch('/progress?job='+job)).json(); }}catch(e){{ if(++misses>8){{clearInterval(poll);fail('Lost contact with the server. Click Analyze to retry.');}} return; }}
     setProg(s.frac||0, s.phase||'Working…');
     if(s.status==='done'){{ clearInterval(poll); setProg(1,'Done'); window.location.href='/result?job='+job; }}
     else if(s.status==='error'){{ clearInterval(poll);
       fail(s.error==='unknown job'
-        ? 'That run was lost — the server was restarted. Click Annotate model to run it again.'
+        ? 'That run was lost — the server was restarted. Click Analyze model to run it again.'
         : 'Error: '+(s.error||'unknown')); }}
   }}, 400);
 }});
@@ -352,14 +352,7 @@ document.getElementById('f').addEventListener('submit',async (e)=>{{
 
 
 def render_index(recent_html: str = "") -> str:
-    return INDEX_HTML.format(
-        css=PAGE_CSS,
-        recent=recent_html,
-        llm_checked="checked" if USE_LLM else "",
-        llm_dis="" if USE_LLM else "disabled",
-        llm_dis_cls="" if USE_LLM else "dis",
-        llm_note="on" if USE_LLM else "off — start the server with --llm + ANTHROPIC_API_KEY",
-    )
+    return INDEX_HTML.format(css=PAGE_CSS, recent=recent_html)
 
 
 def _cell_text(value, is_percent: bool) -> str:
@@ -1179,7 +1172,7 @@ class Handler(BaseHTTPRequestHandler):
         tmp = tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False, dir=OUT_ROOT)
         tmp.write(data)
         tmp.close()
-        use_llm = USE_LLM and "llm" in fields
+        use_llm = USE_LLM        # always on when a key is available
         job_id = uuid.uuid4().hex[:12]
         with _JOBS_LOCK:
             _JOBS[job_id] = {"status": "running", "phase": "Starting…", "frac": 0.0,
@@ -1197,13 +1190,16 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     global USE_LLM
-    USE_LLM = args.llm
+    # LLM is always on when a key is available (the UI no longer offers to turn
+    # it off); --llm forces it on even without a detected key.
+    _has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    USE_LLM = args.llm or _has_key
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
-    print(f"\n  model-annotator web UI → {url}")
-    print(f"  LLM polish: {'ON' if USE_LLM else 'off (run with --llm and ANTHROPIC_API_KEY to enable)'}")
+    print(f"\n  VoLo Financial Analysis Tool V3 → {url}")
+    print(f"  Claude analysis: {'ON' if USE_LLM else 'off (no ANTHROPIC_API_KEY found in env or .env)'}")
     print("  Ctrl-C to stop.\n")
     try:
         srv.serve_forever()
