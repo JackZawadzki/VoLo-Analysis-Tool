@@ -57,6 +57,7 @@ def annotate(
     json_only: bool = False,
     workbook_map: Optional[WorkbookMap] = None,
     llm_model: Optional[str] = None,
+    llm_provider: str = "anthropic",
     progress=None,
 ) -> Report:
     """Run the full diligence pipeline on one workbook.
@@ -94,7 +95,7 @@ def annotate(
         out.mkdir(parents=True, exist_ok=True)
 
     benchmarks = yaml.safe_load(Path(benchmarks_path or _default_benchmarks_path()).read_text()) or {}
-    llm = LLMClient(enabled=not no_llm, model=llm_model)
+    llm = LLMClient(enabled=not no_llm, model=llm_model, provider=llm_provider)
     if llm.disabled_reason and not no_llm:
         log.info("LLM disabled: %s", llm.disabled_reason)
 

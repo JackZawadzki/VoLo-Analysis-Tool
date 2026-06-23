@@ -25,13 +25,15 @@ from model_annotator.schema import Report, Severity, TieOutStatus
 log = logging.getLogger("model_annotator.serve")
 
 
+_DOTENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                "REFIANT_API_KEY", "REFIANT_BASE_URL", "REFIANT_MODEL")
+
+
 def _load_dotenv() -> Path | None:
-    """Populate ANTHROPIC_API_KEY from the nearest .env that actually carries
-    one — checking this dir, then each parent — unless the shell already set it.
-    Dependency-free; only reads the keys we use. Returns the file used (if any)."""
+    """Populate the keys we use (Anthropic + Refiant) from the nearest .env that
+    carries any of them — checking this dir, then each parent. Dependency-free;
+    shell-set values win (setdefault). Returns the file used (if any)."""
     import os
-    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-        return None
     here = Path(__file__).resolve()
     seen: set[Path] = set()
     for d in [here.parent, *here.parents]:
@@ -46,12 +48,11 @@ def _load_dotenv() -> Path | None:
                 continue
             k, v = line.split("=", 1)
             k, v = k.strip(), v.strip().strip('"').strip("'")
-            if k in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN") and v:
+            if k in _DOTENV_KEYS and v:
                 os.environ.setdefault(k, v)
                 found = True
         if found:
-            return env       # this .env had a usable key; stop here
-        # otherwise keep walking up — a parent .env may carry the real key
+            return env       # this .env had usable keys; stop here
     return None
 
 
@@ -277,6 +278,8 @@ td.hl:hover .tip{visibility:visible;opacity:1}
 .actions{display:flex;flex-direction:column;align-items:center;gap:10px;margin-top:22px}
 .btn.big{padding:13px 30px;font-size:15.5px;border-radius:10px;box-shadow:0 2px 8px rgba(156,66,33,.18)}
 .btn.big:hover{background:#883a1d}
+.provsel{font-size:13px;color:#5f574b}
+.provsel select{font-family:inherit;font-size:13px;border:1px solid var(--line);border-radius:7px;padding:5px 9px;background:#fff;margin-left:6px}
 .poweredby{font-size:12px;color:var(--muted);text-align:center;line-height:1.5}
 .poweredby b{color:#5f574b}
 .poweredby .dot{color:#c8bfae;margin:0 6px}
@@ -303,8 +306,14 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
     <div class=muted id=fname style="margin-top:6px">or click to choose a file</div>
   </label>
   <div class=actions>
+    <div class=provsel>Model provider:
+      <select name=provider id=prov>
+        <option value=anthropic selected>Anthropic (Claude)</option>
+        <option value=refiant>Refiant</option>
+      </select>
+    </div>
     <button class="btn big" type=submit id=go>Analyze model →</button>
-    <div class=poweredby>Reads structure &amp; writes the summary with <b>Claude</b><span class=dot>·</span>every figure still comes from your workbook</div>
+    <div class=poweredby>Reads structure &amp; writes the summary with the selected model<span class=dot>·</span>every figure still comes from your workbook</div>
   </div>
   <div class=prog id=prog>
     <div class=bartrack><div class=barfill id=barfill></div></div>
@@ -329,6 +338,7 @@ document.getElementById('f').addEventListener('submit',async (e)=>{{
   document.getElementById('prog').style.display='block';
   setProg(0.02,'Uploading…');
   const fd=new FormData(); fd.append('model',file.files[0]); fd.append('llm','on');
+  fd.append('provider', (document.getElementById('prov')||{{}}).value || 'anthropic');
   let job;
   try{{
     const r=await fetch('/start',{{method:'POST',body:fd}});
@@ -1070,7 +1080,7 @@ _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
 
 
-def _run_job(job_id: str, tmp_path: str, filename: str, use_llm: bool):
+def _run_job(job_id: str, tmp_path: str, filename: str, use_llm: bool, provider: str = "anthropic"):
     def prog(label: str, frac: float):
         with _JOBS_LOCK:
             j = _JOBS.get(job_id)
@@ -1078,7 +1088,7 @@ def _run_job(job_id: str, tmp_path: str, filename: str, use_llm: bool):
                 j["phase"], j["frac"] = label, frac
     try:
         report = annotate(tmp_path, out_dir=str(OUT_ROOT / Path(filename).stem),
-                          no_llm=not use_llm, write_outputs=True, progress=prog)
+                          no_llm=not use_llm, llm_provider=provider, write_outputs=True, progress=prog)
         html = render_report(report, filename)
         with _JOBS_LOCK:
             _JOBS[job_id].update(status="done", frac=1.0, phase="Done", html=html)
@@ -1151,11 +1161,14 @@ class Handler(BaseHTTPRequestHandler):
         tmp.write(data)
         tmp.close()
         use_llm = USE_LLM        # always on when a key is available
+        provider = (fields.get("provider", ["anthropic"])[0] or "anthropic").lower()
+        if provider not in ("anthropic", "refiant"):
+            provider = "anthropic"
         job_id = uuid.uuid4().hex[:12]
         with _JOBS_LOCK:
             _JOBS[job_id] = {"status": "running", "phase": "Starting…", "frac": 0.0,
                              "html": None, "error": ""}
-        threading.Thread(target=_run_job, args=(job_id, tmp.name, filename, use_llm),
+        threading.Thread(target=_run_job, args=(job_id, tmp.name, filename, use_llm, provider),
                          daemon=True).start()
         self._send(json.dumps({"job": job_id}), ctype="application/json")
 
@@ -1168,16 +1181,20 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     global USE_LLM
-    # LLM is always on when a key is available (the UI no longer offers to turn
-    # it off); --llm forces it on even without a detected key.
-    _has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    # LLM is on when a key for EITHER provider is available; the per-run provider
+    # (Anthropic / Refiant) is chosen from the page toggle. --llm forces it on.
+    _has_key = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
+                    or os.environ.get("REFIANT_API_KEY"))
     USE_LLM = args.llm or _has_key
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}"
     print(f"\n  VoLo Financial Analysis Tool V3 → {url}")
-    print(f"  Claude analysis: {'ON' if USE_LLM else 'off (no ANTHROPIC_API_KEY found in env or .env)'}")
+    a_on = bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    r_on = bool(os.environ.get("REFIANT_API_KEY"))
+    print(f"  Providers — Anthropic: {'key found' if a_on else 'no key'} · "
+          f"Refiant: {'key found' if r_on else 'no key'}")
     print("  Ctrl-C to stop.\n")
     try:
         srv.serve_forever()
