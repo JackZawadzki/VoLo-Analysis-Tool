@@ -29,7 +29,7 @@ from .schema import CellKind, SensitivityDriver, Tornado
 from .structure import StructureResult
 
 DEFAULT_PCT = 0.20
-MAX_DRIVERS = 8             # keep the chart legible — show the inputs that move it most
+MAX_DRIVERS = 12            # keep the chart legible — show the inputs that move it most
 
 
 @dataclass
@@ -326,76 +326,132 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     eb_base = model.values.get(eb_node)
     rev_base = model.values.get(rev_node)
 
-    up = graph.upstream(eb_node, cap=200_000)
-    distinct: list[tuple[str, int]] = []
-    seen: set[tuple[str, int]] = set()
-    for imp in rank_inputs_by_impact(graph, [sheet], top_n=400):
-        if not is_number(imp.value):
-            continue
-        if encode(graph.sheet_index[imp.sheet], imp.row, imp.col) not in up:
-            continue
-        key = (imp.sheet, imp.row)
-        if key not in seen:
-            seen.add(key)
-            distinct.append(key)
-        if len(distinct) >= 40:
-            break
-
+    # discover EVERY input that actually feeds REVENUE or EBITDA (union of both
+    # cones) — not a fan-out-biased pre-filter — so cost stacks and volume levers
+    # are not missed; dead/reference cells are excluded because they aren't upstream.
+    up = graph.upstream(eb_node, cap=200_000) | graph.upstream(rev_node, cap=200_000)
     from openpyxl.utils import get_column_letter
+    import re as _re
+    _COST = _re.compile(r"cost|personnel|payroll|opex|sg&a|r&d|salar|capex|overhead|wage", _re.I)
 
-    # ---- gather leaf input candidates per (row, band) (band-confined) ------
-    leaves = []
-    for sn, r in distinct:
+    def _clean_sheet(name):
+        s = _re.sub(r"^(COSTS?-|M-)\s*", "", name).strip()
+        return (s[:1].upper() + s[1:]) if s else name
+
+    def _leaf(sn, sd, cen, row, blo, bhi):
+        cells = []
+        for c in range(blo, bhi + 1):
+            if cen.kind(row, c) == CellKind.typed_input:
+                rec = sd.cell(row, c)
+                if rec is not None and is_number(rec.value):
+                    cells.append((encode(graph.sheet_index[sn], row, c), c, float(rec.value)))
+        nz = [x for x in cells if x[2] != 0]
+        if not nz:
+            return None
+        cells.sort(key=lambda x: x[1])
+        v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
+        return dict(sn=sn, r=row, band=blo, bhi=bhi, cells=cells, v0=v0,
+                    ref=graph.node_ref(cells[-1][0]), label=_band_label(sd, row, blo))
+
+    sheet_rows: dict[str, list[int]] = {}
+    for sn, sd in wbd.sheets.items():
         cen = structure.censuses.get(sn)
-        sd = wbd.sheets.get(sn)
-        if cen is None or sd is None:
+        si = graph.sheet_index.get(sn)
+        if cen is None or si is None:
             continue
-        for (blo, bhi) in _sheet_bands(structure, sn, sd.max_col):
-            cells = []
-            for c in range(blo, bhi + 1):
-                if cen.kind(r, c) == CellKind.typed_input:
-                    rec = sd.cell(r, c)
-                    if rec is not None and is_number(rec.value):
-                        cells.append((encode(graph.sheet_index[sn], r, c), c, float(rec.value)))
-            nz = [x for x in cells if x[2] != 0]
-            if not nz:
-                continue
-            cells.sort(key=lambda x: x[1])
-            v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
-            leaves.append(dict(sn=sn, r=r, band=blo, bhi=bhi, cells=cells, v0=v0,
-                               ref=graph.node_ref(cells[-1][0]), label=_band_label(sd, r, blo)))
+        rs = set()
+        for r in range(1, sd.max_row + 1):
+            for c in range(1, sd.max_col + 1):
+                if cen.kind(r, c) != CellKind.typed_input:
+                    continue
+                rec = sd.cell(r, c)
+                if rec is None or not is_number(rec.value) or rec.value == 0:
+                    continue
+                if encode(si, r, c) in up:
+                    rs.add(r)
+                    break
+        if rs:
+            sheet_rows[sn] = sorted(rs)
 
-    # ---- roll segment leaves up to the model's own total (sum-based) -------
-    # so the analyst flexes the meaningful aggregate ('TOTAL New clients') with its
-    # segments as expandable children, not one near-identical bar per segment.
-    by_band: dict[tuple, list] = {}
-    for lf in leaves:
-        by_band.setdefault((lf["sn"], lf["band"], lf["bhi"]), []).append(lf)
-    child_of = {}                          # id(leaf) -> aggregate dict
+    leaves = []
     aggregates = []
-    for (sn, blo, bhi), lfs in by_band.items():
-        sd = wbd.sheets.get(sn)
-        rowmap = {lf["r"]: lf for lf in lfs}
-        for agg_row, members in _aggregate_groups(sd, blo, bhi, list(rowmap.keys())):
-            mem = [rowmap[m] for m in members if m in rowmap]
-            if len(mem) < 2:
-                continue
-            av = sd.cell(agg_row, bhi).value
-            agg = dict(sn=sn, r=agg_row, band=blo,
-                       cells=[c for lf in mem for c in lf["cells"]],
-                       v0=float(av) if is_number(av) else sum(lf["v0"] for lf in mem),
-                       ref=f"{sn}!{get_column_letter(bhi)}{agg_row}",
-                       label=_band_label(sd, agg_row, blo), children=mem)
+    child_of = {}                          # id(leaf) -> aggregate dict
+    for sn, rows in sheet_rows.items():
+        sd = wbd.sheets[sn]
+        cen = structure.censuses[sn]
+        role = structure.roles.get(sn)
+        role = role[0].value if role else ""
+        bands = _sheet_bands(structure, sn, sd.max_col)
+        row_leaves = []
+        for r in rows:
+            for (blo, bhi) in bands:
+                lf = _leaf(sn, sd, cen, r, blo, bhi)
+                if lf:
+                    row_leaves.append(lf)
+        if not row_leaves:
+            continue
+        is_cost = role == "cost_buildup" or _COST.search(sn) is not None
+        if is_cost and len(row_leaves) >= 6:
+            # a dense cost stack -> ONE lever (flex the whole stack), rows = children
+            agg = dict(sn=sn, r=-1, band=0,
+                       cells=[c for lf in row_leaves for c in lf["cells"]],
+                       v0=sum(lf["v0"] for lf in row_leaves),
+                       ref=f"{sn} · {len(row_leaves)} inputs",
+                       label=f"{_clean_sheet(sn)} cost", children=row_leaves)
             aggregates.append(agg)
-            for lf in mem:
+            for lf in row_leaves:
                 child_of[id(lf)] = agg
+        elif role == "assumptions":
+            leaves.extend(row_leaves)       # each assumption row is its own lever
+        else:
+            # schedule/other: roll segment leaves up to their model total (sum-based)
+            leaves.extend(row_leaves)
+            by_band: dict[tuple, list] = {}
+            for lf in row_leaves:
+                by_band.setdefault((lf["band"], lf["bhi"]), []).append(lf)
+            for (blo, bhi), lfs in by_band.items():
+                rowmap = {lf["r"]: lf for lf in lfs}
+                for agg_row, members in _aggregate_groups(sd, blo, bhi, list(rowmap.keys())):
+                    mem = [rowmap[m] for m in members if m in rowmap]
+                    if len(mem) < 2:
+                        continue
+                    _avc = sd.cell(agg_row, bhi)
+                    av = _avc.value if _avc is not None else None
+                    agg = dict(sn=sn, r=agg_row, band=blo,
+                               cells=[c for lf in mem for c in lf["cells"]],
+                               v0=float(av) if is_number(av) else sum(lf["v0"] for lf in mem),
+                               ref=f"{sn}!{get_column_letter(bhi)}{agg_row}",
+                               label=_band_label(sd, agg_row, blo), children=mem)
+                    aggregates.append(agg)
+                    for lf in mem:
+                        child_of[id(lf)] = agg
+
+    # merge duplicate aggregates across replica blocks (e.g. three 'TOTAL New
+    # clients' from Spain/EU/US become ONE driver flexing all blocks together)
+    _bylabel: dict[str, dict] = {}
+    _merged: list[dict] = []
+    for agg in aggregates:
+        k = _re.sub(r"[^a-z0-9]+", "", agg["label"].lower())
+        if k and k in _bylabel:
+            m = _bylabel[k]
+            m["cells"] = m["cells"] + agg["cells"]
+            m["children"] = m["children"] + agg["children"]
+            m["v0"] = m["v0"] + agg["v0"]
+        else:
+            _bylabel[k] = agg
+            _merged.append(agg)
+    aggregates = _merged
 
     def _flex(cells):
         ov_lo = {nd: val * 0.8 for (nd, _c, val) in cells}
         ov_hi = {nd: val * 1.2 for (nd, _c, val) in cells}
         lo = model.outputs_with_overrides(ov_lo, all_nodes)
         hi = model.outputs_with_overrides(ov_hi, all_nodes)
-        return lo, hi, abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))
+        # rank by how much the lever moves the OUTCOME — revenue or EBITDA, whichever
+        # it hits hardest (volume levers move revenue; cost levers move EBITDA)
+        eb_sw = abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))
+        rv_sw = abs((hi.get(rev_node) or 0) - (lo.get(rev_node) or 0))
+        return lo, hi, max(eb_sw, rv_sw)
 
     gate = max(1.0, 1e-4 * abs(eb_base or 1))
     cand = []
@@ -410,7 +466,8 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         for lf in agg["children"]:
             klo, khi, ksw = _flex(lf["cells"])
             kids.append(dict(lf, lo=klo, hi=khi, swing=ksw))
-        cand.append(dict(agg, lo=lo, hi=hi, swing=sw, children=kids))
+        kids.sort(key=lambda d: -d["swing"])           # keep the most material rows as children
+        cand.append(dict(agg, lo=lo, hi=hi, swing=sw, children=kids[:10]))
     for lf in leaves:                       # ungrouped leaves -> standalone drivers
         if id(lf) in child_of:
             continue
