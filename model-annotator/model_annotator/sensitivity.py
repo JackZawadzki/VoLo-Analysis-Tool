@@ -488,26 +488,38 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
 
     gate = max(1.0, 1e-4 * abs(eb_base or 1))
     cand = []
-    # aggregates first; demote to standalone members if the rolled-up flex is inert
+    claimed: set[int] = set()      # GUARANTEE: each input cell is flexed by at most one driver
+    # aggregates first (broader levers claim their cells); then standalone leaves
     for agg in aggregates:
-        lo, hi, sw = _flex(agg["cells"])
+        cells = [x for x in agg["cells"] if x[0] not in claimed]
+        if not cells:
+            continue
+        lo, hi, sw = _flex(cells)
         if sw < gate:
             for lf in agg["children"]:
                 child_of.pop(id(lf), None)
             continue
+        cellset = {x[0] for x in cells}
+        claimed |= cellset
         kids = []
-        for lf in agg["children"]:
+        for lf in agg["children"]:          # children are this aggregate's own decomposition
+            if not all(c[0] in cellset for c in lf["cells"]):
+                continue
             klo, khi, ksw = _flex(lf["cells"])
             kids.append(dict(lf, lo=klo, hi=khi, swing=ksw))
         kids.sort(key=lambda d: -d["swing"])           # keep the most material rows as children
-        cand.append(dict(agg, lo=lo, hi=hi, swing=sw, children=kids[:10]))
+        cand.append(dict(agg, cells=cells, lo=lo, hi=hi, swing=sw, children=kids[:10]))
     for lf in leaves:                       # ungrouped leaves -> standalone drivers
         if id(lf) in child_of:
             continue
-        lo, hi, sw = _flex(lf["cells"])
+        cells = [x for x in lf["cells"] if x[0] not in claimed]
+        if not cells:
+            continue
+        lo, hi, sw = _flex(cells)
         if sw < gate:
             continue
-        cand.append(dict(lf, lo=lo, hi=hi, swing=sw, children=[]))
+        claimed |= {x[0] for x in cells}
+        cand.append(dict(lf, cells=cells, lo=lo, hi=hi, swing=sw, children=[]))
     if not cand:
         return None
     cand.sort(key=lambda d: -d["swing"])
