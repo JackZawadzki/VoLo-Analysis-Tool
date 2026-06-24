@@ -103,6 +103,26 @@ def test_revenue_nature_classification():
     assert M._revenue_nature("Consumer electronics") == "product"   # default commercial
 
 
+# --- sensitivity: section-header detection + label cleaning -------------------
+def test_section_label_finds_title_row():
+    from model_annotator import sensitivity as S
+    grid = {(1, 2): "Licensing (royalty per unit)"}     # title row: text, no band numbers
+    for j, v in enumerate([2.5, 12, 6]):                 # 3 data rows below, band cols 3-8
+        grid[(2 + j, 2)] = ["Consumer", "Edge", "Data"][j]
+        grid[(2 + j, 8)] = v
+    sd = _Sheet(grid)
+    assert S._section_label(sd, 3, 8, 3) == "Licensing (royalty per unit)"  # data row 3 -> its title
+    # a data row with numbers in the band is NOT a section header
+    assert S._section_label(sd, 3, 8, 2) is None or "Licensing" in (S._section_label(sd, 3, 8, 2) or "")
+
+
+def test_clean_label_strips_unit_noise():
+    from model_annotator import sensitivity as S
+    assert S._clean_label("Licensing (royalty per unit) €/unit") == "Licensing (royalty per unit)"
+    assert S._clean_label("New clients x each distributor AVERAGE") == "New clients x each distributor"
+    assert S._clean_label("Average ARR (€/Client)") == "Average ARR"
+
+
 # --- sensitivity: roll segment leaves up to their model total (sum-based) ----
 def test_aggregate_groups_rolls_segments_into_total():
     from model_annotator import sensitivity as S

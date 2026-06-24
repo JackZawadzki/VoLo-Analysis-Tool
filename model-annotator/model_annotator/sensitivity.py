@@ -270,6 +270,42 @@ def _band_label(sd, row: int, band_lo: int) -> str:
     return _row_label(sd, row)
 
 
+def _section_label(sd, blo: int, bhi: int, row: int) -> Optional[str]:
+    """The section header above a data row in band [blo,bhi]: the nearest row
+    above with a text label (left of the band) but NO numeric data IN the band —
+    i.e. a title row like 'Licensing (royalty per unit)' or 'Units x client'.
+    Lets per-segment rows be grouped by the family their modeller put them under."""
+    for rr in range(row - 1, max(0, row - 30), -1):
+        lab = None
+        for c in range(max(1, blo - 1), 0, -1):
+            rec = sd.cell(rr, c)
+            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+                lab = rec.value.strip()
+                break
+        if not lab:
+            continue
+        has_num = False
+        for c in range(blo, bhi + 1):
+            rec = sd.cell(rr, c)
+            if rec is not None and isinstance(rec.value, (int, float)) and not isinstance(rec.value, bool):
+                has_num = True
+                break
+        if not has_num:                 # text + no numbers in the band -> a title row
+            return lab
+    return None
+
+
+def _clean_label(s: str) -> str:
+    """Tidy a raw row/section label into a readable driver name: drop trailing
+    unit notes (€/unit, /client), AVERAGE/TOTAL noise, and surrounding clutter."""
+    import re as _r
+    out = _r.sub(r"\s*\(?\s*€?\s*/\s*(unit|client|person|day|t|head|month|year)\b.*$", "", s, flags=_r.I)
+    out = _r.sub(r"\s*€\s*/\s*\w+\s*$", "", out)
+    out = _r.sub(r"\s+(?:AVERAGE|AVG)\s*$", "", out, flags=_r.I)   # trailing 'AVERAGE' noise only
+    out = _r.sub(r"\s{2,}", " ", out).strip(" -—:·,")
+    return (out or s.strip())[:40]
+
+
 def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Optional[Tornado]:
     """Flex the model's REAL input cells and recompute EVERY mapped output at
     EVERY period exactly through the workbook's own formulas, so the UI can let
@@ -435,29 +471,39 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             for lf in row_leaves:
                 child_of[id(lf)] = agg
         elif role == "assumptions":
-            leaves.extend(row_leaves)       # each assumption row is its own lever
+            for lf in row_leaves:           # each assumption row is its own lever
+                lf["label"] = _clean_label(lf["label"])
+                leaves.append(lf)
         else:
-            # schedule/other: roll segment leaves up to their model total (sum-based)
+            # schedule/other: group per-segment rows by the SECTION header their
+            # modeller put them under (e.g. 'Licensing (royalty per unit)',
+            # 'Units x client'), so families become one lever with segment children
+            # instead of N ambiguous bars. Single-row sections stay standalone,
+            # named with their section for context.
             leaves.extend(row_leaves)
-            by_band: dict[tuple, list] = {}
+            by_sec: dict[tuple, list] = {}
+            sec_of: dict[int, Optional[str]] = {}
             for lf in row_leaves:
-                by_band.setdefault((lf["band"], lf["bhi"]), []).append(lf)
-            for (blo, bhi), lfs in by_band.items():
-                rowmap = {lf["r"]: lf for lf in lfs}
-                for agg_row, members in _aggregate_groups(sd, blo, bhi, list(rowmap.keys())):
-                    mem = [rowmap[m] for m in members if m in rowmap]
-                    if len(mem) < 2:
-                        continue
-                    _avc = sd.cell(agg_row, bhi)
-                    av = _avc.value if _avc is not None else None
-                    agg = dict(sn=sn, r=agg_row, band=blo,
-                               cells=[c for lf in mem for c in lf["cells"]],
-                               v0=float(av) if is_number(av) else sum(lf["v0"] for lf in mem),
-                               ref=f"{sn}!{get_column_letter(bhi)}{agg_row}",
-                               label=_band_label(sd, agg_row, blo), children=mem)
+                sec = _section_label(sd, lf["band"], lf["bhi"], lf["r"])
+                sec_of[id(lf)] = sec
+                by_sec.setdefault((lf["band"], (sec or f"~row{lf['r']}").lower()), []).append(lf)
+            for _key, lfs in by_sec.items():
+                sec = sec_of[id(lfs[0])]
+                if sec and len(lfs) >= 2:
+                    agg = dict(sn=sn, r=-1, band=lfs[0]["band"],
+                               cells=[c for lf in lfs for c in lf["cells"]],
+                               v0=sum(lf["v0"] for lf in lfs),
+                               ref=f"{sn} · {sec[:28]}",
+                               label=_clean_label(sec), children=lfs)
+                    for lf in lfs:
+                        lf["label"] = _clean_label(lf["label"])    # child = segment name
                     aggregates.append(agg)
-                    for lf in mem:
+                    for lf in lfs:
                         child_of[id(lf)] = agg
+                else:                       # single-row section -> standalone w/ context
+                    for lf in lfs:
+                        base = _clean_label(lf["label"])
+                        lf["label"] = f"{base} ({_clean_label(sec)})" if sec else base
 
     # merge duplicate aggregates across replica blocks (e.g. three 'TOTAL New
     # clients' from Spain/EU/US become ONE driver flexing all blocks together)
