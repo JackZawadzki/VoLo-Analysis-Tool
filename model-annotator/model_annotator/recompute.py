@@ -132,6 +132,7 @@ _TOKEN_RE = re.compile(
               (?::(?:'[^']*'|[A-Za-z_\\][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+)?)
     | (?P<bool>TRUE|FALSE)
     | (?P<func>[A-Za-z_][A-Za-z0-9_.]*)(?=\s*\()
+    | (?P<name>[A-Za-z_\\][A-Za-z0-9_.\\]*)
     | (?P<op><=|>=|<>|[-+*/^%&=<>])
     | (?P<lp>\() | (?P<rp>\)) | (?P<comma>,) | (?P<colon>:)
     """,
@@ -248,6 +249,8 @@ class _Parser:
             return v
         if k == "ref":
             return ("range", s) if ":" in s else ("cell", s)
+        if k == "name":
+            return ("name", s)
         if k == "func":
             return self.call(s.upper())
         raise Unsupported(f"unexpected token {s!r}")
@@ -285,9 +288,10 @@ def _canon(name: str) -> str:
 # Interpreter
 # --------------------------------------------------------------------------
 class _Interp:
-    def __init__(self, resolve_cell, resolve_range):
+    def __init__(self, resolve_cell, resolve_range, resolve_name=None):
         self.rc = resolve_cell
         self.rr = resolve_range
+        self.rn = resolve_name
 
     def ev(self, node):
         t = node[0]
@@ -297,6 +301,10 @@ class _Interp:
             return self.rc(node[1])
         if t == "range":
             return self.rr(node[1])
+        if t == "name":
+            if self.rn is None:
+                raise Unsupported(f"named range {node[1]!r}")
+            return self.rn(node[1])
         if t == "empty":
             return None
         if t == "neg":
@@ -641,12 +649,13 @@ def _match_index(lookup, arr, mode):
     return best
 
 
-def evaluate(formula: str, resolve_cell, resolve_range):
+def evaluate(formula: str, resolve_cell, resolve_range, resolve_name=None):
     """Tokenize → parse → interpret a single formula. Stable entry point for
-    tests and ad-hoc use. ``resolve_cell(ref)`` returns a raw value, and
-    ``resolve_range(ref)`` a list of raw values."""
+    tests and ad-hoc use. ``resolve_cell(ref)`` returns a raw value,
+    ``resolve_range(ref)`` a list of raw values, ``resolve_name(name)`` a defined
+    name's value (optional)."""
     ast = _Parser(_tokenize(str(formula).lstrip("="))).parse()
-    return _Interp(resolve_cell, resolve_range).ev(ast)
+    return _Interp(resolve_cell, resolve_range, resolve_name).ev(ast)
 
 
 # --------------------------------------------------------------------------
@@ -682,6 +691,15 @@ class RecomputeModel:
         self._resolvers: dict[int, tuple] = {}                 # sheet_idx -> (resolve_cell, resolve_range)
         self._names_lower = {n.lower(): i for i, n in enumerate(self.g.sheet_names)}
         self.n_frozen = 0                                      # cells we couldn't eval (held at cached value)
+        # workbook defined-names -> their target ref string, so formulas that
+        # reference inputs by NAME (common in good models) resolve and propagate
+        self._named: dict[str, str] = {}
+        for nm, target in getattr(self.g.wbd, "named_ranges", {}).items():
+            t = str(target).lstrip("=").strip()
+            if "," in t:
+                t = t.split(",")[0].strip()        # multi-area name -> first area
+            if t:
+                self._named[nm.lower()] = t
 
     # ---- ref resolution -------------------------------------------------
     def _resolve_node(self, sheet_idx: int, r: int, c: int):
@@ -730,8 +748,14 @@ class RecomputeModel:
                     vals.append(self._resolve_node(si, rr, cc))
             return _Range(vals, hi_r - lo_r + 1, hi_c - lo_c + 1)
 
-        self._resolvers[cur_sheet_idx] = (resolve_cell, resolve_range)
-        return resolve_cell, resolve_range
+        def resolve_name(name: str):
+            tgt = self._named.get(name.lower())
+            if not tgt:
+                raise Unsupported(f"unknown name {name!r}")
+            return resolve_range(tgt) if ":" in tgt else resolve_cell(tgt)
+
+        self._resolvers[cur_sheet_idx] = (resolve_cell, resolve_range, resolve_name)
+        return self._resolvers[cur_sheet_idx]
 
     def _eval_node(self, node: int):
         ast = self._ast.get(node)
@@ -740,8 +764,8 @@ class RecomputeModel:
             formula = self._formula_src[node][0]
             ast = _Parser(_tokenize(formula.lstrip("="))).parse()
             self._ast[node] = ast
-        rc, rr = self._make_resolvers(si)
-        return _Interp(rc, rr).ev(ast)
+        rc, rr, rn = self._make_resolvers(si)
+        return _Interp(rc, rr, rn).ev(ast)
 
     # ---- build + faithfulness gate -------------------------------------
     @classmethod
