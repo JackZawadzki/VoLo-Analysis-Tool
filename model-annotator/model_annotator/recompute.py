@@ -287,77 +287,103 @@ def _canon(name: str) -> str:
 # --------------------------------------------------------------------------
 # Interpreter
 # --------------------------------------------------------------------------
-class _Interp:
-    def __init__(self, resolve_cell, resolve_range, resolve_name=None):
-        self.rc = resolve_cell
-        self.rr = resolve_range
-        self.rn = resolve_name
+class _Ctx:
+    """Resolver bundle handed to a compiled formula closure."""
+    __slots__ = ("rc", "rr", "rn")
 
-    def ev(self, node):
-        t = node[0]
-        if t == "num" or t == "str" or t == "bool":
-            return node[1]
-        if t == "cell":
-            return self.rc(node[1])
-        if t == "range":
-            return self.rr(node[1])
-        if t == "name":
-            if self.rn is None:
-                raise Unsupported(f"named range {node[1]!r}")
-            return self.rn(node[1])
-        if t == "empty":
-            return None
-        if t == "neg":
-            v = self.ev(node[1])
-            return [-_num(x) for x in v] if isinstance(v, list) else -_num(v)
-        if t == "pct":
-            v = self.ev(node[1])
-            return [_num(x) / 100.0 for x in v] if isinstance(v, list) else _num(v) / 100.0
-        if t == "bin":
-            return _binop(node[1], self.ev(node[2]), self.ev(node[3]))
-        if t == "cmp":
-            return _cmp(node[1], self.ev(node[2]), self.ev(node[3]))
-        if t == "concat":
-            return _txt(self.ev(node[1])) + _txt(self.ev(node[2]))
-        if t == "call":
-            return self.call(_canon(node[1]), node[2])
-        raise Unsupported(f"node {t}")
+    def __init__(self, rc, rr, rn=None):
+        self.rc = rc
+        self.rr = rr
+        self.rn = rn
 
-    # ---- function dispatch ----
-    def call(self, name, anodes):
-        # lazy / short-circuit forms first (must NOT pre-evaluate every arg)
-        if name == "IF":
-            if _truthy(self.ev(anodes[0])):
-                return self.ev(anodes[1])
-            return self.ev(anodes[2]) if len(anodes) > 2 else False
-        if name == "IFS":
-            for i in range(0, len(anodes) - 1, 2):
-                if _truthy(self.ev(anodes[i])):
-                    return self.ev(anodes[i + 1])
+
+def _neg(v):
+    return [-_num(x) for x in v] if isinstance(v, list) else -_num(v)
+
+
+def _pct(v):
+    return [_num(x) / 100.0 for x in v] if isinstance(v, list) else _num(v) / 100.0
+
+
+def _compile(node):
+    """Compile an AST node to a closure fn(ctx) -> value. Compiling once and
+    calling the closure on every recompute is far faster than re-walking the
+    tuple AST with type dispatch for every cell of every flex."""
+    t = node[0]
+    if t == "num" or t == "str" or t == "bool":
+        v = node[1]
+        return lambda ctx: v
+    if t == "empty":
+        return lambda ctx: None
+    if t == "cell":
+        ref = node[1]
+        return lambda ctx: ctx.rc(ref)
+    if t == "range":
+        ref = node[1]
+        return lambda ctx: ctx.rr(ref)
+    if t == "name":
+        nm = node[1]
+
+        def _n(ctx):
+            if ctx.rn is None:
+                raise Unsupported(f"named range {nm!r}")
+            return ctx.rn(nm)
+        return _n
+    if t == "neg":
+        a = _compile(node[1])
+        return lambda ctx: _neg(a(ctx))
+    if t == "pct":
+        a = _compile(node[1])
+        return lambda ctx: _pct(a(ctx))
+    if t == "bin":
+        op, a, b = node[1], _compile(node[2]), _compile(node[3])
+        return lambda ctx: _binop(op, a(ctx), b(ctx))
+    if t == "cmp":
+        op, a, b = node[1], _compile(node[2]), _compile(node[3])
+        return lambda ctx: _cmp(op, a(ctx), b(ctx))
+    if t == "concat":
+        a, b = _compile(node[1]), _compile(node[2])
+        return lambda ctx: _txt(a(ctx)) + _txt(b(ctx))
+    if t == "call":
+        return _compile_call(_canon(node[1]), node[2])
+    raise Unsupported(f"node {t}")
+
+
+def _compile_call(name, anodes):
+    ac = [_compile(a) for a in anodes]
+    if name == "IF":
+        c, th = ac[0], ac[1]
+        el = ac[2] if len(ac) > 2 else None
+        return lambda ctx: (th(ctx) if _truthy(c(ctx)) else (el(ctx) if el is not None else False))
+    if name == "IFS":
+        def _ifs(ctx):
+            for i in range(0, len(ac) - 1, 2):
+                if _truthy(ac[i](ctx)):
+                    return ac[i + 1](ctx)
             raise _XlError()
-        if name in ("IFERROR", "IFNA"):
+        return _ifs
+    if name in ("IFERROR", "IFNA"):
+        a, b = ac[0], ac[1]
+        is_ifna = name == "IFNA"
+
+        def _iferr(ctx):
             try:
-                v = self.ev(anodes[0])
-                if v is _NA:
-                    return self.ev(anodes[1])
-                return v
+                v = a(ctx)
+                return b(ctx) if v is _NA else v
             except _XlError:
-                if name == "IFNA":
+                if is_ifna:
                     raise          # IFNA only traps #N/A, not other errors
-                return self.ev(anodes[1])
-        if name == "AND":
-            return all(_truthy(self.ev(a)) for a in anodes)
-        if name == "OR":
-            return any(_truthy(self.ev(a)) for a in anodes)
-        if name == "NOT":
-            return not _truthy(self.ev(anodes[0]))
-        if name == "NA":
-            return _NA
-        if name == "IFERROR":
-            pass
-        # eager: evaluate all args (ranges stay lists)
-        args = [self.ev(a) for a in anodes]
-        return _apply(name, args)
+                return b(ctx)
+        return _iferr
+    if name == "AND":
+        return lambda ctx: all(_truthy(f(ctx)) for f in ac)
+    if name == "OR":
+        return lambda ctx: any(_truthy(f(ctx)) for f in ac)
+    if name == "NOT":
+        return lambda ctx: (not _truthy(ac[0](ctx)))
+    if name == "NA":
+        return lambda ctx: _NA
+    return lambda ctx: _apply(name, [f(ctx) for f in ac])
 
 
 def _broadcast(f, a, b):
@@ -654,8 +680,8 @@ def evaluate(formula: str, resolve_cell, resolve_range, resolve_name=None):
     tests and ad-hoc use. ``resolve_cell(ref)`` returns a raw value,
     ``resolve_range(ref)`` a list of raw values, ``resolve_name(name)`` a defined
     name's value (optional)."""
-    ast = _Parser(_tokenize(str(formula).lstrip("="))).parse()
-    return _Interp(resolve_cell, resolve_range, resolve_name).ev(ast)
+    fn = _compile(_Parser(_tokenize(str(formula).lstrip("="))).parse())
+    return fn(_Ctx(resolve_cell, resolve_range, resolve_name))
 
 
 # --------------------------------------------------------------------------
@@ -687,8 +713,10 @@ class RecomputeModel:
         self.values: dict[int, object] = {}
         self._topo: list[int] = []
         self._formula_src: dict[int, tuple[str, int]] = {}     # node -> (formula, sheet_idx)
-        self._ast: dict[int, tuple] = {}                       # node -> parsed AST (cached)
-        self._resolvers: dict[int, tuple] = {}                 # sheet_idx -> (resolve_cell, resolve_range)
+        self._compiled: dict[int, object] = {}                 # node -> compiled closure (cached)
+        self._resolvers: dict[int, _Ctx] = {}                  # sheet_idx -> resolver bundle
+        self._cone_cache: dict[frozenset, set] = {}            # override-nodes -> dirty cone (reused across lo/hi)
+        self._fsrc_set: Optional[set] = None
         self._names_lower = {n.lower(): i for i, n in enumerate(self.g.sheet_names)}
         self.n_frozen = 0                                      # cells we couldn't eval (held at cached value)
         # workbook defined-names -> their target ref string, so formulas that
@@ -754,18 +782,17 @@ class RecomputeModel:
                 raise Unsupported(f"unknown name {name!r}")
             return resolve_range(tgt) if ":" in tgt else resolve_cell(tgt)
 
-        self._resolvers[cur_sheet_idx] = (resolve_cell, resolve_range, resolve_name)
+        self._resolvers[cur_sheet_idx] = _Ctx(resolve_cell, resolve_range, resolve_name)
         return self._resolvers[cur_sheet_idx]
 
     def _eval_node(self, node: int):
-        ast = self._ast.get(node)
+        fn = self._compiled.get(node)
         si = self._formula_src[node][1]
-        if ast is None:
+        if fn is None:
             formula = self._formula_src[node][0]
-            ast = _Parser(_tokenize(formula.lstrip("="))).parse()
-            self._ast[node] = ast
-        rc, rr, rn = self._make_resolvers(si)
-        return _Interp(rc, rr, rn).ev(ast)
+            fn = _compile(_Parser(_tokenize(formula.lstrip("="))).parse())
+            self._compiled[node] = fn
+        return fn(self._make_resolvers(si))
 
     # ---- build + faithfulness gate -------------------------------------
     @classmethod
@@ -839,10 +866,16 @@ class RecomputeModel:
                                output_nodes: list[int]) -> dict[int, float]:
         """Set one or more input cells, recompute only the affected downstream
         cone, and return the resulting values at ``output_nodes``. Non-destructive."""
-        cone: set[int] = set()
-        for nd in overrides:
-            cone |= self.g.downstream(nd, cap=400_000)
-        cone &= set(self._formula_src)
+        if self._fsrc_set is None:
+            self._fsrc_set = set(self._formula_src)
+        key = frozenset(overrides)
+        cone = self._cone_cache.get(key)
+        if cone is None:
+            cone = set()
+            for nd in overrides:
+                cone |= self.g.downstream(nd, cap=400_000)
+            cone &= self._fsrc_set
+            self._cone_cache[key] = cone
         saved = {n: self.values[n] for n in cone if n in self.values}
         saved_in = {nd: self.values.get(nd) for nd in overrides}
         self.values.update(overrides)
