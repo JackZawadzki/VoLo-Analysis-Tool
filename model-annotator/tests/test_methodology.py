@@ -103,6 +103,20 @@ def test_revenue_nature_classification():
     assert M._revenue_nature("Consumer electronics") == "product"   # default commercial
 
 
+# --- revenue-share rows: suppress all-zero / non-revenue sources (Rule B) -----
+def test_revenue_share_rejects_empty_and_nonrevenue_sources():
+    import types
+    from model_annotator import metrics as M
+    P6 = ["2026", "2027", "2028", "2029", "2030", "2031"]
+    seg = types.SimpleNamespace(instance="Consumer electronics", label="Consumer electronics")
+    ok = dict(zip(P6, [1.0, 0.71, 0.54, 0.50, 0.38, 0.36]))      # a real, plausible revenue share
+    assert M._is_real_revenue_share(seg, ok, P6) is True
+    assert M._is_real_revenue_share(seg, {p: 0.0 for p in P6}, P6) is False      # all-zero -> noise
+    assert M._is_real_revenue_share(seg, {p: 12.0 for p in P6}, P6) is False     # out of [0,1] -> unit/price basis
+    price = types.SimpleNamespace(instance="Consumer electronics", label="Consumer electronics €/unit")
+    assert M._is_real_revenue_share(price, ok, P6) is False      # price line label cue -> not a revenue share
+
+
 # --- sensitivity: section-header detection + label cleaning -------------------
 def test_section_label_finds_title_row():
     from model_annotator import sensitivity as S
