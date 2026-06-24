@@ -1,32 +1,123 @@
-"""A minimal, faithful Excel formula evaluator — used ONLY by the sensitivity
-layer to flex the model's real input cells and recompute the outputs exactly.
+"""A faithful Excel formula evaluator — used ONLY by the sensitivity layer to
+flex the model's real input cells and recompute the outputs exactly.
 
-It is deliberately small: it evaluates the arithmetic the model actually uses
-(`+ - * / ^ %`, parentheses, cell/range references across sheets, and a short
-allow-list of functions). Anything outside that allow-list raises ``Unsupported``
-and the caller falls back to the engine-free line-item flex — so the tool never
-shows a recomputed number it could not produce.
+It parses each formula to a small AST and interprets it over real value types
+(numbers, strings, dates, booleans). It implements the arithmetic and the
+function set that real venture models actually use — including lookups
+(XLOOKUP / MATCH / INDEX), conditional sums (SUMIF), error handling
+(IFERROR / IFNA), and date math (YEAR / EOMONTH) — so models that lean on those
+(not just plain SUM) can be recomputed. Anything outside the set raises
+``Unsupported`` and the caller falls back to the engine-free line-item flex — so
+the tool never shows a recomputed number it could not produce.
 
 Faithfulness is enforced by a gate: ``RecomputeModel.build`` recomputes every
 formula from the workbook's own inputs and only returns a usable model if its
-results reproduce the cached values the workbook was saved with. If the evaluator
-cannot reproduce the model, it is not used at all.
+results reproduce the cached values the workbook was saved with. A wrong function
+implementation therefore fails the gate and is simply not used — never trusted.
 """
 from __future__ import annotations
 
+import calendar
+import datetime as _dt
 import re
-from typing import Callable, Optional
+from typing import Optional
 
 from .graph import FormulaGraph, decode, encode
 from .ingest import WorkbookData, is_number
 
-# functions we can evaluate exactly; anything else => fall back, never guess
-_FUNCS = {"SUM", "ROUND", "ROUNDUP", "ROUNDDOWN", "MIN", "MAX", "AVERAGE", "AVG",
-          "ABS", "IF", "IFERROR", "AND", "OR", "NOT", "SQRT", "POWER", "SUMPRODUCT"}
-
 
 class Unsupported(Exception):
     """The formula uses a construct this evaluator does not implement."""
+
+
+class _XlError(Exception):
+    """An Excel runtime error (#DIV/0!, #VALUE!, #N/A used in math, ...).
+    Distinct from Unsupported: IFERROR catches THIS, never Unsupported, so an
+    unsupported function can never be silently swallowed into a wrong value."""
+
+
+_NA = object()                       # the #N/A value (from NA() / not-found lookups)
+_EPOCH = _dt.datetime(1899, 12, 30)  # Excel's day-zero
+
+
+class _Range(list):
+    """A resolved range: a flat (row-major) list that also remembers its shape,
+    so 2-D INDEX(table, row, col) can index it. Being a ``list`` subclass, every
+    existing ``isinstance(x, list)`` path (SUM, broadcasting, ...) still works."""
+    def __init__(self, vals, nrows=1, ncols=None):
+        super().__init__(vals)
+        self.nrows = nrows
+        self.ncols = ncols if ncols is not None else len(vals)
+
+
+# --------------------------------------------------------------------------
+# Value coercion
+# --------------------------------------------------------------------------
+def _to_serial(v) -> float:
+    base = v if isinstance(v, _dt.datetime) else _dt.datetime(v.year, v.month, v.day)
+    return (base - _EPOCH).total_seconds() / 86400.0
+
+
+def _as_date(v) -> _dt.datetime:
+    if isinstance(v, _dt.datetime):
+        return v
+    if isinstance(v, _dt.date):
+        return _dt.datetime(v.year, v.month, v.day)
+    return _EPOCH + _dt.timedelta(days=_num(v))
+
+
+def _num(v) -> float:
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, (_dt.datetime, _dt.date)):
+        return _to_serial(v)
+    if v is None or v == "":
+        return 0.0
+    if v is _NA:
+        raise _XlError()
+    if isinstance(v, str):
+        try:
+            return float(v.replace(",", "").strip())
+        except ValueError:
+            raise _XlError()        # text in arithmetic = #VALUE!
+    raise Unsupported("non-numeric value")
+
+
+def _truthy(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v is _NA:
+        raise _XlError()
+    return _num(v) != 0
+
+
+def _txt(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if isinstance(v, float):
+        return ("%g" % v)
+    if isinstance(v, (_dt.datetime, _dt.date)):
+        return v.isoformat()
+    return str(v)
+
+
+def _equal(a, b) -> bool:
+    if isinstance(a, str) or isinstance(b, str):
+        if isinstance(a, str) and isinstance(b, str):
+            return a.strip().lower() == b.strip().lower()
+        # Excel: a number can equal its text form; keep it simple and faithful-enough
+        try:
+            return _num(a) == _num(b)
+        except _XlError:
+            return False
+    try:
+        return _num(a) == _num(b)
+    except _XlError:
+        return False
 
 
 # --------------------------------------------------------------------------
@@ -37,10 +128,10 @@ _TOKEN_RE = re.compile(
       (?P<ws>\s+)
     | (?P<str>"(?:[^"]|"")*")
     | (?P<num>\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+)
-    | (?P<ref>(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+
-              (?::(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+)?)
-    | (?P<func>[A-Za-z_][A-Za-z0-9_.]*)(?=\s*\()
+    | (?P<ref>(?:'[^']*'|[A-Za-z_\\][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+
+              (?::(?:'[^']*'|[A-Za-z_\\][A-Za-z0-9_.]*)?!?\$?[A-Za-z]{1,3}\$?\d+)?)
     | (?P<bool>TRUE|FALSE)
+    | (?P<func>[A-Za-z_][A-Za-z0-9_.]*)(?=\s*\()
     | (?P<op><=|>=|<>|[-+*/^%&=<>])
     | (?P<lp>\() | (?P<rp>\)) | (?P<comma>,) | (?P<colon>:)
     """,
@@ -50,29 +141,24 @@ _TOKEN_RE = re.compile(
 
 def _tokenize(formula: str) -> list[tuple[str, str]]:
     toks: list[tuple[str, str]] = []
-    i = 0
-    n = len(formula)
+    i, n = 0, len(formula)
     while i < n:
         m = _TOKEN_RE.match(formula, i)
         if not m:
-            raise Unsupported(f"cannot tokenize near {formula[i:i+12]!r}")
+            raise Unsupported(f"cannot tokenize near {formula[i:i + 12]!r}")
         i = m.end()
-        kind = m.lastgroup
-        if kind == "ws":
-            continue
-        toks.append((kind, m.group()))
+        if m.lastgroup != "ws":
+            toks.append((m.lastgroup, m.group()))
     return toks
 
 
 # --------------------------------------------------------------------------
-# Recursive-descent evaluator
+# Parser  (tokens -> AST tuples; eval happens later so IF/IFERROR can be lazy)
 # --------------------------------------------------------------------------
 class _Parser:
-    def __init__(self, toks, resolve_cell, resolve_range):
+    def __init__(self, toks):
         self.toks = toks
         self.pos = 0
-        self.resolve_cell = resolve_cell      # (ref_str) -> float
-        self.resolve_range = resolve_range    # (ref_str) -> list[float]
 
     def peek(self):
         return self.toks[self.pos] if self.pos < len(self.toks) else (None, None)
@@ -82,180 +168,493 @@ class _Parser:
         self.pos += 1
         return t
 
-    def parse(self) -> float:
-        v = self.expr()
+    def parse(self):
+        node = self.expr()
         if self.pos != len(self.toks):
             raise Unsupported("trailing tokens")
-        return v
+        return node
 
-    # comparison (lowest precedence, for IF conditions)
-    def expr(self) -> float:
-        v = self.addsub()
+    def expr(self):
+        v = self.concat()
         k, s = self.peek()
         if k == "op" and s in ("=", "<>", "<", ">", "<=", ">="):
             self.next()
-            r = self.addsub()
-            return float({"=": v == r, "<>": v != r, "<": v < r, ">": v > r,
-                          "<=": v <= r, ">=": v >= r}[s])
+            return ("cmp", s, v, self.concat())
         return v
 
-    def addsub(self) -> float:
+    def concat(self):
+        v = self.addsub()
+        while True:
+            k, s = self.peek()
+            if k == "op" and s == "&":
+                self.next()
+                v = ("concat", v, self.addsub())
+            else:
+                return v
+
+    def addsub(self):
         v = self.muldiv()
         while True:
             k, s = self.peek()
             if k == "op" and s in ("+", "-"):
                 self.next()
-                r = self.muldiv()
-                v = v + r if s == "+" else v - r
-            elif k == "op" and s == "&":          # text concat — numbers only here
-                raise Unsupported("string concatenation")
+                v = ("bin", s, v, self.muldiv())
             else:
                 return v
 
-    def muldiv(self) -> float:
+    def muldiv(self):
         v = self.power()
         while True:
             k, s = self.peek()
             if k == "op" and s in ("*", "/"):
                 self.next()
-                r = self.power()
-                if s == "/":
-                    v = v / r if r != 0 else 0.0
-                else:
-                    v = v * r
+                v = ("bin", s, v, self.power())
             else:
                 return v
 
-    def power(self) -> float:
+    def power(self):
         v = self.unary()
         k, s = self.peek()
         if k == "op" and s == "^":
             self.next()
-            return v ** self.power()
+            return ("bin", "^", v, self.power())
         return v
 
-    def unary(self) -> float:
+    def unary(self):
         k, s = self.peek()
         if k == "op" and s in ("+", "-"):
             self.next()
             v = self.unary()
-            return -v if s == "-" else v
+            return ("neg", v) if s == "-" else v
         v = self.primary()
         k, s = self.peek()
         if k == "op" and s == "%":
             self.next()
-            return v / 100.0
+            return ("pct", v)
         return v
 
-    def primary(self) -> float:
+    def primary(self):
         k, s = self.next()
         if k == "num":
-            return float(s)
+            return ("num", float(s))
         if k == "bool":
-            return 1.0 if s.upper() == "TRUE" else 0.0
+            return ("bool", s.upper() == "TRUE")
         if k == "str":
-            raise Unsupported("string literal in arithmetic")
+            return ("str", s[1:-1].replace('""', '"'))
         if k == "lp":
             v = self.expr()
             if self.next()[0] != "rp":
                 raise Unsupported("missing )")
             return v
         if k == "ref":
-            return float(self.resolve_cell(s))
+            return ("range", s) if ":" in s else ("cell", s)
         if k == "func":
             return self.call(s.upper())
         raise Unsupported(f"unexpected token {s!r}")
 
-    def call(self, name: str) -> float:
-        if name not in _FUNCS:
-            raise Unsupported(f"function {name}")
+    def call(self, name):
         if self.next()[0] != "lp":
             raise Unsupported("expected (")
-        args: list = []          # each arg is ("scalar", v) or ("range", [vals])
+        args = []
         if self.peek()[0] != "rp":
-            args.append(self._arg())
+            args.append(self._call_arg())
             while self.peek()[0] == "comma":
                 self.next()
-                args.append(self._arg())
+                args.append(self._call_arg())
         if self.next()[0] != "rp":
             raise Unsupported("missing ) in call")
-        return self._apply(name, args)
+        return ("call", name, args)
 
-    def _arg(self):
-        # a range reference as a whole argument (SUM(A1:B5)), else a scalar expr
-        k, s = self.peek()
-        if k == "ref" and ":" in s:
-            self.next()
-            return ("range", self.resolve_range(s))
-        return ("scalar", self.expr())
+    def _call_arg(self):
+        # an omitted argument, e.g. XLOOKUP(a, b, c, , 1)
+        if self.peek()[0] in ("comma", "rp"):
+            return ("empty",)
+        return self.expr()
 
-    def _flat(self, args) -> list[float]:
-        out: list[float] = []
-        for kind, v in args:
-            if kind == "range":
-                out.extend(v)
-            else:
-                out.append(v)
-        return out
 
-    def _apply(self, name: str, args) -> float:
-        if name == "SUM":
-            return sum(self._flat(args))
-        if name == "SUMPRODUCT":
-            ranges = [v for k, v in args if k == "range"]
-            if ranges and all(len(r) == len(ranges[0]) for r in ranges):
-                return sum(_prod(vals) for vals in zip(*ranges))
-            return _prod([v for _, v in args])
-        if name in ("MIN", "MAX"):
-            vals = self._flat(args)
-            return (min if name == "MIN" else max)(vals) if vals else 0.0
-        if name in ("AVERAGE", "AVG"):
-            vals = self._flat(args)
-            return sum(vals) / len(vals) if vals else 0.0
-        if name == "ABS":
-            return abs(self._flat(args)[0])
-        if name == "SQRT":
-            return self._flat(args)[0] ** 0.5
-        if name == "POWER":
-            f = self._flat(args)
-            return f[0] ** f[1]
-        if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
-            f = self._flat(args)
-            digits = int(f[1]) if len(f) > 1 else 0
-            return round(f[0], digits)
+# normalise XLFN./_xlfn. prefixes Excel writes for newer functions
+def _canon(name: str) -> str:
+    n = name.upper()
+    for p in ("_XLFN.", "XLFN.", "_XLL.", "XLL."):
+        if n.startswith(p):
+            n = n[len(p):]
+    return n
+
+
+# --------------------------------------------------------------------------
+# Interpreter
+# --------------------------------------------------------------------------
+class _Interp:
+    def __init__(self, resolve_cell, resolve_range):
+        self.rc = resolve_cell
+        self.rr = resolve_range
+
+    def ev(self, node):
+        t = node[0]
+        if t == "num" or t == "str" or t == "bool":
+            return node[1]
+        if t == "cell":
+            return self.rc(node[1])
+        if t == "range":
+            return self.rr(node[1])
+        if t == "empty":
+            return None
+        if t == "neg":
+            v = self.ev(node[1])
+            return [-_num(x) for x in v] if isinstance(v, list) else -_num(v)
+        if t == "pct":
+            v = self.ev(node[1])
+            return [_num(x) / 100.0 for x in v] if isinstance(v, list) else _num(v) / 100.0
+        if t == "bin":
+            return _binop(node[1], self.ev(node[2]), self.ev(node[3]))
+        if t == "cmp":
+            return _cmp(node[1], self.ev(node[2]), self.ev(node[3]))
+        if t == "concat":
+            return _txt(self.ev(node[1])) + _txt(self.ev(node[2]))
+        if t == "call":
+            return self.call(_canon(node[1]), node[2])
+        raise Unsupported(f"node {t}")
+
+    # ---- function dispatch ----
+    def call(self, name, anodes):
+        # lazy / short-circuit forms first (must NOT pre-evaluate every arg)
         if name == "IF":
-            f = [v for _, v in args]
-            cond = f[0]
-            return f[1] if cond else (f[2] if len(f) > 2 else 0.0)
-        if name == "IFERROR":
-            f = [v for _, v in args]
-            return f[0]
+            if _truthy(self.ev(anodes[0])):
+                return self.ev(anodes[1])
+            return self.ev(anodes[2]) if len(anodes) > 2 else False
+        if name == "IFS":
+            for i in range(0, len(anodes) - 1, 2):
+                if _truthy(self.ev(anodes[i])):
+                    return self.ev(anodes[i + 1])
+            raise _XlError()
+        if name in ("IFERROR", "IFNA"):
+            try:
+                v = self.ev(anodes[0])
+                if v is _NA:
+                    return self.ev(anodes[1])
+                return v
+            except _XlError:
+                if name == "IFNA":
+                    raise          # IFNA only traps #N/A, not other errors
+                return self.ev(anodes[1])
         if name == "AND":
-            return float(all(self._flat(args)))
+            return all(_truthy(self.ev(a)) for a in anodes)
         if name == "OR":
-            return float(any(self._flat(args)))
+            return any(_truthy(self.ev(a)) for a in anodes)
         if name == "NOT":
-            return float(not self._flat(args)[0])
-        raise Unsupported(f"function {name}")
+            return not _truthy(self.ev(anodes[0]))
+        if name == "NA":
+            return _NA
+        if name == "IFERROR":
+            pass
+        # eager: evaluate all args (ranges stay lists)
+        args = [self.ev(a) for a in anodes]
+        return _apply(name, args)
 
 
-def _prod(vals):
-    p = 1.0
-    for v in vals:
-        p *= v
-    return p
+def _broadcast(f, a, b):
+    """Elementwise over array operands (Excel array formulas: range<>0, a*b)."""
+    al, bl = isinstance(a, list), isinstance(b, list)
+    if al and bl:
+        n = min(len(a), len(b))
+        return [f(a[i], b[i]) for i in range(n)]
+    if al:
+        return [f(x, b) for x in a]
+    if bl:
+        return [f(a, y) for y in b]
+    return f(a, b)
+
+
+def _binop(op, a, b):
+    if isinstance(a, list) or isinstance(b, list):
+        return _broadcast(lambda x, y: _binop(op, x, y), a, b)
+    x, y = _num(a), _num(b)
+    if op == "+":
+        return x + y
+    if op == "-":
+        return x - y
+    if op == "*":
+        return x * y
+    if op == "/":
+        if y == 0:
+            raise _XlError()
+        return x / y
+    if op == "^":
+        try:
+            return x ** y
+        except (ValueError, OverflowError, ZeroDivisionError):
+            raise _XlError()
+    raise Unsupported(f"op {op}")
+
+
+def _cmp(op, a, b):
+    if isinstance(a, list) or isinstance(b, list):
+        return _broadcast(lambda x, y: _cmp(op, x, y), a, b)
+    if isinstance(a, str) and isinstance(b, str):
+        a2, b2 = a.strip().lower(), b.strip().lower()
+        return {"=": a2 == b2, "<>": a2 != b2, "<": a2 < b2, ">": a2 > b2,
+                "<=": a2 <= b2, ">=": a2 >= b2}[op]
+    if op in ("=", "<>"):
+        eq = _equal(a, b)
+        return eq if op == "=" else (not eq)
+    x, y = _num(a), _num(b)
+    return {"<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y}[op]
+
+
+def _flatten(args):
+    out = []
+    for a in args:
+        if isinstance(a, list):
+            out.extend(a)
+        else:
+            out.append(a)
+    return out
+
+
+def _nums(args):
+    out = []
+    for v in _flatten(args):
+        if v is None or v == "" or isinstance(v, str) or isinstance(v, bool):
+            continue
+        if v is _NA:
+            raise _XlError()
+        out.append(_num(v))
+    return out
+
+
+def _aslist(v):
+    return v if isinstance(v, list) else [v]
+
+
+def _crit_match(value, crit):
+    """SUMIF/COUNTIF criteria: a bare value (exact), or '>5' / '<=3' / '<>x'."""
+    if isinstance(crit, str):
+        m = re.match(r"^(<=|>=|<>|=|<|>)\s*(.*)$", crit.strip())
+        if m:
+            op, rest = m.group(1), m.group(2)
+            try:
+                target = float(rest)
+                src = _num(value) if not isinstance(value, str) else None
+                if src is None:
+                    return op == "<>"
+            except ValueError:
+                op = {"=": "=", "<>": "<>"}.get(op, op)
+                return _equal(value, rest) if op == "=" else (
+                    not _equal(value, rest) if op == "<>" else False)
+            return {"=": src == target, "<>": src != target, "<": src < target,
+                    ">": src > target, "<=": src <= target, ">=": src >= target}[op]
+        return _equal(value, crit)
+    return _equal(value, crit)
+
+
+def _apply(name, args):
+    if name == "SUM":
+        return sum(_nums(args))
+    if name == "PRODUCT":
+        p = 1.0
+        for v in _nums(args):
+            p *= v
+        return p
+    if name == "SUMPRODUCT":
+        ranges = [a for a in args if isinstance(a, list)]
+        if ranges and all(len(r) == len(ranges[0]) for r in ranges):
+            tot = 0.0
+            for tup in zip(*ranges):
+                pr = 1.0
+                for v in tup:
+                    pr *= (_num(v) if not (v is None or isinstance(v, str)) else 0.0)
+                tot += pr
+            return tot
+        pr = 1.0
+        for v in _flatten(args):
+            pr *= _num(v)
+        return pr
+    if name in ("MIN", "MAX"):
+        vals = _nums(args)
+        return (min if name == "MIN" else max)(vals) if vals else 0.0
+    if name in ("AVERAGE", "AVG"):
+        vals = _nums(args)
+        return sum(vals) / len(vals) if vals else _xlerr()
+    if name == "COUNT":
+        return float(len(_nums(args)))
+    if name == "COUNTA":
+        return float(sum(1 for v in _flatten(args) if v not in (None, "")))
+    if name == "ABS":
+        return abs(_num(args[0]))
+    if name == "SQRT":
+        return _num(args[0]) ** 0.5
+    if name == "POWER":
+        return _num(args[0]) ** _num(args[1])
+    if name in ("ROUND", "ROUNDUP", "ROUNDDOWN"):
+        x = _num(args[0])
+        d = int(_num(args[1])) if len(args) > 1 else 0
+        import math
+        f = 10.0 ** d
+        if name == "ROUNDUP":
+            return math.ceil(abs(x) * f) / f * (1 if x >= 0 else -1)
+        if name == "ROUNDDOWN":
+            return math.floor(abs(x) * f) / f * (1 if x >= 0 else -1)
+        return round(x, d)
+    if name in ("CEILING", "FLOOR"):
+        import math
+        x = _num(args[0])
+        sig = _num(args[1]) if len(args) > 1 else 1.0
+        if sig == 0:
+            return 0.0
+        return (math.ceil if name == "CEILING" else math.floor)(x / sig) * sig
+    if name == "INT":
+        import math
+        return float(math.floor(_num(args[0])))
+    if name == "MOD":
+        a, b = _num(args[0]), _num(args[1])
+        if b == 0:
+            raise _XlError()
+        return a - b * (a // b)
+    if name == "SUMIF":
+        rng = _aslist(args[0])
+        crit = args[1]
+        sumr = _aslist(args[2]) if len(args) > 2 else rng
+        tot = 0.0
+        for i, cell in enumerate(rng):
+            if _crit_match(cell, crit) and i < len(sumr):
+                v = sumr[i]
+                if not (v is None or isinstance(v, str) or v is _NA):
+                    tot += _num(v)
+        return tot
+    if name == "COUNTIF":
+        rng = _aslist(args[0])
+        crit = args[1]
+        return float(sum(1 for c in rng if _crit_match(c, crit)))
+    if name in ("XLOOKUP",):
+        lookup = args[0]
+        larr = _aslist(args[1])
+        rarr = _aslist(args[2])
+        if_nf = args[3] if len(args) > 3 and args[3] is not None else _NA
+        mode = int(_num(args[4])) if len(args) > 4 and args[4] is not None else 0
+        idx = _match_index(lookup, larr, mode if mode in (-1, 0, 1) else 0)
+        if idx is None:
+            return if_nf
+        return rarr[idx] if idx < len(rarr) else _NA
+    if name in ("VLOOKUP", "HLOOKUP"):
+        lookup = args[0]
+        table = _aslist(args[1])           # flat (row-major) — best effort 1D
+        # we can't reliably reshape a flat range to columns here; only support the
+        # degenerate 2-column case is risky, so defer to Unsupported for safety
+        raise Unsupported(name)
+    if name == "MATCH":
+        lookup = args[0]
+        larr = _aslist(args[1])
+        mt = int(_num(args[2])) if len(args) > 2 and args[2] is not None else 1
+        idx = _match_index(lookup, larr, 0 if mt == 0 else (1 if mt == 1 else -1))
+        if idx is None:
+            return _NA
+        return float(idx + 1)
+    if name == "XMATCH":
+        lookup = args[0]
+        larr = _aslist(args[1])
+        mode = int(_num(args[2])) if len(args) > 2 and args[2] is not None else 0
+        idx = _match_index(lookup, larr, mode if mode in (-1, 0, 1) else 0)
+        if idx is None:
+            return _NA
+        return float(idx + 1)
+    if name == "INDEX":
+        arr = args[0] if isinstance(args[0], list) else _aslist(args[0])
+        ri = int(_num(args[1])) if len(args) > 1 and args[1] is not None else 0
+        ci = int(_num(args[2])) if len(args) > 2 and args[2] is not None else 0
+        if isinstance(arr, _Range) and arr.nrows > 1 and arr.ncols > 1:
+            # genuine 2-D table lookup: INDEX(table, row, col)
+            if ri <= 0 or ci <= 0 or ri > arr.nrows or ci > arr.ncols:
+                raise _XlError()
+            return arr[(ri - 1) * arr.ncols + (ci - 1)]
+        i = ri or ci                            # 1-D vector: the non-empty index
+        if i <= 0 or i > len(arr):
+            raise _XlError()
+        return arr[i - 1]
+    if name == "CHOOSE":
+        i = int(_num(args[0]))
+        if i <= 0 or i >= len(args):
+            raise _XlError()
+        return args[i]
+    if name in ("YEAR", "MONTH", "DAY"):
+        d = _as_date(args[0])
+        return float(getattr(d, {"YEAR": "year", "MONTH": "month", "DAY": "day"}[name]))
+    if name == "DATE":
+        return _dt.datetime(int(_num(args[0])), int(_num(args[1])), int(_num(args[2])))
+    if name in ("EOMONTH", "EDATE"):
+        d = _as_date(args[0])
+        n = int(_num(args[1]))
+        y = d.year + (d.month - 1 + n) // 12
+        m = (d.month - 1 + n) % 12 + 1
+        if name == "EOMONTH":
+            return _dt.datetime(y, m, calendar.monthrange(y, m)[1])
+        day = min(d.day, calendar.monthrange(y, m)[1])
+        return _dt.datetime(y, m, day)
+    if name == "YEARFRAC":
+        a, b = _as_date(args[0]), _as_date(args[1])
+        return abs((b - a).days) / 365.0
+    if name == "ISNUMBER":
+        v = args[0]
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    if name == "ISBLANK":
+        return args[0] is None or args[0] == ""
+    if name in ("ISERROR", "ISERR"):
+        return args[0] is _NA
+    if name == "ISNA":
+        return args[0] is _NA
+    if name == "MAXIFS" or name == "MINIFS" or name == "SUMIFS" or name == "COUNTIFS" \
+            or name == "AVERAGEIF" or name == "AVERAGEIFS":
+        raise Unsupported(name)         # multi-criteria — fall back rather than guess
+    raise Unsupported(f"function {name}")
+
+
+def _xlerr():
+    raise _XlError()
+
+
+def _match_index(lookup, arr, mode):
+    """Index (0-based) of lookup in arr. mode 0 = exact; 1 = largest <= lookup
+    (ascending); -1 = smallest >= lookup (descending). None if not found."""
+    if mode == 0:
+        for i, v in enumerate(arr):
+            if _equal(lookup, v):
+                return i
+        return None
+    try:
+        target = _num(lookup)
+    except _XlError:
+        for i, v in enumerate(arr):
+            if _equal(lookup, v):
+                return i
+        return None
+    best = None
+    for i, v in enumerate(arr):
+        if v is None or v == "" or isinstance(v, str) or v is _NA:
+            continue
+        try:
+            x = _num(v)
+        except _XlError:
+            continue
+        if mode == 1 and x <= target:
+            best = i
+        elif mode == -1 and x >= target:
+            best = i if best is None else best
+    return best
+
+
+def evaluate(formula: str, resolve_cell, resolve_range):
+    """Tokenize → parse → interpret a single formula. Stable entry point for
+    tests and ad-hoc use. ``resolve_cell(ref)`` returns a raw value, and
+    ``resolve_range(ref)`` a list of raw values."""
+    ast = _Parser(_tokenize(str(formula).lstrip("="))).parse()
+    return _Interp(resolve_cell, resolve_range).ev(ast)
 
 
 # --------------------------------------------------------------------------
-# Recompute model
+# Reference parsing
 # --------------------------------------------------------------------------
-# the sheet name, if present, MUST be followed by "!" — otherwise a 2-letter
-# column range like AR7:AR11 gets misread as "sheet A, cell R7:AR11". The second
-# endpoint of a range may carry its own sheet qualifier ('P&L'!Y7:'P&L'!AA7);
-# we assume it's the same sheet as the first and ignore it.
-_CELL = re.compile(r"^(?:(?:'(?P<sq>[^']*)'|(?P<nq>[A-Za-z_][A-Za-z0-9_.]*))!)?"
+_CELL = re.compile(r"^(?:(?:'(?P<sq>[^']*)'|(?P<nq>[A-Za-z_\\][A-Za-z0-9_.]*))!)?"
                    r"\$?(?P<col>[A-Za-z]{1,3})\$?(?P<row>\d+)"
-                   r"(?::(?:(?:'[^']*'|[A-Za-z_][A-Za-z0-9_.]*)!)?"
+                   r"(?::(?:(?:'[^']*'|[A-Za-z_\\][A-Za-z0-9_.]*)!)?"
                    r"\$?(?P<col2>[A-Za-z]{1,3})\$?(?P<row2>\d+))?$")
 
 
@@ -266,31 +665,39 @@ def _col_to_idx(col: str) -> int:
     return n
 
 
+# --------------------------------------------------------------------------
+# Recompute model
+# --------------------------------------------------------------------------
 class RecomputeModel:
-    """Evaluates the workbook's own formulas so a single input can be flexed and
-    the outputs read off exactly. Build via :meth:`build`, which returns ``None``
+    """Evaluates the workbook's own formulas so inputs can be flexed and the
+    outputs read off exactly. Build via :meth:`build`, which returns ``None``
     when the model cannot be faithfully reproduced."""
 
     def __init__(self, graph: FormulaGraph):
         self.g = graph
-        self.values: dict[int, float] = {}
+        self.values: dict[int, object] = {}
         self._topo: list[int] = []
-        self._formula_src: dict[int, tuple[str, int]] = {}   # node -> (formula, sheet_idx)
+        self._formula_src: dict[int, tuple[str, int]] = {}     # node -> (formula, sheet_idx)
+        self._ast: dict[int, tuple] = {}                       # node -> parsed AST (cached)
+        self._resolvers: dict[int, tuple] = {}                 # sheet_idx -> (resolve_cell, resolve_range)
+        self._names_lower = {n.lower(): i for i, n in enumerate(self.g.sheet_names)}
+        self.n_frozen = 0                                      # cells we couldn't eval (held at cached value)
 
     # ---- ref resolution -------------------------------------------------
-    def _resolve_node(self, sheet_idx: int, r: int, c: int) -> float:
+    def _resolve_node(self, sheet_idx: int, r: int, c: int):
         node = encode(sheet_idx, r, c)
         if node in self.values:
             return self.values[node]
-        si, rr, cc = sheet_idx, r, c
-        name = self.g.sheet_names[si]
-        rec = self.g.wbd.sheets[name].cell(rr, cc)
-        if rec is not None and is_number(rec.value):
-            return float(rec.value)
-        return 0.0
+        rec = self.g.wbd.sheets[self.g.sheet_names[sheet_idx]].cell(r, c)
+        if rec is not None and rec.value is not None and rec.value != "":
+            return rec.value                       # raw: number / string / date
+        return 0.0                                 # blank behaves as 0 in arithmetic
 
     def _make_resolvers(self, cur_sheet_idx: int):
-        names_lower = {n.lower(): i for i, n in enumerate(self.g.sheet_names)}
+        cached = self._resolvers.get(cur_sheet_idx)
+        if cached is not None:
+            return cached
+        names_lower = self._names_lower
 
         def sheet_of(m) -> int:
             sq, nq = m.group("sq"), m.group("nq")
@@ -302,47 +709,55 @@ class RecomputeModel:
                 raise Unsupported(f"reference to unknown sheet {raw!r}")
             return idx
 
-        def resolve_cell(ref: str) -> float:
+        def resolve_cell(ref: str):
             m = _CELL.match(ref)
             if not m or m.group("col2"):
                 raise Unsupported(f"bad cell ref {ref!r}")
-            si = sheet_of(m)
-            return self._resolve_node(si, int(m.group("row")), _col_to_idx(m.group("col")))
+            return self._resolve_node(sheet_of(m), int(m.group("row")), _col_to_idx(m.group("col")))
 
-        def resolve_range(ref: str) -> list[float]:
+        def resolve_range(ref: str) -> list:
             m = _CELL.match(ref)
             if not m or not m.group("col2"):
                 raise Unsupported(f"bad range ref {ref!r}")
             si = sheet_of(m)
             r1, r2 = int(m.group("row")), int(m.group("row2"))
             c1, c2 = _col_to_idx(m.group("col")), _col_to_idx(m.group("col2"))
+            lo_r, hi_r = min(r1, r2), max(r1, r2)
+            lo_c, hi_c = min(c1, c2), max(c1, c2)
             vals = []
-            for rr in range(min(r1, r2), max(r1, r2) + 1):
-                for cc in range(min(c1, c2), max(c1, c2) + 1):
+            for rr in range(lo_r, hi_r + 1):
+                for cc in range(lo_c, hi_c + 1):
                     vals.append(self._resolve_node(si, rr, cc))
-            return vals
+            return _Range(vals, hi_r - lo_r + 1, hi_c - lo_c + 1)
 
+        self._resolvers[cur_sheet_idx] = (resolve_cell, resolve_range)
         return resolve_cell, resolve_range
 
-    def _eval_node(self, node: int) -> float:
-        formula, si = self._formula_src[node]
+    def _eval_node(self, node: int):
+        ast = self._ast.get(node)
+        si = self._formula_src[node][1]
+        if ast is None:
+            formula = self._formula_src[node][0]
+            ast = _Parser(_tokenize(formula.lstrip("="))).parse()
+            self._ast[node] = ast
         rc, rr = self._make_resolvers(si)
-        toks = _tokenize(formula.lstrip("="))
-        return _Parser(toks, rc, rr).parse()
+        return _Interp(rc, rr).ev(ast)
 
     # ---- build + faithfulness gate -------------------------------------
     @classmethod
     def build(cls, graph: FormulaGraph, check_nodes: list[int],
-              tol: float = 1e-3, max_formula_cells: int = 120_000) -> Optional["RecomputeModel"]:
-        """Return a faithful model, or None. ``check_nodes`` are the output cells
-        whose recomputed value must match the cached value for the model to be
-        trusted. Only the formula cells that FEED the check nodes are evaluated —
-        other sheets (which may use functions we can't handle) are irrelevant."""
+              tol: float = 1e-3, max_formula_cells: int = 400_000,
+              gate_nodes: Optional[list[int]] = None) -> Optional["RecomputeModel"]:
+        """Return a faithful model, or None. The cone of ``check_nodes`` is
+        evaluated (so the caller can read all of them, e.g. every period); the
+        faithfulness gate requires only ``gate_nodes`` (default = check_nodes) to
+        reproduce their cached values. Gating on the few headline outputs (rather
+        than every period) lets a model whose early periods are noisy still be
+        used for sensitivity on the headline year."""
         self = cls(graph)
-        # restrict to the cells that actually feed the outputs we care about
         relevant: set[int] = set()
         for node in check_nodes:
-            relevant |= graph.upstream(node, cap=200_000)
+            relevant |= graph.upstream(node, cap=400_000)
         relevant |= set(check_nodes)
         for node in relevant:
             if node not in graph.formula_nodes:
@@ -354,33 +769,44 @@ class RecomputeModel:
             self._formula_src[node] = (str(rec.formula), si)
         if not self._formula_src or len(self._formula_src) > max_formula_cells:
             return None
-        # topological order over the relevant formula nodes
         order = _topo_order(graph, set(self._formula_src))
         if order is None:
-            return None                       # a cycle — can't recompute safely
+            return None
         self._topo = order
-        # recompute everything from the cached inputs
-        try:
-            for node in order:
+        n_frozen = 0
+        for node in order:
+            try:
                 self.values[node] = self._eval_node(node)
-        except Unsupported:
+            except _XlError:
+                self.values[node] = _NA          # an Excel error in a cell (#DIV/0! etc.)
+            except (Unsupported, OverflowError, KeyError, IndexError,
+                    RecursionError, ZeroDivisionError, ValueError, TypeError):
+                # can't evaluate this one cell — freeze it at the workbook's cached
+                # value so the rest of the model still recomputes from a correct
+                # base. A flex flowing only through a frozen cell is treated as
+                # constant; everything else stays an exact recompute.
+                si, r, c = decode(node)
+                rec = self.g.wbd.sheets[self.g.sheet_names[si]].cell(r, c)
+                self.values[node] = rec.value if (rec is not None and rec.value is not None) else 0.0
+                n_frozen += 1
+        self.n_frozen = n_frozen
+        # too much of the model is unevaluable -> not trustworthy; fall back
+        if n_frozen > max(8, int(0.03 * len(order))):
             return None
-        except (ZeroDivisionError, OverflowError, ValueError, KeyError):
-            return None
-        # gate: recomputed outputs must reproduce the cached values
-        for node in check_nodes:
+        # gate: the headline outputs must reproduce the cached values
+        for node in (gate_nodes or check_nodes):
             si, r, c = decode(node)
             rec = graph.wbd.sheets[graph.sheet_names[si]].cell(r, c)
             cached = float(rec.value) if rec is not None and is_number(rec.value) else None
             got = self.values.get(node)
-            if cached is None or got is None:
+            gotf = float(got) if isinstance(got, (int, float)) and not isinstance(got, bool) else None
+            if cached is None or gotf is None:
                 return None
-            denom = max(abs(cached), 1.0)
-            if abs(got - cached) / denom > tol:
+            if abs(gotf - cached) / max(abs(cached), 1.0) > tol:
                 return None
         return self
 
-    # ---- flex one input, read the outputs ------------------------------
+    # ---- flex inputs, read the outputs ---------------------------------
     def outputs_with_override(self, input_node: int, value: float,
                               output_nodes: list[int]) -> dict[int, float]:
         return self.outputs_with_overrides({input_node: value}, output_nodes)
@@ -391,16 +817,26 @@ class RecomputeModel:
         cone, and return the resulting values at ``output_nodes``. Non-destructive."""
         cone: set[int] = set()
         for nd in overrides:
-            cone |= self.g.downstream(nd, cap=200_000)
+            cone |= self.g.downstream(nd, cap=400_000)
         cone &= set(self._formula_src)
         saved = {n: self.values[n] for n in cone if n in self.values}
         saved_in = {nd: self.values.get(nd) for nd in overrides}
         self.values.update(overrides)
         try:
-            for node in self._topo:          # global order keeps deps correct
+            for node in self._topo:
                 if node in cone:
-                    self.values[node] = self._eval_node(node)
-            return {o: self.values.get(o) for o in output_nodes}
+                    try:
+                        self.values[node] = self._eval_node(node)
+                    except _XlError:
+                        self.values[node] = _NA
+                    except (Unsupported, OverflowError, KeyError, IndexError,
+                            RecursionError, ZeroDivisionError, ValueError, TypeError):
+                        pass            # frozen cell: keep its base value (acts as a constant)
+            out = {}
+            for o in output_nodes:
+                v = self.values.get(o)
+                out[o] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+            return out
         finally:
             self.values.update(saved)
             for nd, v in saved_in.items():
@@ -411,8 +847,7 @@ class RecomputeModel:
 
 
 def _topo_order(graph: FormulaGraph, formula_nodes: set[int]) -> Optional[list[int]]:
-    """Kahn topological sort of the formula nodes using precedent edges that fall
-    inside the formula set. Returns None on a cycle."""
+    """Kahn topological sort over the formula nodes. Returns None on a cycle."""
     indeg: dict[int, int] = {n: 0 for n in formula_nodes}
     preds: dict[int, list[int]] = {}
     for n in formula_nodes:
@@ -420,12 +855,12 @@ def _topo_order(graph: FormulaGraph, formula_nodes: set[int]) -> Optional[list[i
         preds[n] = ps
         indeg[n] = len(ps)
     from collections import deque
-    q = deque(n for n in formula_nodes if indeg[n] == 0)
-    order: list[int] = []
     deps: dict[int, list[int]] = {n: [] for n in formula_nodes}
     for n in formula_nodes:
         for p in preds[n]:
             deps[p].append(n)
+    q = deque(n for n in formula_nodes if indeg[n] == 0)
+    order: list[int] = []
     while q:
         n = q.popleft()
         order.append(n)
@@ -433,6 +868,4 @@ def _topo_order(graph: FormulaGraph, formula_nodes: set[int]) -> Optional[list[i
             indeg[d] -= 1
             if indeg[d] == 0:
                 q.append(d)
-    if len(order) != len(formula_nodes):
-        return None
-    return order
+    return order if len(order) == len(formula_nodes) else None

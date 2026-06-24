@@ -1,17 +1,17 @@
-"""The minimal Excel evaluator must compute the arithmetic the models use, and
-must reject anything it can't handle (so the sensitivity falls back rather than
-showing a wrong number)."""
+"""The Excel evaluator must compute the arithmetic AND the lookup/date/error
+functions real models use, and must reject anything it can't handle (so the
+sensitivity falls back rather than showing a wrong number)."""
+import datetime
+
 import pytest
 
-from model_annotator.recompute import _CELL, Unsupported, _Parser, _tokenize
+from model_annotator.recompute import _CELL, Unsupported, evaluate
 
 
 def ev(formula, cells=None, ranges=None):
     cells = cells or {}
     ranges = ranges or {}
-    return _Parser(_tokenize(formula),
-                   lambda r: cells.get(r, 0.0),
-                   lambda r: ranges.get(r, [])).parse()
+    return evaluate(formula, lambda r: cells.get(r, 0.0), lambda r: ranges.get(r, []))
 
 
 def test_arithmetic_and_precedence():
@@ -38,22 +38,54 @@ def test_functions():
     assert ev("IF(1,10,20)") == 10
     assert ev("IF(0,10,20)") == 20
     assert ev("IF(A1>5,1,0)", cells={"A1": 7}) == 1
+    assert ev("PRODUCT(2,3,4)") == 24
+    assert ev('SUMIF(A1:A3,">2",B1:B3)', ranges={"A1:A3": [1, 3, 5], "B1:B3": [10, 20, 30]}) == 50
+
+
+def test_lookup_functions():
+    # XLOOKUP exact match returns the parallel cell; not-found yields the default
+    assert ev('XLOOKUP("b",A1:A3,B1:B3)',
+              ranges={"A1:A3": ["a", "b", "c"], "B1:B3": [10, 20, 30]}) == 20
+    assert ev('XLOOKUP("z",A1:A2,B1:B2,-1)',
+              ranges={"A1:A2": ["a", "b"], "B1:B2": [1, 2]}) == -1
+    assert ev("MATCH(30,A1:A3,0)", ranges={"A1:A3": [10, 20, 30]}) == 3
+    assert ev("INDEX(A1:A3,2)", ranges={"A1:A3": [7, 8, 9]}) == 8
+
+
+def test_iferror_traps_excel_errors_not_unsupported():
+    assert ev("IFERROR(1/0, 99)") == 99           # #DIV/0! is trapped
+    assert ev("IFERROR(A1, 99)", cells={"A1": 5}) == 5
+    # IFERROR must NOT swallow a genuinely unsupported construct (else a wrong
+    # value would pass the faithfulness gate)
+    with pytest.raises(Unsupported):
+        ev("IFERROR(VLOOKUP(1,A:B,2), 0)")
+
+
+def test_date_functions():
+    d = datetime.datetime(2028, 6, 15)
+    assert ev("YEAR(A1)", cells={"A1": d}) == 2028
+    eom = ev("EOMONTH(A1,0)", cells={"A1": d})
+    assert isinstance(eom, datetime.datetime) and eom.day == 30
 
 
 def test_unsupported_function_raises():
     with pytest.raises(Unsupported):
-        ev("XLOOKUP(A1,B:B,C:C)")
+        ev("VLOOKUP(A1,B:C,2)")
     with pytest.raises(Unsupported):
-        ev('"text"&A1', cells={"A1": 1})
+        ev("SUMIFS(A:A,B:B,1)")
+    with pytest.raises(Unsupported):
+        ev("TOTALLYMADEUP(A1)", cells={"A1": 1})
+
+
+def test_text_concat_supported():
+    assert ev('"x"&A1', cells={"A1": 1}) == "x1"
 
 
 def test_two_letter_column_range_parses():
-    # regression: AR7:AR11 must NOT be read as "sheet A, cell R7:AR11"
     m = _CELL.match("AR7:AR11")
     assert m and m.group("nq") is None
     assert m.group("col") == "AR" and m.group("row") == "7"
     assert m.group("col2") == "AR" and m.group("row2") == "11"
-    # sheet names still parse, and only when followed by '!'
     m2 = _CELL.match("'Sheet 1'!B12")
     assert m2 and m2.group("sq") == "Sheet 1" and m2.group("col") == "B"
     m3 = _CELL.match("DASHBOARD!H17")

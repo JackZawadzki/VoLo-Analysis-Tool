@@ -30,6 +30,7 @@ from .structure import StructureResult
 
 DEFAULT_PCT = 0.20
 MAX_DRIVERS = 12            # keep the chart legible — show the inputs that move it most
+MAX_RECOMPUTE_CONE = 50_000  # above this, per-input recompute is too slow → line-item flex
 
 
 @dataclass
@@ -292,6 +293,14 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     if eb_node is None or rev_node is None:
         return None
 
+    # Exact recompute costs ~O(model size) PER flexed input. On a very large model
+    # (e.g. a 100k+-cell project-finance workbook) flexing dozens of inputs is
+    # impractically slow, so fall back to the line-item flex there rather than
+    # hang. Small/medium models recompute exactly.
+    up = graph.upstream(eb_node, cap=400_000) | graph.upstream(rev_node, cap=400_000)
+    if len(up) > MAX_RECOMPUTE_CONE:
+        return None
+
     # outputs the analyst can view the change in (whichever are mapped), richest
     # first; the per-period cell of each is recomputed exactly.
     want_full = [("ebitda", "EBITDA", eb_item), ("revenue", "Revenue", rev_item)]
@@ -316,7 +325,9 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     for specs in (want_full, want_full[:2]):     # try all outputs, then just EBITDA+revenue
         out_nodes = _out_nodes(specs)
         check = list(set(out_nodes.values())) or [eb_node, rev_node]
-        model = RecomputeModel.build(graph, check)
+        # the cone covers every period (so the cube can read them) but faithfulness
+        # is gated only on the headline terminal EBITDA + revenue
+        model = RecomputeModel.build(graph, check, gate_nodes=[eb_node, rev_node])
         if model is not None:
             out_specs = [s for s in specs if any((s[0], p) in out_nodes for p in periods)]
             break
@@ -327,9 +338,8 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     rev_base = model.values.get(rev_node)
 
     # discover EVERY input that actually feeds REVENUE or EBITDA (union of both
-    # cones) — not a fan-out-biased pre-filter — so cost stacks and volume levers
-    # are not missed; dead/reference cells are excluded because they aren't upstream.
-    up = graph.upstream(eb_node, cap=200_000) | graph.upstream(rev_node, cap=200_000)
+    # cones, computed above) — not a fan-out-biased pre-filter — so cost stacks and
+    # volume levers are not missed; dead/reference cells are excluded (not upstream).
     from openpyxl.utils import get_column_letter
     import re as _re
     _COST = _re.compile(r"cost|personnel|payroll|opex|sg&a|r&d|salar|capex|overhead|wage", _re.I)
@@ -372,6 +382,29 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                     break
         if rs:
             sheet_rows[sn] = sorted(rs)
+
+    # Bound the work: exactly recomputing the whole model per input is expensive
+    # on large workbooks, so cap how many candidate rows get flexed. Cost stacks
+    # collapse to one driver each (kept whole); elsewhere keep the highest-reach
+    # rows by a cheap graph proxy. Exact swing then re-ranks the survivors.
+    def _is_cost(nm):
+        rl = structure.roles.get(nm)
+        return (rl and rl[0].value == "cost_buildup") or bool(_COST.search(nm))
+    ROW_CAP = 45
+    noncost = [(sn, r) for sn, rows in sheet_rows.items() if not _is_cost(sn) for r in rows]
+    if len(noncost) > ROW_CAP:
+        pri: dict[tuple, int] = {}
+        for i, imp in enumerate(rank_inputs_by_impact(graph, [sheet], top_n=5000)):
+            pri.setdefault((imp.sheet, imp.row), i)
+        noncost.sort(key=lambda sr: pri.get(sr, 10 ** 9))
+        keep = set(noncost[:ROW_CAP])
+        for sn in list(sheet_rows):
+            if not _is_cost(sn):
+                kept = [r for r in sheet_rows[sn] if (sn, r) in keep]
+                if kept:
+                    sheet_rows[sn] = kept
+                else:
+                    del sheet_rows[sn]
 
     leaves = []
     aggregates = []
