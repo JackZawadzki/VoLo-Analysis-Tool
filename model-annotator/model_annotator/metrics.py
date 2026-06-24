@@ -961,22 +961,32 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
     if not cands:
         return
 
-    # Rule A: ONE row per segment name; the correct source is the revenue line on
-    # the sheet total-revenue is built from (primary), with the larger terminal
-    # share — never a same-named impostor pulling units/prices off another sheet.
-    by_name: dict[str, tuple] = {}
+    # Emit segments from ONE sheet so every share uses the SAME revenue base and
+    # they sum sensibly (mixing sheets' bases double-counts -> sums far past 100%).
+    # Prefer the primary sheet (where total revenue is built); else the richest.
+    by_sheet: dict[str, list] = {}
     for it, rmap in cands:
         sh = _seg_share_series(it, rmap, P)
         if not _is_real_revenue_share(it, sh, P):     # Rule B suppression
             continue
-        name = (it.instance or it.label.strip())[:40]
-        score = (it.sheet == ctx.sheet, _seg_terminal(sh, P))
-        prev = by_name.get(name)
-        if prev is None or score > prev[0]:
-            by_name[name] = (score, it, rmap, sh)
-    chosen = sorted(by_name.values(), key=lambda e: -e[0][1])      # terminal share desc
+        by_sheet.setdefault(it.sheet, []).append((it, sh))
+    if not by_sheet:
+        return
+    seg_sheet = ctx.sheet if ctx.sheet in by_sheet else max(by_sheet, key=lambda s: len(by_sheet[s]))
+    rev_base = ctx.mapping.get("revenue_total", seg_sheet)
+    rev_base = {p: rev_base.value_for(p) for p in P} if rev_base else rev
 
-    for (_score, it, _rmap, sh) in chosen[:8]:
+    # Rule A: ONE row per segment name on that sheet (best terminal share wins) —
+    # never a same-named impostor pulling units/prices off another sheet.
+    by_name: dict[str, tuple] = {}
+    for it, sh in by_sheet[seg_sheet]:
+        name = (it.instance or it.label.strip())[:40]
+        score = _seg_terminal(sh, P)
+        if name not in by_name or score > by_name[name][0]:
+            by_name[name] = (score, it, sh)
+    chosen = sorted(by_name.values(), key=lambda e: -e[0])         # terminal share desc
+
+    for (_score, it, sh) in chosen[:8]:
         name = (it.instance or it.label.strip())[:40]
         out.metrics.append(mk(
             f"segment_share::{name}", f"Revenue share: {name}",
@@ -985,32 +995,30 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
             computation=f"{name}[t] / revenue_total[t] (same sheet: {it.sheet})",
             series=sh, units="fraction"))
 
-    # Rule A.3: explicit 'other / unattributed' remainder so the segments on the
-    # primary statement sum to ~100% (a big residual = a source is wrong/missing)
-    prim = [(it, sh) for (_s, it, _r, sh) in chosen if it.sheet == ctx.sheet]
-    if prim:
-        rem: dict[str, Optional[float]] = {}
-        for p in P:
-            rv = rev.get(p)
-            if rv is None or abs(rv) <= EPS:
-                rem[p] = None
-                continue
-            r = 1.0 - sum((sh.get(p) or 0) for _it, sh in prim)
-            rem[p] = r if r > 0.01 else None
-        if any(v is not None for v in rem.values()):
-            out.metrics.append(mk(
-                "segment_share::other", "Revenue share: other / unattributed",
-                applicability="remainder so mapped segments sum to ~100% of revenue",
-                inputs=ctx.refs("revenue_total"),
-                computation="1 - sum(mapped segment shares on the primary statement)[t]",
-                series=rem, units="fraction",
-                notes="revenue not attributed to a mapped segment"))
+    # Rule A.3: explicit 'other / unattributed' remainder (same base) so the
+    # segments sum to ~100% — a big residual flags a wrong/missing source.
+    rem: dict[str, Optional[float]] = {}
+    for p in P:
+        rv = rev_base.get(p)
+        if rv is None or abs(rv) <= EPS:
+            rem[p] = None
+            continue
+        r = 1.0 - sum((sh.get(p) or 0) for (_s, _it, sh) in chosen)
+        rem[p] = r if r > 0.01 else None
+    if any(v is not None for v in rem.values()):
+        out.metrics.append(mk(
+            "segment_share::other", "Revenue share: other / unattributed",
+            applicability="remainder so mapped segments sum to ~100% of revenue",
+            inputs=ctx.refs("revenue_total"),
+            computation="1 - sum(mapped segment shares)[t]",
+            series=rem, units="fraction",
+            notes="revenue not attributed to a mapped segment"))
 
     # terminal concentration — largest real segment's terminal share
     if chosen:
-        top = max(chosen, key=lambda e: _seg_terminal(e[3], P))
+        top = max(chosen, key=lambda e: _seg_terminal(e[2], P))
         name = (top[1].instance or top[1].label.strip())[:40]
-        share = _seg_terminal(top[3], P)
+        share = _seg_terminal(top[2], P)
         if 0 < share <= 1.2:
             out.metrics.append(mk(
                 "terminal_concentration", f"Largest terminal-period segment share ({name})",
