@@ -224,8 +224,15 @@ RULES: list[OntologyRule] = [
     OntologyRule("grant_or_subsidy_revenue",
                  exact=("grant revenue", "grants", "grant income", "subsidy revenue", "government grants",
                         "government subsidies", "subsidies", "grants & subsidies"),
-                 keywords=("grant", "subsid", "government funding"),
-                 veto=("%", "growth", "/", "change in", "received"),
+                 # keyword matching is whole-word, so list the inflections that
+                 # actually appear ("grants", "subsidy", "subsidies") — a bare
+                 # "grant" stem would miss "...including grants".
+                 keywords=("grant", "grants", "subsidy", "subsidies",
+                           "government funding", "government grant"),
+                 # bare "/" removed: it blocked legitimate lines like "Other
+                 # revenues/expenses including grants"; ratio slashes (/revenue,
+                 # /ebitda) are still caught by _DERIVED_VETO.
+                 veto=("%", "growth", "change in", "received"),
                  percent_expected=False),
     OntologyRule("revenue_segment",
                  keywords=("revenue", "sales"),
@@ -572,6 +579,67 @@ LabelClassifier = Callable[[str, str, list[str]], Optional[tuple[str, float]]]
 # (label, section, ontology_ids) -> (canonical_id, confidence) | None
 
 
+def _infer_segments_by_sum(res: "MappingResult", scalar_best: dict) -> None:
+    """Mark the unmapped numeric rows just above a sheet's revenue_total whose
+    per-period values SUM to that total as its revenue segments.
+
+    This recovers a revenue breakdown *generically* — independent of how the
+    segment rows are labelled (product names like "Consumer electronics" carry no
+    revenue keyword for score_label to catch) — using the one property that is
+    always true of a breakdown: the parts add up to the whole. Replaces what the
+    LLM was doing for segment discovery with a deterministic, repeatable rule.
+    """
+    for (sheet, cid), rev in list(scalar_best.items()):
+        if cid != "revenue_total":
+            continue
+        P = list(rev.periods)
+        rev_vals = {p: rev.value_for(p) for p in P}
+        cands = []
+        for it in res.items:
+            if it.sheet != sheet or it.canonical_id or it.demoted:
+                continue
+            if not (rev.index - 15 <= it.index < rev.index):     # window just above the total
+                continue
+            if it.percentish or _DERIVED_VETO.search(_norm(it.label)):
+                continue
+            if not any(v not in (None, 0) for v in it.values):    # has real numbers
+                continue
+            cands.append(it)
+        cands.sort(key=lambda it: it.index)
+        if len(cands) < 2:                                        # a breakdown has >=2 parts
+            continue
+
+        def _sums(block) -> bool:
+            for p in P:
+                tot = rev_vals.get(p)
+                if tot is None:
+                    continue
+                s = sum((it.value_for(p) or 0.0) for it in block)
+                if abs(tot) < 1.0:
+                    if abs(s) > 1.0:
+                        return False
+                elif abs(s - tot) > 0.02 * abs(tot):              # within 2% every period
+                    return False
+            return True
+
+        # the breakdown is the largest contiguous tail (ending just above the
+        # total) whose parts add to the whole — trims stray non-segment rows / a
+        # repeated subtotal sitting on top of the real segments
+        block = None
+        for start in range(len(cands) - 1):
+            tail = cands[start:]
+            if _sums(tail):
+                block = tail
+                break
+        if not block:
+            continue
+        for it in block:
+            it.canonical_id = "revenue_segment"
+            it.confidence = 0.7
+            it.instance = it.label.strip()[:40]
+            it.evidence = f"sums with siblings to {rev.label!r} (revenue breakdown, {sheet})"
+
+
 def build_mapping(
     wbd: WorkbookData,
     structure: StructureResult,
@@ -694,6 +762,10 @@ def build_mapping(
         it.instance = it.label.strip()[:40]
         it.evidence = f"numeric row under section {it.section!r} within revenue magnitude band"
 
+    # Structural segment inference: rows that ADD UP to a sheet's revenue_total
+    # are its segment breakdown (works when labels carry no revenue keyword).
+    _infer_segments_by_sum(res, scalar_best)
+
     # De-duplicate multi-instance rows that are echoes of each other: the same
     # canonical id with the same instance label AND an identical value series is
     # the same line repeated (e.g. a revenue segment shown in the income
@@ -713,6 +785,26 @@ def build_mapping(
                 if it is not keep:
                     it.demoted = True
                     it.evidence += "; demoted: duplicate echo of the same line"
+
+    # Grant/subsidy echoes: two grant lines with a byte-identical value series are
+    # the same grant mirrored across statements (the P&L grant line and the cash-
+    # flow "(+) increase in grants"). Grants are intentionally multi-instance, so
+    # match on the SERIES alone (the echo is deliberately relabelled) and keep one
+    # so the grant total isn't double-counted.
+    grant_groups: dict[tuple, list[LineItem]] = defaultdict(list)
+    for it in res.items:
+        if it.canonical_id == "grant_or_subsidy_revenue" and not it.demoted:
+            if not any(v not in (None, 0) for v in it.values):
+                continue
+            sig = tuple(round(v, 4) if v is not None else None for v in it.values)
+            grant_groups[sig].append(it)
+    for dupes in grant_groups.values():
+        if len(dupes) > 1:
+            keep = max(dupes, key=lambda it: (it.n_formula, -it.index))
+            for it in dupes:
+                if it is not keep:
+                    it.demoted = True
+                    it.evidence += "; demoted: duplicate grant echo (same series)"
 
     # Unmapped bucket: numeric rows on statement-role sheets that didn't map.
     for it in res.items:

@@ -98,6 +98,11 @@ def annotate(
     llm = LLMClient(enabled=not no_llm, model=llm_model, provider=llm_provider)
     if llm.disabled_reason and not no_llm:
         log.info("LLM disabled: %s", llm.disabled_reason)
+    # The LLM is confined to PROSE (executive summary + finding polish, both
+    # numeral-verified). Mapping and the analysis plan run off this permanently
+    # disabled client, so every number — mappings, metrics, sensitivity — is
+    # produced deterministically and is identical whether or not the LLM is on.
+    _pipeline_llm = LLMClient(enabled=False)
 
     # ---- Phase 0-1: ingest + structure + graph -----------------------------
     _p("Reading the workbook", 0.05)
@@ -107,26 +112,26 @@ def annotate(
     _p("Building the formula dependency graph", 0.25)
     graph = build_graph(wbd)
 
-    # ---- mapping (heuristics + optional LLM label assist) ------------------
+    # ---- mapping (fully deterministic: heuristics only) --------------------
+    # The LLM never classifies rows. Mapping is the foundation every number is
+    # built on, so it must be reproducible; the heuristics (incl. structural
+    # segment/grant inference) carry it. The LLM only writes prose later.
     _p("Mapping rows to the financial ontology", 0.38)
     if workbook_map is not None and workbook_map.row_mappings:
         mapping = mapping_from_workbook_map(wbd, structure, workbook_map)
     else:
-        classifier = None
-        if llm.available:
-            def classifier(label: str, section: str, cands: list[str]):
-                return llm.classify_label(label, section, cands)
-        mapping = build_mapping(wbd, structure, llm_classify=classifier)
+        mapping = build_mapping(wbd, structure)
 
     stmt_sheets = [mapping.primary_sheet] if mapping.primary_sheet else []
 
     # ---- Phase 1.5: analysis plan (the WHY layer) ---------------------------
-    # LLM-guided when available: reads structure (labels only, never values),
-    # decides the business archetype and which extra relationships to compute.
-    # Deterministic heuristic plan in --no-llm runs.
+    # Deterministic: the business archetype + which relationships to compute are
+    # decided by heuristics off the mapped rows, so the analysis is reproducible.
+    # (Previously the LLM picked calcs here, which produced duplicate/unstable
+    # metrics.) Runs off the disabled client so it never calls out.
     _p("Planning the analysis (business read)", 0.48)
     from .planner import build_analysis_plan, execute_plan_computations
-    plan = build_analysis_plan(wbd, structure, mapping, llm, benchmarks)
+    plan = build_analysis_plan(wbd, structure, mapping, _pipeline_llm, benchmarks)
 
     # ---- Phase 2: assumptions census ---------------------------------------
     _p("Ranking the assumptions that drive the model", 0.56)

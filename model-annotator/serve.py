@@ -328,14 +328,16 @@ INDEX_HTML = """<!doctype html><html><head><meta charset=utf-8>
     <div class=muted id=fname style="margin-top:6px">or click to choose a file</div>
   </label>
   <div class=actions>
-    <div class=provsel>Model provider:
-      <select name=provider id=prov>
+    <label class=llmtoggle><input type=checkbox name=llm id=llmck> Use AI to write the summary
+      <span class=muted>— off = fully deterministic; figures always come from your workbook either way</span></label>
+    <div class=provsel id=provrow style="opacity:.45">AI provider:
+      <select name=provider id=prov disabled>
         <option value=anthropic selected>Anthropic (Claude)</option>
         <option value=refiant>Refiant</option>
       </select>
     </div>
     <button class="btn big" type=submit id=go>Analyze model →</button>
-    <div class=poweredby>Reads structure &amp; writes the summary with the selected model<span class=dot>·</span>every figure still comes from your workbook</div>
+    <div class=poweredby>Mapping, metrics &amp; sensitivity are 100% deterministic<span class=dot>·</span>the AI only writes prose — it never changes a number</div>
   </div>
   <div class=prog id=prog>
     <div class=bartrack><div class=barfill id=barfill></div></div>
@@ -349,6 +351,8 @@ const drop=document.getElementById('drop'),file=document.getElementById('file'),
 ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{{e.preventDefault();drop.classList.remove('hover')}}));
 drop.addEventListener('drop',e=>{{file.files=e.dataTransfer.files;fn.textContent=file.files[0]?.name||''}});
 file.addEventListener('change',()=>fn.textContent=file.files[0]?.name||'or click to choose a file');
+const llmck=document.getElementById('llmck'),prov=document.getElementById('prov'),provrow=document.getElementById('provrow');
+llmck.addEventListener('change',()=>{{prov.disabled=!llmck.checked;provrow.style.opacity=llmck.checked?'1':'.45';}});
 const go=document.getElementById('go');
 const fill=document.getElementById('barfill'),plabel=document.getElementById('plabel'),ppct=document.getElementById('ppct');
 function setProg(frac,label){{fill.style.width=Math.round(frac*100)+'%';ppct.textContent=Math.round(frac*100)+'%';if(label)plabel.textContent=label;}}
@@ -359,7 +363,8 @@ document.getElementById('f').addEventListener('submit',async (e)=>{{
   go.disabled=true; plabel.style.color='';
   document.getElementById('prog').style.display='block';
   setProg(0.02,'Uploading…');
-  const fd=new FormData(); fd.append('model',file.files[0]); fd.append('llm','on');
+  const fd=new FormData(); fd.append('model',file.files[0]);
+  fd.append('llm', llmck.checked ? 'on' : 'off');
   fd.append('provider', (document.getElementById('prov')||{{}}).value || 'anthropic');
   let job;
   try{{
@@ -1232,7 +1237,10 @@ class Handler(BaseHTTPRequestHandler):
         tmp = tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False, dir=OUT_ROOT)
         tmp.write(data)
         tmp.close()
-        use_llm = USE_LLM        # always on when a key is available
+        # LLM is off by default; the front-page toggle opts into AI prose, and it
+        # only works if the server was started with a key (--llm). Either way the
+        # numbers are identical — the LLM never touches mapping/metrics/sensitivity.
+        use_llm = USE_LLM and (fields.get("llm", ["off"])[0] == "on")
         provider = (fields.get("provider", ["anthropic"])[0] or "anthropic").lower()
         if provider not in ("anthropic", "refiant"):
             provider = "anthropic"
