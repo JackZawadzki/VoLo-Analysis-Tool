@@ -1023,7 +1023,7 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
             out.metrics.append(mk(
                 "terminal_concentration", f"Largest terminal-period segment share ({name})",
                 applicability="revenue segments mapped",
-                inputs=[r for (_s, it, _r, _sh) in chosen for r in it.refs][:40],
+                inputs=[r for (_s, it, _sh) in chosen for r in it.refs][:40],
                 computation="max over segments of segment[T] / revenue_total[T]",
                 scalar=share, units="fraction", notes=f"segment: {name}"))
 

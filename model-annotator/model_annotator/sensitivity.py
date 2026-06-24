@@ -599,10 +599,15 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     drivers = []
     adv_ov: dict[int, float] = {}
     fav_ov: dict[int, float] = {}
-    for d in cand:
-        dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}"
-        kids = [{"key": f"{dkey}::{c['r']}", "label": c["label"], "refs": [c["ref"]],
-                 "value": c["v0"], "out": _outmat(c)} for c in d.get("children", [])]
+    for i, d in enumerate(cand):
+        # the enumerate index guarantees a UNIQUE key per driver: distinct
+        # section-grouped drivers on one sheet can otherwise share (sheet, row,
+        # band) -> a key collision that makes the JS maGet() read the wrong
+        # driver's base, drifting the base eval and compounding the slopes into
+        # nonsense (billions). Distinct keys keep every driver independent.
+        dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}:{i}"
+        kids = [{"key": f"{dkey}::{ci}", "label": c["label"], "refs": [c["ref"]],
+                 "value": c["v0"], "out": _outmat(c)} for ci, c in enumerate(d.get("children", []))]
         cube["drivers"].append({"key": dkey, "label": d["label"], "refs": [d["ref"]],
                                 "value": d["v0"], "out": _outmat(d), "children": kids})
         eb_lo, eb_hi = d["lo"].get(eb_node), d["hi"].get(eb_node)

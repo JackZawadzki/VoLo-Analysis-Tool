@@ -171,6 +171,28 @@ def test_ex_ratio_suppresses_signflip_when_excluded_exceeds_base():
     assert abs(series["2029"] - 500.0 / 3370.0) < 1e-9
 
 
+# --- sensitivity cube: driver keys MUST be unique (JS maGet/maEval invariant) -
+def test_cube_driver_keys_unique():
+    """Every cube driver needs a unique key. Colliding keys make the front-end
+    maGet() read the wrong driver's base, which drifts the base eval and
+    compounds slopes into nonsense (the -59.7M base / billions tornado bug).
+    Runs against the real YPlasma model when present (recompute cube)."""
+    import os, pytest
+    F = os.path.expanduser("~/Downloads/YPlasma_Financial Plan_20260507.xlsx")
+    if not os.path.exists(F):
+        pytest.skip("YPlasma model not present")
+    from model_annotator import annotate
+    r = annotate(F, no_llm=True, write_outputs=False)
+    cubes = [t.cube for t in r.sensitivities if getattr(t, "cube", None)]
+    assert cubes, "expected a recompute cube for YPlasma"
+    for cube in cubes:
+        keys = [d["key"] for d in cube["drivers"]]
+        assert len(keys) == len(set(keys)), f"duplicate cube driver keys: {keys}"
+        for d in cube["drivers"]:
+            kk = [c["key"] for c in d.get("children", [])]
+            assert len(kk) == len(set(kk)), f"duplicate child keys under {d['key']}"
+
+
 # --- 2.1 captions conditional on the actual pattern -------------------------
 def test_rising_only_when_data_rises():
     rising = {"2026": 0.1, "2027": 0.2, "2028": 0.3, "2029": 0.4, "2030": 0.5, "2031": 0.6}
