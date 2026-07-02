@@ -15,7 +15,7 @@ from typing import Callable, Optional
 
 from .ingest import WorkbookData, a1, is_number
 from .mapping import LineItem, MappingResult
-from .schema import DerivedMetric, Granularity, SheetRole, format_ref
+from .schema import DerivedMetric, Granularity, Orientation, SheetRole, format_ref
 from .structure import StructureResult
 
 log = logging.getLogger(__name__)
@@ -541,6 +541,71 @@ def _capital_efficiency(ctx: Ctx, out: MetricsResult) -> None:
             units="fraction"))
 
 
+_CASH_BAL_RX = re.compile(
+    r"ending cash|closing cash|cash (?:and|&) cash equiv|cash balance|cash position|"
+    r"unrestricted cash|net cash position|cash on hand", re.I)
+# a cash BALANCE row, never a cash FLOW / change / movement line
+_CASH_FLOW_VETO_RX = re.compile(
+    r"change in|net change|increase|decrease|inflow|outflow|cash flow|flow from|"
+    r"from operating|from investing|from financing|movement|used in|provided by", re.I)
+
+
+def _finest_cash_series(ctx: Ctx):
+    """P1-1: the cash-balance row with the FINEST period axis anywhere in the model
+    (monthly/quarterly), scaled to the primary sheet's units. Survival troughs hide
+    between annual year-ends, so we look for a sub-annual cash series — matched by
+    label, since the fine series is often on a monthly statement sheet that the
+    primary (annual) mapping never reads. Returns (nper, label, sheet, {period:val})
+    or None. Generic: no cell addresses, no-op when no finer series exists."""
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+    prim = ctx.structure.units.get(ctx.sheet)
+    prim_scale = (prim.scale if prim else 1.0) or 1.0
+    best = None
+    for sheet, axes in ctx.structure.axes.items():
+        ax = axes[0] if axes else None
+        if ax is None or ax.orientation != Orientation.periods_in_columns:
+            continue
+        if len(ax.periods) <= len(ctx.periods):
+            continue                                     # not finer than the plan's own axis
+        sd = ctx.wbd.sheets.get(sheet)
+        if sd is None:
+            continue
+        su = ctx.structure.units.get(sheet)
+        conv = (su.scale if su else 1.0) / prim_scale
+        cols = []
+        for hc in ax.header_cells:
+            try:
+                cl, _r = coordinate_from_string(hc.split("!")[-1])
+                cols.append(column_index_from_string(cl))
+            except Exception:
+                cols.append(None)
+        first_col = min((c for c in cols if c), default=4)
+        for r in range(1, sd.max_row + 1):
+            lab = next((sd.cell(r, c).value.strip() for c in range(1, first_col)
+                        if sd.cell(r, c) and isinstance(sd.cell(r, c).value, str)
+                        and sd.cell(r, c).value.strip()), None)
+            if not lab or not _CASH_BAL_RX.search(lab) or _CASH_FLOW_VETO_RX.search(lab):
+                continue
+            series = {}
+            for p, c in zip(ax.periods, cols):
+                if c is None:
+                    continue
+                rec = sd.cell(r, c)
+                v = rec.value if rec else None
+                series[p] = v * conv if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+            nz = [v for v in series.values() if v is not None and abs(v) > 1e-9]
+            if len(nz) < 2:
+                continue
+            low = lab.lower()
+            # prefer the END/closing balance over a beginning-of-period line
+            pref = 0 if ("beginning" in low or "opening" in low) else \
+                (2 if re.search(r"ending|closing|equiv", low) else 1)
+            key = (len(ax.periods), pref)
+            if best is None or key > (best[0], best[1]):
+                best = (len(ax.periods), pref, lab[:40], sheet, series)
+    return (best[0], best[2], best[3], best[4]) if best else None
+
+
 def _runway(ctx: Ctx, out: MetricsResult) -> None:
     P = ctx.periods
     end = ctx.series("ending_cash")
@@ -570,6 +635,28 @@ def _runway(ctx: Ctx, out: MetricsResult) -> None:
                 scalar=mv, units=ctx.units_label(),
                 notes=(f"trough in {mp}; cash goes NEGATIVE — the model assumes a raise lands before then"
                        if neg else f"trough in {mp}; stays positive across the plan") + src_note))
+        # P1-1: the annual year-end snapshot hides the intra-period trough where
+        # survival risk actually lives. If a finer (monthly/quarterly) cash series
+        # exists, report its true minimum and the trough period.
+        fine = _finest_cash_series(ctx)
+        if fine is not None:
+            _n, flab, fsheet, fseries = fine
+            fpts = [(p, v) for p, v in fseries.items() if v is not None and abs(v) > 1e-9]
+            annual_low = min((v for _p, v in pts), default=None)
+            if fpts:
+                tp2, tv2 = min(fpts, key=lambda kv: kv[1])
+                # only surface if the finer trough is materially below the annual snapshot
+                if annual_low is None or annual_low <= 0 or tv2 < 0.9 * annual_low:
+                    out.metrics.append(mk(
+                        "minimum_cash_intraperiod", f"Minimum cash — intra-period trough ({tp2})",
+                        applicability=f"finest cash series: {fsheet} {flab!r} ({_n} periods)",
+                        inputs=ctx.refs(cash_src),
+                        computation=f"min over the finest cash-balance series ({fsheet}, {_n} periods), scaled to plan units",
+                        scalar=tv2, units=ctx.units_label(),
+                        notes=(f"the annual year-end low is {annual_low:.3g}, but the true intra-period "
+                               f"trough is {tv2:.3g} in {tp2} — annual snapshots hide where the cash "
+                               f"actually bottoms out" if annual_low is not None
+                               else f"intra-period cash trough is {tv2:.3g} in {tp2}")))
     if end and opex:
         same = combine(P, lambda e, o: e / (abs(o) / mpp) if abs(o) > EPS else None, end, opex)
         out.metrics.append(mk(
