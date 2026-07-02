@@ -973,8 +973,11 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
     if not by_sheet:
         return
     seg_sheet = ctx.sheet if ctx.sheet in by_sheet else max(by_sheet, key=lambda s: len(by_sheet[s]))
-    rev_base = ctx.mapping.get("revenue_total", seg_sheet)
-    rev_base = {p: rev_base.value_for(p) for p in P} if rev_base else rev
+    # P0-3 denominator provenance: divide by (and cite) the SAME revenue row that
+    # sits on the segments' sheet — the total shown in provenance, not some other.
+    rev_base_it = ctx.mapping.get("revenue_total", seg_sheet)
+    rev_base = {p: rev_base_it.value_for(p) for p in P} if rev_base_it else rev
+    rev_base_refs = list(rev_base_it.refs) if rev_base_it else ctx.refs("revenue_total")
 
     # Rule A: ONE row per segment name on that sheet (best terminal share wins) —
     # never a same-named impostor pulling units/prices off another sheet.
@@ -986,13 +989,33 @@ def _segments(ctx: Ctx, out: MetricsResult) -> None:
             by_name[name] = (score, it, sh)
     chosen = sorted(by_name.values(), key=lambda e: -e[0])         # terminal share desc
 
+    # P0-2 component-to-parent tie-out: the components must not EXCEED the parent
+    # shown as denominator. Shares summing well past 100% mean the component rows
+    # sit on a different (phantom) base than the displayed revenue — 100% can be
+    # satisfied on a phantom base, so the binding check is components<=displayed
+    # total, not shares==100%. If they exceed it, do not emit shares; flag it.
+    checked = over = 0
+    for p in P:
+        rv = rev_base.get(p)
+        if rv is None or abs(rv) <= EPS:
+            continue
+        checked += 1
+        if sum((sh.get(p) or 0) for (_s, _it, sh) in chosen) > 1.02:
+            over += 1
+    if checked and over > checked / 2:
+        out.notes.append(
+            f"CITATION segment tie-out: the mapped segments on {seg_sheet} sum to more than the revenue "
+            f"shown as their denominator (components do not reconcile to the displayed total); revenue-"
+            f"share rows suppressed until the source block is resolved.")
+        return
+
     for (_score, it, sh) in chosen[:8]:
         name = (it.instance or it.label.strip())[:40]
         out.metrics.append(mk(
             f"segment_share::{name}", f"Revenue share: {name}",
             applicability="revenue segments mapped",
-            inputs=[r for r in it.refs][:30] + ctx.refs("revenue_total"),
-            computation=f"{name}[t] / revenue_total[t] (same sheet: {it.sheet})",
+            inputs=[r for r in it.refs][:30] + rev_base_refs,
+            computation=f"{name}[t] / revenue_total[t] (denominator: {seg_sheet} revenue)",
             series=sh, units="fraction"))
 
     # Rule A.3: explicit 'other / unattributed' remainder (same base) so the
