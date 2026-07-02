@@ -581,8 +581,39 @@ def extract_from_sheet(s: SheetSignal) -> Dict[str, Any]:
     if axis is None:
         return {"error": "no year axis", "sheet": s.name}
 
-    year_cols = axis.col_to_year                       # col_idx -> year
-    all_years = sorted(year_cols.values())
+    # Map each distinct year to ALL its columns in the axis row. Monthly/quarterly
+    # models repeat a year across many CONTIGUOUS columns (one per period); annual
+    # models have exactly one column per year. We detect periodicity from
+    # contiguity and AGGREGATE (sum) flow metrics across a year's periods, so
+    # revenue etc. come out as the correct annual TOTAL rather than just the first
+    # month — the bug that produced e.g. Jan-2026 revenue in place of FY2026.
+    axis_row = s.rows[axis.row_idx]
+    year_to_cols: Dict[int, List[int]] = {}
+    for c_idx, v in enumerate(axis_row):
+        y = _to_year(v)
+        if y is not None and axis.year_min <= y <= axis.year_max:
+            year_to_cols.setdefault(y, []).append(c_idx)
+
+    def _contiguous(cols: List[int]) -> bool:
+        return len(cols) > 1 and cols == list(range(cols[0], cols[0] + len(cols)))
+
+    periodic = any(_contiguous(cols) for cols in year_to_cols.values())
+    _max_periods = max((len(c) for c in year_to_cols.values()), default=1)
+    periodicity = ("monthly" if _max_periods >= 8
+                   else "quarterly" if _max_periods >= 3
+                   else "annual")
+
+    def _year_value(row: List[Any], cols: List[int]) -> Optional[float]:
+        nums = [float(row[c]) for c in cols if c < len(row) and _is_numeric(row[c])]
+        if not nums:
+            return None
+        # Sum a year's periods only when they are a contiguous run (real monthly/
+        # quarterly columns), not scattered blocks like Prior/Current/Variance.
+        if periodic and _contiguous(cols):
+            return sum(nums)
+        return nums[0]
+
+    all_years = sorted(year_to_cols.keys())
 
     metrics_out: Dict[str, Any] = {}
     for canonical, cfg in CANONICAL_METRICS.items():
@@ -592,22 +623,13 @@ def extract_from_sheet(s: SheetSignal) -> Dict[str, Any]:
             continue
         top = hits[0]
         row = s.rows[top.row_idx]
-        # Detect unit from label or nearby cells (immediately after label col)
         nearby = [row[top.label_col + i]
                   for i in range(1, 5)
                   if top.label_col + i < len(row)]
         unit = _detect_unit(top.matched_label, nearby)
-        # Extract values year-by-year
-        values: Dict[str, Optional[float]] = {}
-        for col_idx, year in sorted(year_cols.items()):
-            if col_idx >= len(row):
-                values[str(year)] = None
-                continue
-            v = row[col_idx]
-            if _is_numeric(v):
-                values[str(year)] = float(v)
-            else:
-                values[str(year)] = None
+        values: Dict[str, Optional[float]] = {
+            str(year): _year_value(row, year_to_cols[year]) for year in all_years
+        }
         metrics_out[canonical] = {
             "label": top.matched_label,
             "synonym_matched": top.synonym_matched,
@@ -621,14 +643,36 @@ def extract_from_sheet(s: SheetSignal) -> Dict[str, Any]:
             ],
         }
 
+    # Drop only TRAILING years that are completely empty across EVERY metric —
+    # the blank future columns a monthly/quarterly grid extends into (e.g. a
+    # 2026–2028 forecast whose monthly sheet runs cells out to 2035). Years with
+    # any data are always kept: a pre-revenue ramp (legit leading zeros), a
+    # plateau, or a wind-down. The analyst can delete any remaining year in the
+    # review UI, so we trim conservatively and never touch leading/interior years.
+    def _year_all_empty(y: int) -> bool:
+        for mb in metrics_out.values():
+            if isinstance(mb, dict):
+                v = mb["values"].get(str(y))
+                if v is not None and abs(v) > 1e-9:
+                    return False
+        return True
+
+    while len(all_years) > 1 and _year_all_empty(all_years[-1]):
+        dropped = all_years.pop()
+        for mb in metrics_out.values():
+            if isinstance(mb, dict):
+                mb["values"].pop(str(dropped), None)
+
     return {
         "sheet": s.name,
         "year_axis": {
             "row_idx_0based": axis.row_idx,
-            "year_min": axis.year_min,
-            "year_max": axis.year_max,
+            "year_min": all_years[0] if all_years else axis.year_min,
+            "year_max": all_years[-1] if all_years else axis.year_max,
             "years_covered": all_years,
         },
+        "periodicity": periodicity,
+        "periods_aggregated": bool(periodic),
         "metrics": metrics_out,
     }
 

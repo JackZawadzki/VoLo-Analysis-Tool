@@ -751,6 +751,13 @@ def _adapt_new_extractor_response(new_res: dict, file_name: str) -> dict:
     financials: dict = {}
     units: dict = {}
     for canonical, m in metrics.items():
+        # Revenue is the only metric consumed downstream (it drives the
+        # simulation). COGS / gross_profit / EBITDA / net_income / capex were
+        # display-only and, on monthly models, sometimes extracted as ~0 junk.
+        # We keep using every metric for sheet SELECTION (see extract()), but
+        # only surface revenue so the review UI stays a single, clean series.
+        if canonical != "revenue":
+            continue
         if not m or not isinstance(m, dict):
             continue
         vals = m.get("values") or {}

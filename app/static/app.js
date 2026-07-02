@@ -60,7 +60,6 @@ const _GLOSSARY = {
     fund_distribution: "Distribution of the simulated fund's terminal TVPI across all portfolio universes (calibrated, NAV-inclusive basis). The left tail (<1x) is loss area we want small; the right tail (>3x) is the moonshot area we want long and full. Dashed lines are Carta's median, top-quartile, and top-decile so you can see where our portfolio's shape sits versus real funds.",
     deal_overlay: "The fund's full TVPI distribution simulated with this deal in the portfolio versus without it (filler capital instead). Because a single position is ~1/20th of the fund, the two curves nearly overlap — that is expected, not an error. Dashed vertical lines mark each scenario's mean.",
     deal_bars: "Percent change in each fund-level metric versus the same fund without this deal. All four are shown as a percent so they sit on one comparable scale — the mean, the median (P50), the top-decile outcome (P90), and the probability the fund returns 5x or more. Green is an improvement, red a reduction. Because one position is roughly 1/20th of the fund, the shifts are modest; which metric moves most depends on the deal — a moonshot's value tends to surface in the right-tail metrics (P90, 5x+ odds) more than in the median.",
-    deal_profile: "This investment's own modeled outcome distribution (its return multiple, MOIC) compared with a typical holding already in the fund. It shows whether this deal carries more right-tail upside — or more downside risk — than the fund's average position. Densities are normalized so the two shapes are comparable.",
     carbon_impact: "Estimated CO₂ emissions avoided annually by the technology's deployment. Calculated by multiplying deployed units × production per unit × carbon intensity of the displaced resource.",
     sensitivity: "One-at-a-time perturbation analysis showing how each input variable affects the expected MOIC and P(>3x). Larger spreads indicate higher sensitivity — these are the assumptions that matter most.",
     what_moves: "Two complementary views of what drives this deal's return. (1) Sensitivity: if an input you control (TAM, check, pre-money, penetration, exit multiple) is off by ±20–30%, how far does expected MOIC move — the levers worth pinning down. (2) Variance drivers: across all simulated paths, which stochastic factors (adoption speed, exit timing, margin, dilution, etc.) most explain the spread of outcomes — the deal's inherent uncertainty. The two use different factor sets by design: controllable inputs vs. the model's internal random factors.",
@@ -2552,40 +2551,32 @@ function wizPopulateReview() {
 
     const fmYears = d._fm_fiscal_years || [];
     if (d.revenue_projections && Array.isArray(d.revenue_projections) && d.revenue_projections.some(v => v !== 0)) {
-        if (d._fm_revenue_source) {
-            // Financial model is the authoritative source. Show a read-only
-            // summary so the analyst can see what's being fed to the simulation
-            // but can't accidentally diverge it from the actual extracted model.
-            html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue Projections (from financial model)</h4>`;
-            html += `<p style="font-size:0.78rem; color:var(--text-secondary); margin:4px 0 8px;">These values come directly from the uploaded Excel financial model and cannot be edited here. Edit the model itself to change them.</p>`;
-            html += `<div class="form-group"><div class="volume-row">`;
-            for (let i = 0; i < d.revenue_projections.length && i < 10; i++) {
-                const label = fmYears[i] ? fmYears[i] : `Y${i+1}`;
-                const v = d.revenue_projections[i] || 0;
-                html += `<div style="text-align:center;"><small style="font-size:0.65rem; color:var(--text-secondary);">${label}</small><br><input type="number" id="wiz-rev-rev-${i}" value="${v}" data-rev-unit-mult="1" style="width:80px; background:var(--bg-subtle); color:var(--text-secondary); cursor:not-allowed;" readonly tabindex="-1"></div>`;
-            }
-            html += `</div><div style="font-size:0.7rem; color:var(--text-tertiary); margin-top:6px;">Unit: $M (millions of US dollars)</div></div></div>`;
-        } else {
-            // Manual / deck-extracted values — editable, with a unit selector
-            // so analysts whose data isn't in millions can pick the right scale.
-            html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue Projections</h4>`;
-            html += `<div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; font-size:0.78rem; color:var(--text-secondary);">`;
-            html += `<label for="wiz-rev-unit" style="font-weight:500;">Unit:</label>`;
-            html += `<select id="wiz-rev-unit" style="font-size:0.78rem; padding:3px 6px;">`;
-            html += `  <option value="$M" selected>$M (millions)</option>`;
-            html += `  <option value="$">$ (raw dollars)</option>`;
-            html += `  <option value="$K">$K (thousands)</option>`;
-            html += `  <option value="$B">$B (billions)</option>`;
-            html += `</select>`;
-            html += `<span style="color:var(--text-tertiary); font-size:0.72rem;">Backend stores in $M; values are converted on submit.</span>`;
-            html += `</div>`;
-            html += `<div class="form-group"><div class="volume-row">`;
-            for (let i = 0; i < d.revenue_projections.length && i < 10; i++) {
-                const label = fmYears[i] ? fmYears[i] : `Y${i+1}`;
-                html += `<div style="text-align:center;"><small style="font-size:0.65rem; color:var(--text-secondary);">${label}</small><br><input type="number" id="wiz-rev-rev-${i}" value="${d.revenue_projections[i] || 0}" style="width:80px;"></div>`;
-            }
-            html += '</div></div></div>';
+        // ── Revenue — one editable series (single source of truth) ────────────
+        // Whether revenue came from the financial model or manual entry, the
+        // analyst edits it here: change any value, retype a year, delete a year,
+        // or add one. On submit these rows ARE the revenue the simulation uses
+        // (they are written back to the financial-model revenue it keys off).
+        const fromModel = !!d._fm_revenue_source;
+        const entryYr = (typeof _wizGetEntryYear === 'function' ? _wizGetEntryYear() : parseInt(document.getElementById('wiz-entry-year')?.value)) || null;
+        html += `<div class="wiz-review-group"><h4 class="wiz-review-group-title">Revenue${fromModel ? ` <span style="font-weight:400;font-size:0.72rem;color:var(--text-tertiary);">&middot; from financial model</span>` : ''}</h4>`;
+        html += `<div style="display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:0.78rem; color:var(--text-secondary); flex-wrap:wrap;">`;
+        html += `<label for="wiz-rev-unit" style="font-weight:500;">Unit:</label>`;
+        html += `<select id="wiz-rev-unit" style="font-size:0.78rem; padding:3px 6px;">`;
+        html += `  <option value="$M" selected>$M (millions)</option>`;
+        html += `  <option value="$">$ (raw dollars)</option>`;
+        html += `  <option value="$K">$K (thousands)</option>`;
+        html += `  <option value="$B">$B (billions)</option>`;
+        html += `</select>`;
+        html += `<span style="color:var(--text-tertiary); font-size:0.72rem;">Edit values, retype or delete years, or add one &mdash; this drives the simulation.</span>`;
+        html += `</div>`;
+        html += `<div id="wiz-rev-editor" style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:2px;">`;
+        for (let i = 0; i < d.revenue_projections.length && i < 40; i++) {
+            const yr = (fmYears[i] != null && fmYears[i] !== '') ? fmYears[i] : (entryYr ? entryYr + i : '');
+            html += _wizRevRowHtml(yr, d.revenue_projections[i] || 0);
         }
+        html += `</div>`;
+        html += `<button type="button" onclick="wizRevAddYear()" style="margin-top:8px; font-size:0.75rem; padding:5px 14px; border:1px dashed var(--border); border-radius:4px; background:transparent; cursor:pointer; color:var(--text-secondary);">+ Add year</button>`;
+        html += `</div>`;
     }
 
     if (d.unit_volumes_projected && Array.isArray(d.unit_volumes_projected) && d.unit_volumes_projected.some(v => v !== 0)) {
@@ -2632,6 +2623,37 @@ function wizPopulateReview() {
     }
     if (d.notes) metaHtml += `<div style="font-size:0.78rem; color:var(--text-tertiary);"><em>${d.notes}</em></div>`;
     metaDiv.innerHTML = metaHtml || '<p style="color:var(--text-tertiary); font-size:0.78rem;">No additional metadata.</p>';
+}
+
+// One revenue-editor cell: an editable year + editable value + delete button.
+// The year and value are plain inputs so analysts can retype either freely.
+function _wizRevRowHtml(year, val) {
+    const y = (year == null) ? '' : year;
+    const v = (val == null) ? 0 : val;
+    return `<div class="wiz-rev-row" style="display:flex; flex-direction:column; align-items:center; margin:0 4px 6px 0;">
+        <input type="number" class="wiz-rev-year" value="${y}" placeholder="Year" title="Fiscal year"
+            style="width:74px; text-align:center; font-size:0.68rem; color:var(--text-secondary); padding:2px; border:1px solid var(--border); border-radius:3px; background:transparent;">
+        <input type="number" step="any" class="wiz-rev-val" value="${v}" title="Revenue"
+            style="width:84px; text-align:center; margin-top:3px; padding:3px;">
+        <button type="button" onclick="wizRevDelYear(this)" title="Delete this year"
+            style="margin-top:3px; font-size:0.66rem; line-height:1; padding:2px 6px; border:none; background:transparent; color:var(--danger,#dc3545); cursor:pointer;">&times; del</button>
+    </div>`;
+}
+
+// Append a new year (defaults to one past the current latest year) to the editor.
+function wizRevAddYear() {
+    const ed = document.getElementById('wiz-rev-editor');
+    if (!ed) return;
+    const yrs = Array.from(ed.querySelectorAll('.wiz-rev-year'))
+        .map(i => parseInt(i.value) || 0).filter(Boolean);
+    const nextYr = yrs.length ? Math.max(...yrs) + 1 : new Date().getFullYear();
+    ed.insertAdjacentHTML('beforeend', _wizRevRowHtml(nextYr, 0));
+}
+
+// Remove a year column from the editor.
+function wizRevDelYear(btn) {
+    const row = btn.closest('.wiz-rev-row');
+    if (row) row.remove();
 }
 
 function _wizMergeFmIntoExtraction() {
@@ -2777,40 +2799,18 @@ function _wizRenderFmInto(el) {
         return;
     }
 
-    let html = '<div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px;">';
-    html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <h4 style="margin:0; font-size:0.9rem; font-weight:600;">Financial Model Extracted</h4>
-        <button onclick="togglePreRunFinancialEdit()" id="btn-prerun-edit"
-            style="font-size:0.72rem;padding:4px 12px;border:1px solid var(--border-color,#e1e4e8);border-radius:4px;background:#fff;cursor:pointer;color:var(--text-secondary,#586069);font-weight:500;">
-            &#9998; Edit Values
-        </button>
-    </div>`;
-    html += `<p style="font-size:0.78rem; color:var(--text-secondary); margin:0 0 4px 0;">${fm.file_name} -- ${fm.records_count || 0} records, FY${years[0]}-${years[years.length-1]}</p>`;
-    html += `<p style="font-size:0.72rem; color:var(--text-tertiary); margin:0 0 8px 0;">Values in USD</p>`;
-
-    if (hasMultiScenario) {
-        const SCENARIO_COLORS = {bear: '#dc3545', base: '#28a745', bull: '#007bff'};
-        const SCENARIO_LABELS = {bear: 'Bear / Downside', base: 'Base / Management', bull: 'Bull / Upside'};
-        html += '<div style="display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;">';
-        for (const sc of detectedScenarios) {
-            const color = SCENARIO_COLORS[sc] || '#6c757d';
-            html += `<span style="display:inline-block; padding:3px 10px; border-radius:12px; font-size:0.72rem; font-weight:600; background:${color}18; color:${color}; border:1px solid ${color}40;">${SCENARIO_LABELS[sc] || sc}</span>`;
-        }
-        html += '</div>';
-
-        for (const sc of detectedScenarios) {
-            const scFin = scenarios[sc]?.financials || {};
-            const scUnits = scenarios[sc]?.units || {};
-            if (!Object.keys(scFin).length && !Object.keys(scUnits).length) continue;
-            const color = SCENARIO_COLORS[sc] || '#6c757d';
-            const lbl = SCENARIO_LABELS[sc] || sc;
-            html += `<div style="border-left:3px solid ${color}; padding-left:12px; margin-bottom:12px;">`;
-            html += renderFinTable(scFin, scUnits, lbl);
-            html += '</div>';
-        }
-    } else {
-        html += renderFinTable(fm.financials, fm.units, null);
-    }
+    let html = '<div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:8px; padding:12px 16px; margin-bottom:14px;">';
+    html += `<div style="font-size:0.85rem; font-weight:600; margin-bottom:2px;">Financial Model</div>`;
+    const _diagFm = fm._diagnostics || {};
+    const _sheet = _diagFm.chosen_sheet || (fm.model_summary && fm.model_summary.sheet) || '';
+    const _srcCell = _diagFm.metric_source_cells && _diagFm.metric_source_cells.revenue;
+    const _esc = (typeof _libSrcEscape === 'function') ? _libSrcEscape : (x => x);
+    let _srcLine = fm.file_name ? _esc(fm.file_name) : 'Uploaded model';
+    if (_sheet) _srcLine += ` &middot; revenue from sheet <strong>${_esc(String(_sheet))}</strong>`;
+    if (_srcCell) _srcLine += ` (cell ${_esc(String(_srcCell))})`;
+    if (years.length) _srcLine += ` &middot; FY${years[0]}&ndash;${years[years.length - 1]}`;
+    html += `<p style="font-size:0.75rem; color:var(--text-secondary); margin:0;">${_srcLine}</p>`;
+    html += `<p style="font-size:0.72rem; color:var(--text-tertiary); margin:4px 0 0;">Revenue is editable in the section below.</p>`;
 
     // Show extraction diagnostics if available
     if (fm._diagnostics) {
@@ -3286,11 +3286,42 @@ async function wizRunPipeline() {
     };
     const _convert = _toMillions[revUnit] || _toMillions['$M'];
     const founderRevs = [];
-    for (let i = 0; i < 10; i++) {
-        const el = document.getElementById(`wiz-rev-rev-${i}`);
-        if (!el) continue;
-        const raw = parseFloat(el.value || 0) || 0;
-        founderRevs.push(_convert(raw));
+    const _editedRevYears = [];
+    const _revEditor = document.getElementById('wiz-rev-editor');
+    if (_revEditor) {
+        for (const row of _revEditor.querySelectorAll('.wiz-rev-row')) {
+            const yr = parseInt(row.querySelector('.wiz-rev-year')?.value || '') || null;
+            const raw = parseFloat(row.querySelector('.wiz-rev-val')?.value || 0) || 0;
+            founderRevs.push(_convert(raw));   // -> $M
+            _editedRevYears.push(yr);
+        }
+    } else {
+        // Legacy fallback (editor not rendered): positional inputs.
+        for (let i = 0; i < 10; i++) {
+            const el = document.getElementById(`wiz-rev-rev-${i}`);
+            if (!el) continue;
+            founderRevs.push(_convert(parseFloat(el.value || 0) || 0));
+        }
+    }
+
+    // Route the edited revenue back into the financial-model data the simulation
+    // treats as authoritative, so value/year edits and deletions actually take
+    // effect. financials.revenue is stored in USD; fiscal_years drives alignment.
+    // Gate on the editor existing (not on there being years left) so that if the
+    // analyst deletes EVERY year we clear the stale model revenue rather than let
+    // the simulation silently fall back to the pre-edit values.
+    if (_wizFmData && _revEditor) {
+        const _revUSD = {};
+        const _years = [];
+        for (let i = 0; i < _editedRevYears.length; i++) {
+            const y = _editedRevYears[i];
+            if (!y) continue;
+            _revUSD[String(y)] = (founderRevs[i] || 0) * 1_000_000;   // $M -> USD
+            _years.push(y);
+        }
+        _wizFmData.financials = _wizFmData.financials || {};
+        _wizFmData.financials.revenue = _revUSD;   // {} if all rows deleted
+        _wizFmData.fiscal_years = _years;
     }
 
     const founderVols = [];
@@ -3877,11 +3908,7 @@ function wizRenderReport(r) {
                 <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">Percent change in each fund metric versus the same fund without this deal &mdash; the mean, median (P50), top-decile (P90), and the odds of a 5x+ fund. Green is a gain, red a drag; because one position is only a small slice of a ~20-company fund, the shifts are modest.</p>
                 <canvas id="rpt-deal-bars-chart" height="190"></canvas>
             </div>
-            ${pImpact.deal_moic_dist ? `<div class="rpt-chart-wrap" style="margin-top:20px;">
-                <h4 class="rpt-chart-title">Return Profile — This Investment vs. Portfolio Average ${infoTip('deal_profile')}</h4>
-                <p class="rpt-narrative" style="font-size:12px;color:var(--text-secondary,#6b7280);margin:0 0 6px;">This deal's own outcome distribution (MOIC) vs. a typical fund holding — whether it adds more right-tail upside (or downside) than what the fund already holds.</p>
-                <canvas id="rpt-deal-profile-chart" height="240"></canvas>
-            </div>` : ''}` : ''}
+            ` : ''}
         </div>`;
     }
 
@@ -4548,27 +4575,6 @@ function _wizRenderCharts(r) {
                         tooltip: {callbacks: {label: (it) => (it.raw >= 0 ? '+' : '') + it.raw + _unit}}},
                     scales: {x: {title: {display: true, text: 'Percent change vs. fund without the deal', font: chartFont}, grid: {color: 'rgba(0,0,0,0.06)'}, ticks: {font: chartFont, callback: (v) => v + _unit}},
                              y: {ticks: {font: chartFont}, grid: {display: false}}}
-                }
-            });
-        }
-        // D — this deal's return profile vs a typical holding (linear x, normalized)
-        const dd = pImpact.deal_moic_dist, hd = pImpact.holding_moic_dist;
-        const ctxD = document.getElementById('rpt-deal-profile-chart');
-        if (ctxD && dd && hd) {
-            const norm = (h) => { const s = h.counts.reduce((a, b) => a + b, 0) || 1; return h.bin_centers.map((c, i) => ({x: c, y: h.counts[i] / s})); };
-            _wizReportCharts.dealProfile = new Chart(ctxD, {
-                type: 'line',
-                data: {datasets: [
-                    {label: 'A typical fund holding', data: norm(hd), borderColor: '#9CA3AF', backgroundColor: 'rgba(157,163,170,0.25)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
-                    {label: 'This investment', data: norm(dd), borderColor: '#C58A2E', backgroundColor: 'rgba(197,138,46,0.22)', fill: true, tension: 0.35, pointRadius: 0, borderWidth: 2},
-                ]},
-                options: {
-                    responsive: true, maintainAspectRatio: false, parsing: false,
-                    plugins: {legend: {position: 'top', labels: {font: chartFont, boxWidth: 16}},
-                        tooltip: {callbacks: {title: (it) => 'MOIC ≈ ' + (+it[0].parsed.x).toFixed(1) + 'x'}}},
-                    scales: {y: {display: false, beginAtZero: true},
-                        x: {type: 'linear', min: 0, max: 18, title: {display: true, text: 'Return multiple (MOIC, x)', font: chartFont},
-                            ticks: {font: chartFont, stepSize: 2, callback: (v) => v + 'x'}}}
                 }
             });
         }
