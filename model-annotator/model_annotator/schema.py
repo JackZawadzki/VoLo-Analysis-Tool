@@ -96,6 +96,7 @@ CANONICAL_IDS: frozenset[str] = frozenset({
     "depreciation",
     "interest_net",
     "taxes",
+    "pretax_income",
     "net_income",
     "cf_operating",
     "capex",

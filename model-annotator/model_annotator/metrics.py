@@ -774,7 +774,13 @@ def _grants(ctx: Ctx, out: MetricsResult) -> None:
         vals = [it.value_for(p) for it in items]
         vals = [v for v in vals if v is not None]
         grants[p] = sum(vals) if vals else None
-    if all(v is None for v in grants.values()):
+    # P2-2 category-presence gating: the grant category is only ACTIVE if it is
+    # populated with non-zero values. When grants are absent OR zero every period,
+    # every grant-dependent row (Grants/revenue = 0%, Revenue ex-grants, ex-grants
+    # growth/margin) would just duplicate its base metric — suppress the whole
+    # block rather than emit empty-calorie twins. (A model with real grant revenue
+    # keeps them and they get flagged if material.)
+    if all(v is None or abs(v) <= EPS for v in grants.values()):
         return
     grant_refs = [r for it in items for r in it.refs][:60]
     share = ratio(grants, rev, P)
@@ -1313,41 +1319,58 @@ def _taxes(ctx: Ctx, out: MetricsResult) -> None:
     ni = ctx.series("net_income")
     if taxes is None:
         return
-    if ni is not None:
-        # orient taxes: stored as expense (positive) or as outflow (negative)?
-        tvals = [v for v in taxes.values() if v is not None]
-        sign = -1.0 if tvals and sum(tvals) < 0 else 1.0
-        # pretax = net income with the tax expense added back, whichever way taxes are signed
+    # orient taxes: stored as expense (positive) or as outflow (negative)?
+    tvals = [v for v in taxes.values() if v is not None]
+    sign = -1.0 if tvals and sum(tvals) < 0 else 1.0
+    # P2-1: prefer a row explicitly labelled pre-tax / EBT for the denominator;
+    # only reconstruct pretax = net income + taxes when no such row exists. The
+    # reconstruction is distorted by any credit / non-operating item that sits
+    # BELOW the tax line (it breaks the net-income + taxes identity), so caveat it.
+    pretax_series = ctx.series("pretax_income")
+    have_ebt = pretax_series is not None and any(v is not None for v in pretax_series.values())
+    if have_ebt:
+        pretax = {p: pretax_series.get(p) for p in P}
+        comp = "taxes[t] / pretax[t] (pretax = the model's labelled Earnings-Before-Tax row), capped to [-100%, 150%]"
+        tax_inputs = ctx.refs("taxes", "pretax_income")
+        denom_note = None
+    elif ni is not None:
         pretax = combine(P, lambda n, t: n + t if sign > 0 else n - t, ni, taxes)
-        # cap implausible rates (tiny pretax with a big tax line yields nonsense
-        # effective rates of several hundred percent) so they don't pollute the series
-        eff = combine(P, lambda t, pt: ((sign * t) / pt if -1.0 <= (sign * t) / pt <= 1.5 else None)
-                      if pt > EPS else None, taxes, pretax)
+        comp = "taxes[t] / (net_income[t] + taxes[t]) where pretax > 0, capped to [-100%, 150%]"
+        tax_inputs = ctx.refs("taxes", "net_income")
+        denom_note = ("reconstructed pretax = net income + taxes; if the model books credits or "
+                      "non-operating items below the tax line the reconstructed rate is distorted — "
+                      "map a labelled Earnings-Before-Tax row for the exact rate")
+    else:
+        return
+    # cap implausible rates (tiny pretax with a big tax line yields nonsense
+    # effective rates of several hundred percent) so they don't pollute the series
+    def _rate(t, pt):
+        if pt is None or t is None or pt <= EPS:
+            return None
+        r = (sign * t) / pt
+        return r if -1.0 <= r <= 1.5 else None
+    eff = combine(P, _rate, taxes, pretax)
+    out.metrics.append(mk(
+        "effective_tax_rate", "Effective tax rate (profitable periods)",
+        applicability="taxes and pretax mapped",
+        inputs=tax_inputs, computation=comp, series=eff, units="fraction", notes=denom_note))
+    cum_pretax = cumulative(pretax, P)
+    nol = combine(P, lambda t, cpt: (sign * t) if (cpt is not None and cpt < 0 and t is not None and sign * t > EPS) else None,
+                  taxes, cum_pretax)
+    if any(v is not None for v in nol.values()):
         out.metrics.append(mk(
-            "effective_tax_rate", "Effective tax rate (profitable periods)",
-            applicability="taxes and net_income mapped",
-            inputs=ctx.refs("taxes", "net_income"),
-            computation="taxes[t] / (net_income[t] + taxes[t]) where pretax > 0, capped to [-100%, 150%]",
-            series=eff, units="fraction"))
-        cum_pretax = cumulative(pretax, P)
-        nol = combine(P, lambda t, cpt: (sign * t) if (cpt < 0 and sign * t > EPS) else None,
-                      taxes, cum_pretax)
-        if any(v is not None for v in nol.values()):
-            out.metrics.append(mk(
-                "cash_taxes_despite_cumulative_losses", "Cash taxes paid while cumulatively loss-making",
-                applicability="taxes and net_income mapped",
-                inputs=ctx.refs("taxes", "net_income"),
-                computation="taxes[t] where cumsum(pretax)[t] < 0 and taxes[t] > 0",
-                series=nol, units=ctx.units_label(),
-                notes="NOL carryforwards would normally shelter these periods"))
-        refunds = combine(P, lambda t, pt: t if (pt < -EPS and sign * t < -EPS) else None, taxes, pretax)
-        if any(v is not None for v in refunds.values()):
-            out.metrics.append(mk(
-                "tax_refunds_in_loss_years", "Taxes booked as income in loss years",
-                applicability="taxes and net_income mapped",
-                inputs=ctx.refs("taxes", "net_income"),
-                computation="taxes[t] where pretax[t] < 0 and taxes[t] credits income",
-                series=refunds, units=ctx.units_label()))
+            "cash_taxes_despite_cumulative_losses", "Cash taxes paid while cumulatively loss-making",
+            applicability="taxes and pretax mapped", inputs=tax_inputs,
+            computation="taxes[t] where cumsum(pretax)[t] < 0 and taxes[t] > 0",
+            series=nol, units=ctx.units_label(),
+            notes="NOL carryforwards would normally shelter these periods"))
+    refunds = combine(P, lambda t, pt: t if (pt is not None and pt < -EPS and t is not None and sign * t < -EPS) else None, taxes, pretax)
+    if any(v is not None for v in refunds.values()):
+        out.metrics.append(mk(
+            "tax_refunds_in_loss_years", "Taxes booked as income in loss years",
+            applicability="taxes and pretax mapped", inputs=tax_inputs,
+            computation="taxes[t] where pretax[t] < 0 and taxes[t] credits income",
+            series=refunds, units=ctx.units_label()))
     statutory = find_scalar_assumptions(ctx.wbd, ctx.structure, r"tax\s*rate", (0.0, 0.6))
     if statutory:
         ref, v, label = statutory[0]
