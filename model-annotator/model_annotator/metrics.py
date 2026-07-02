@@ -1526,9 +1526,73 @@ def _working_capital(ctx: Ctx, out: MetricsResult) -> None:
                 notes="tool-computed scenario, not a model value: extra peak cash need if customers paid this slowly"))
 
 
+def _ebitda_ni_bridge(ctx: Ctx, out: MetricsResult) -> None:
+    """P1-2: when both an EBITDA/operating-profit line and a net-income line exist,
+    reconcile them. A large gap — or the wrong direction (net income ABOVE EBITDA) —
+    means below-the-line items (interest, non-operating income, credits/grants)
+    dominate the result, which is the single most important thing on a margins page
+    and must not pass silently. Names the largest reconciling line for the worst
+    period. Generic: keyed to the detected condition, no cell addresses."""
+    eb = ctx.item("ebitda_or_ebit")
+    ni = ctx.item("net_income")
+    ebs = ctx.series("ebitda_or_ebit")
+    nis = ctx.series("net_income")
+    if not (eb and ni and ebs and nis):
+        return
+    P = ctx.periods
+    rev = ctx.series("revenue_total")
+    gap = combine(P, lambda n, e: (n - e) if (n is not None and e is not None) else None, nis, ebs)
+
+    def material(p: str) -> bool:
+        g, n, e = gap.get(p), nis.get(p), ebs.get(p)
+        if g is None:
+            return False
+        if n is not None and e is not None and n > e + EPS:      # net income above EBITDA
+            return True
+        rv = rev.get(p) if rev else None
+        return rv is not None and abs(rv) > EPS and abs(g) > 0.20 * abs(rv)
+
+    flagged = [p for p in P if material(p)]
+    if not flagged:
+        return
+    wrong_dir = any((nis.get(p) is not None and ebs.get(p) is not None and nis.get(p) > ebs.get(p) + EPS)
+                    for p in flagged)
+    driver_note = ""
+    if eb.sheet == ni.sheet:                                      # scan the reconciling rows in between
+        sd = ctx.wbd.sheets.get(eb.sheet)
+        pworst = max(flagged, key=lambda p: abs(gap.get(p) or 0.0))
+        col = next((c for (r, c), pp in zip(eb.coords, eb.periods) if pp == pworst), None)
+        if sd is not None and col is not None:
+            lo, hi = sorted((eb.index, ni.index))
+            best_lab, best_val = None, 0.0
+            for r in range(lo + 1, hi):
+                rec = sd.cell(r, col)
+                v = rec.value if rec else None
+                if isinstance(v, (int, float)) and not isinstance(v, bool) and abs(v) > abs(best_val):
+                    lab = next((sd.cell(r, cc).value.strip()[:40] for cc in range(1, col)
+                                if sd.cell(r, cc) and isinstance(sd.cell(r, cc).value, str)
+                                and sd.cell(r, cc).value.strip()), None)
+                    if lab:
+                        best_lab, best_val = lab, v
+            if best_lab:
+                rv = rev.get(pworst) if rev else None
+                pct = f", {abs(best_val) / abs(rv) * 100:.0f}% of {pworst} revenue" if rv and abs(rv) > EPS else ""
+                driver_note = f"; largest below-the-line item in {pworst}: {best_lab!r} = {best_val:.4g}{pct}"
+    head = ("net income EXCEEDS EBITDA (wrong direction) — " if wrong_dir else "")
+    out.metrics.append(mk(
+        "ebitda_ni_bridge", "EBITDA-to-net-income gap",
+        applicability="EBITDA/EBIT and net income mapped",
+        inputs=ctx.refs("ebitda_or_ebit", "net_income"),
+        computation="net_income[t] - ebitda_or_ebit[t]",
+        series=gap, units=ctx.units_label(),
+        notes=(head + "a large or wrong-direction gap means below-the-line items (interest, "
+               "non-operating income, credits/grants) drive net income" + driver_note)))
+
+
 BUILDERS = [_core_growth_and_margins, _capital_efficiency, _runway, _cumulative_capital,
             _grants, _capex_in_opex, _revenue_mix, _segments, _segment_detail, _labor,
-            _capacity_and_share, _valuation, _taxes, _headcount, _working_capital]
+            _capacity_and_share, _valuation, _taxes, _headcount, _working_capital,
+            _ebitda_ni_bridge]
 
 
 def compute_metrics(
