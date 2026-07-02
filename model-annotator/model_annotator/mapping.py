@@ -579,6 +579,145 @@ LabelClassifier = Callable[[str, str, list[str]], Optional[tuple[str, float]]]
 # (label, section, ontology_ids) -> (canonical_id, confidence) | None
 
 
+def _match_period(cellval, period: str) -> bool:
+    """True if a header cell denotes the given canonical period label (year-level)."""
+    if cellval is None:
+        return False
+    try:
+        from datetime import datetime, date
+        if isinstance(cellval, (datetime, date)):
+            return str(cellval.year) == period
+    except Exception:
+        pass
+    s = str(cellval).strip()
+    if s == period:
+        return True
+    try:
+        if str(int(float(s))) == period:
+            return True
+    except Exception:
+        pass
+    return bool(period) and period in s
+
+
+def _reconcile_multiblock_sheets(res: "MappingResult", structure: StructureResult, wbd) -> None:
+    """A source sheet can carry more than one period-column block for the SAME
+    years (prior vs current presentation, base vs downside, budget vs actual).
+    Extraction reads the leftmost block by default, which silently corrupts every
+    metric built on that sheet. Detect repeated period runs in the header row, and
+    re-point the sheet's rows to whichever block reconciles (column totals within
+    2%) to the PRIMARY output sheet's revenue. Generic: keyed to the detected
+    condition, no cell addresses. If none reconciles, flag ambiguity and keep the
+    leftmost. No-ops on single-block sheets."""
+    from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
+    prim = res.primary_sheet
+    if not prim:
+        return
+    prim_rev = next((it for it in res.items if it.sheet == prim
+                     and it.canonical_id == "revenue_total" and not it.demoted), None)
+    if prim_rev is None:
+        return
+    ref = {p: prim_rev.value_for(p) for p in prim_rev.periods}
+    ref_periods = [p for p in prim_rev.periods if ref.get(p) is not None]
+    if not ref_periods:
+        return
+
+    for sheet in {it.sheet for it in res.items}:
+        if sheet == prim:
+            continue
+        axes = [ax for ax in structure.axes.get(sheet, [])
+                if ax.orientation == Orientation.periods_in_columns]
+        if not axes:
+            continue
+        periods = list(axes[0].periods)
+        if len(periods) < 2:
+            continue
+        sd = wbd.sheets.get(sheet)
+        if sd is None:
+            continue
+        try:
+            hdr_row = coordinate_from_string(axes[0].header_cells[0].split("!")[-1])[1]
+        except Exception:
+            continue
+        # scan the header row for EVERY column matching each period, then form
+        # blocks from the k-th occurrence of each period (block 0 leftmost)
+        occ = {p: [c for c in range(1, sd.max_col + 1)
+                   if _match_period(sd.cell(hdr_row, c).value if sd.cell(hdr_row, c) else None, p)]
+               for p in periods}
+        nblocks = min((len(occ[p]) for p in periods), default=0)
+        if nblocks < 2:
+            continue                                     # single block -> nothing to disambiguate
+        blocks = [{p: occ[p][k] for p in periods} for k in range(nblocks)]
+
+        # the sheet's own parent/total row to reconcile: its revenue_total row,
+        # else the sum of its segment rows
+        rev_it = next((it for it in res.items if it.sheet == sheet
+                       and it.canonical_id == "revenue_total"), None)
+        seg_rows = [it.index for it in res.items if it.sheet == sheet
+                    and it.canonical_id == "revenue_segment"]
+
+        def block_total(cols):
+            out = {}
+            for p in ref_periods:
+                c = cols.get(p)
+                if c is None:
+                    out[p] = None
+                    continue
+                if rev_it is not None:
+                    rec = sd.cell(rev_it.index, c)
+                    out[p] = rec.value if rec else None
+                elif seg_rows:
+                    s, ok = 0.0, False
+                    for rr in seg_rows:
+                        rec = sd.cell(rr, c)
+                        v = rec.value if rec else None
+                        if isinstance(v, (int, float)) and not isinstance(v, bool):
+                            s += v; ok = True
+                    out[p] = s if ok else None
+                else:
+                    out[p] = None
+            return out
+
+        def reconciles(vals):
+            n = ok = 0
+            for p in ref_periods:
+                r, v = ref.get(p), vals.get(p)
+                if r is None or not isinstance(v, (int, float)) or isinstance(v, bool):
+                    continue
+                n += 1
+                if abs(r) < 1e-9:
+                    ok += (abs(v) < 1e-6)
+                elif abs(v - r) <= 0.02 * abs(r):
+                    ok += 1
+            return n > 0 and ok == n
+
+        chosen = next((b for b in blocks if reconciles(block_total(b))), None)
+        leftmost = blocks[0]
+        if chosen is None:
+            res.notes.append(
+                f"CITATION source ambiguity: {sheet} carries multiple presentation blocks and none "
+                f"reconciles to {prim} revenue; kept the leftmost block — verify which is current.")
+            continue
+        if chosen == leftmost:
+            continue                                     # leftmost already the right block
+        # re-point every row on this sheet to the reconciling block's columns
+        moved = 0
+        for it in res.items:
+            if it.sheet != sheet:
+                continue
+            if any(p not in chosen for p in it.periods):
+                continue
+            it.coords = [(it.index, chosen[p]) for p in it.periods]
+            it.values = [_coerce_value(sd.cell(r, c).value if sd.cell(r, c) else None)
+                         for (r, c) in it.coords]
+            it.evidence = (it.evidence or "") + "; re-pointed to the presentation block reconciling to primary"
+            moved += 1
+        if moved:
+            res.notes.append(
+                f"{sheet}: multiple presentation blocks for {periods[0]}–{periods[-1]}; selected the "
+                f"block whose totals reconcile to {prim} revenue and re-pointed {moved} rows to it.")
+
+
 def _infer_segments_by_sum(res: "MappingResult", scalar_best: dict) -> None:
     """Mark the unmapped numeric rows just above a sheet's revenue_total whose
     per-period values SUM to that total as its revenue segments.
@@ -816,6 +955,9 @@ def build_mapping(
                     reason="no ontology rule scored above threshold"))
 
     res.primary_sheet = _pick_primary_sheet(res, structure)
+    # P0-1: a sheet may carry several period-column blocks for the same years
+    # (prior vs current); re-point each to the block reconciling to primary revenue
+    _reconcile_multiblock_sheets(res, structure, wbd)
     _verify_and_demote(res)
 
     # surface any row whose own unit marker ("Revenue ($M)") conflicts with its

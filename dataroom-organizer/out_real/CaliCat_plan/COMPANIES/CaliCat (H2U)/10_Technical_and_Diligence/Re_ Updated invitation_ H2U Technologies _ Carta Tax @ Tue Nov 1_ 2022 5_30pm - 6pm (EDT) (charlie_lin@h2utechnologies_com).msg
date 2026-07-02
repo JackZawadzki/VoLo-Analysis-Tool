@@ -1,0 +1,1 @@
+/Users/jackzawadzki/Library/CloudStorage/GoogleDrive-jackz@voloearth.com/Shared drives/Portfolio Company Information/CaliCat (H2U)/2022 H2U Data Room B2 (A+ Round)/Equity/Re_ Updated invitation_ H2U Technologies _ Carta Tax @ Tue Nov 1_ 2022 5_30pm - 6pm (EDT) (charlie_lin@h2utechnologies_com).msg

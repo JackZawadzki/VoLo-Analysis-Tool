@@ -1,0 +1,1301 @@
+{
+  "dedup": {
+    "n_records": 1406,
+    "n_duplicates": 0,
+    "n_superseded": 120,
+    "n_pending": 47,
+    "n_placed": 1239,
+    "conflicts": []
+  },
+  "summary": {
+    "n_companies": 1,
+    "by_company": {
+      "Cambium": 1406
+    },
+    "by_bucket": {
+      "01 Investment Memos & IC": 1,
+      "02 Financing & Legal": 86,
+      "04 Financials & Models": 33,
+      "06 Board & Governance": 26,
+      "09 Commercial & Customers": 233,
+      "10 Technical & Diligence": 776,
+      "11 Impact & Climate": 84,
+      "14 Historical / Superseded": 120,
+      "15 Unclassified / Pending Review": 47
+    },
+    "dispositions": {
+      "PENDING": 47,
+      "PLACED": 1239,
+      "SUPERSEDED": 120
+    },
+    "avg_confidence_placed": 0.775,
+    "n_needs_review": 149,
+    "needs_review": [
+      {
+        "file_id": "F00001",
+        "file": "Biweekly Finance Update 2:7:25.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F00003",
+        "file": "volo_non-reliance_letter_2.4.25_re_cambium.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.15
+      },
+      {
+        "file_id": "F00038",
+        "file": "Declare Label_Carbon Smart Wood.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.756
+      },
+      {
+        "file_id": "F00040",
+        "file": "RedOak_Siding_ClearOil_5.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00041",
+        "file": "red oak siding_csw label.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00042",
+        "file": "white oak_csw label.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00044",
+        "file": "BioPreferredLabel_Black.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00046",
+        "file": "BioPreferredLabel_Color.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00048",
+        "file": "BioPreferredLabel_White.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00075",
+        "file": "Copy of IMG_7069.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00076",
+        "file": "IMG_7069.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00077",
+        "file": "IMG_7070.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00089",
+        "file": "BFL Sales & Use Tax.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00094",
+        "file": "MD Certificate of Title - BFL Ram.heic",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00145",
+        "file": "2020 Fallen Lumber Used_Sold.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00147",
+        "file": "2021 Current Inventory.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00148",
+        "file": "2021 Fallen Lumber Sold.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.91
+      },
+      {
+        "file_id": "F00172",
+        "file": "License Agreement (JCM notes).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00173",
+        "file": "License Agreement .doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00174",
+        "file": "v3 License Agreement (SF edits).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00176",
+        "file": "Cambium Carbon PBC Privacy Policy (vp28072021).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00179",
+        "file": "Terms of Service - Cambium Carbon.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00180",
+        "file": "Terms and Conditions for Online Sales by Retailers to Consumers.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00261",
+        "file": "Board Advisor Agreement.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.863
+      },
+      {
+        "file_id": "F00278",
+        "file": "Restricted Stock Purchase Agreement - J. Pederson (Cambium Carbon PBC).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.808
+      },
+      {
+        "file_id": "F00284",
+        "file": "CIIAA - Cambium Carbon PBC (J. Levitt).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00312",
+        "file": "CIIAA - Cambium Carbon PBC (J. Levitt).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.59
+      },
+      {
+        "file_id": "F00455",
+        "file": "FINAL -  Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00458",
+        "file": "v1 Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00459",
+        "file": "v2 (LT CLEAN) Asset Purchase Agreement - Cambium Carbon PBC[70] (1).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00460",
+        "file": "v2 (LT Edits) Asset Purchase Agreement - Cambium Carbon PBC[70] (1).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00461",
+        "file": "v3 (CLEAN) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00462",
+        "file": "v3 (RVL edits_comments) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00463",
+        "file": "v4 (CLEAN) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00465",
+        "file": "v1 Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00466",
+        "file": "v2 (LT CLEAN) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00467",
+        "file": "v2 (LT Edits) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00468",
+        "file": "v3 (Clean) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00469",
+        "file": "v3 (RVL Edits) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00470",
+        "file": "Exhibit B - Transition Services Agreement (Cambium - Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00473",
+        "file": "v2 (LT CLEAN) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00474",
+        "file": "v2 (LT edits) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00475",
+        "file": "v3 (RVL CLEAN) Exhibit B - Transition Services Agreement (Cambium - Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00476",
+        "file": "v3 (RVL edits) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00489",
+        "file": "V2 (LT EDITS) _Asset Purchase Agreement - Cambium Carbon PBC[70].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.769
+      },
+      {
+        "file_id": "F00494",
+        "file": "Amended and Restated LumberTracker GDsoft Agreement.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.929
+      },
+      {
+        "file_id": "F00496",
+        "file": "Lumber-Tracker-gdSoft_NDA.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.929
+      },
+      {
+        "file_id": "F00552",
+        "file": " Restricted Stock Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.786
+      },
+      {
+        "file_id": "F00586",
+        "file": "Break Room_DRAFT_08.20.2024.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00588",
+        "file": "NASC CentralHub_Courtyard_Draft_sm_08.09.2024.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00589",
+        "file": "Outdoor courtyard_CANOPY PLAN_progress.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00590",
+        "file": "Outdoor courtyard_PLAN_progress.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00591",
+        "file": "Security Area_cnc_DRAFT_08.20.2024.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.675
+      },
+      {
+        "file_id": "F00732",
+        "file": "Declare Label_Carbon Smart Wood.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.806
+      },
+      {
+        "file_id": "F00734",
+        "file": "RedOak_Siding_ClearOil_5.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00735",
+        "file": "red oak siding_csw label.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00736",
+        "file": "white oak_csw label.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00738",
+        "file": "BioPreferredLabel_Black.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00740",
+        "file": "BioPreferredLabel_Color.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00742",
+        "file": "BioPreferredLabel_White.PNG",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00769",
+        "file": "Copy of IMG_7069.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00770",
+        "file": "IMG_7069.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00771",
+        "file": "IMG_7070.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00783",
+        "file": "BFL Sales & Use Tax.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00788",
+        "file": "MD Certificate of Title - BFL Ram.heic",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00839",
+        "file": "2020 Fallen Lumber Used_Sold.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00841",
+        "file": "2021 Current Inventory.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00842",
+        "file": "2021 Fallen Lumber Sold.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.804
+      },
+      {
+        "file_id": "F00866",
+        "file": "License Agreement (JCM notes).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F00867",
+        "file": "License Agreement .doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F00868",
+        "file": "v3 License Agreement (SF edits).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F00870",
+        "file": "Cambium Carbon PBC Privacy Policy (vp28072021).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F00873",
+        "file": "Terms of Service - Cambium Carbon.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F00874",
+        "file": "Terms and Conditions for Online Sales by Retailers to Consumers.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F00955",
+        "file": "Board Advisor Agreement.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.75
+      },
+      {
+        "file_id": "F00972",
+        "file": "Restricted Stock Purchase Agreement - J. Pederson (Cambium Carbon PBC).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.808
+      },
+      {
+        "file_id": "F00978",
+        "file": "CIIAA - Cambium Carbon PBC (J. Levitt).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F01006",
+        "file": "CIIAA - Cambium Carbon PBC (J. Levitt).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.646
+      },
+      {
+        "file_id": "F01149",
+        "file": "FINAL -  Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01152",
+        "file": "v1 Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01153",
+        "file": "v2 (LT CLEAN) Asset Purchase Agreement - Cambium Carbon PBC[70] (1).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01154",
+        "file": "v2 (LT Edits) Asset Purchase Agreement - Cambium Carbon PBC[70] (1).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01155",
+        "file": "v3 (CLEAN) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01156",
+        "file": "v3 (RVL edits_comments) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01157",
+        "file": "v4 (CLEAN) Asset Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01159",
+        "file": "v1 Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01160",
+        "file": "v2 (LT CLEAN) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01161",
+        "file": "v2 (LT Edits) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01162",
+        "file": "v3 (Clean) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01163",
+        "file": "v3 (RVL Edits) Exhibit A - Assignment and Assumption Agreement (Cambium, Lumber Tracker, Taddiken)[41].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01164",
+        "file": "Exhibit B - Transition Services Agreement (Cambium - Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01167",
+        "file": "v2 (LT CLEAN) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01168",
+        "file": "v2 (LT edits) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01169",
+        "file": "v3 (RVL CLEAN) Exhibit B - Transition Services Agreement (Cambium - Taddiken).doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01170",
+        "file": "v3 (RVL edits) Exhibit B - Transition Services Agreement (Cambium - Taddiken)[72].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01183",
+        "file": "V2 (LT EDITS) _Asset Purchase Agreement - Cambium Carbon PBC[70].doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.648
+      },
+      {
+        "file_id": "F01188",
+        "file": "Amended and Restated LumberTracker GDsoft Agreement.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.92
+      },
+      {
+        "file_id": "F01190",
+        "file": "Lumber-Tracker-gdSoft_NDA.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.92
+      },
+      {
+        "file_id": "F01246",
+        "file": " Restricted Stock Purchase Agreement - Cambium Carbon PBC.doc",
+        "company": "Cambium",
+        "flags": [
+          "legacy-binary-format"
+        ],
+        "confidence": 0.786
+      },
+      {
+        "file_id": "F01280",
+        "file": "Break Room_DRAFT_08.20.2024.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F01282",
+        "file": "NASC CentralHub_Courtyard_Draft_sm_08.09.2024.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F01283",
+        "file": "Outdoor courtyard_CANOPY PLAN_progress.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F01284",
+        "file": "Outdoor courtyard_PLAN_progress.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F01285",
+        "file": "Security Area_cnc_DRAFT_08.20.2024.png",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.728
+      },
+      {
+        "file_id": "F01322",
+        "file": "2025 Sales Highlights.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01323",
+        "file": "2_4_26 IC Conversation on Cambium.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.15
+      },
+      {
+        "file_id": "F01324",
+        "file": "Cambium Carbon - VEV Memo (February 2026 Follow-on Recommendation).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01325",
+        "file": "Illustrative Customer Lifetime Value (CLTV) Examples (1).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01342",
+        "file": "Cambium+Org+Chart+November+2024.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01343",
+        "file": "Financial Reports for Cambium & BFL Combined Financial Package - 31 Oct 2024.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01344",
+        "file": "Workers Comp Proof of Insurance 2024.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.625
+      },
+      {
+        "file_id": "F01345",
+        "file": "Aaron LeClair Offer_Letter_Executed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01346",
+        "file": "Adam Melfa - Offer Letter - SIGNED.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01347",
+        "file": "AliciaBlake_OfferLetter_Signed (1).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01348",
+        "file": "Bryce Caplan Offer Letter - Procurement Specialist (1)-combined.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01349",
+        "file": "Casey Clare offer.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01350",
+        "file": "Charles Gale Offer Letter_Cambium Countersigned.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01351",
+        "file": "David Hadinger Offer Letter (Exempt Employee).docx (4).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01352",
+        "file": "David Landolfi Offer 2.0.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01353",
+        "file": "Jeff Cohen_Offer Letter.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01354",
+        "file": "Joseph McDonald Signed_Form of Employee Offer Letter.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01355",
+        "file": "Justin Kingsbury Offer Letter (signed) (1).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01356",
+        "file": "Kristin Antonino signed offer.jpg",
+        "company": "Cambium",
+        "flags": [
+          "image-only"
+        ],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01357",
+        "file": "Natalie Pulver Offer Letter_signed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01358",
+        "file": "Nishan Bhagat_Offer Letter.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01359",
+        "file": "Rae Tamblyn Offer Letter (signed).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01360",
+        "file": "Tace_FinalOfferLetter_Signed_3.4.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01361",
+        "file": "Zac Tolbert - Sales Rep Contract - FINAL - TH Signed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01362",
+        "file": "(Cambium) Offer Letter \u2013 Andrew Emerson (1).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01363",
+        "file": "Main_Natasha_signed_offer_letterCC.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01364",
+        "file": "Offer Letter_ Sofia Reitsma.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01365",
+        "file": "Offer Letter_Marketing Mgr_Tomi Ogundayo.docx (2).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01366",
+        "file": "Recio_Jeannie_Offer Letter signed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01367",
+        "file": "Robin_Max_Signed Offer Letter.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01368",
+        "file": "Westpoint_Brian_Signed Cambium Carbon Offer Letter.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01369",
+        "file": "Action by Written Consent of Sole Incorporator - Cambium Carbon PBC.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01374",
+        "file": "BoardConsent_JoeJeff_June21.docx.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01375",
+        "file": "Consent of the Board - re. Lumber Tracker Acquisition (Cambium Carbon PBC) - signed (1).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01377",
+        "file": "Final - NSO Agreement (Z. Scott) - Cambium Carbon PBC - signed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01378",
+        "file": "Joint Action by Written Consent of the Board of Directors and Stockholders in Lieu of Initial Meeting - Cambium Carbon PBC - signed.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01379",
+        "file": "Joint Action by Written Consent of the Board of Directors and Stockholders in Lieu of Initial Meeting - Cambium Carbon PBC.docx",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01380",
+        "file": "Jon_VestingAccel_BoardConsent-2.pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.562
+      },
+      {
+        "file_id": "F01381",
+        "file": "Written Consent of the Board - re. Stock Option Issuances (Cambium Carbon PBC .docx",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.458
+      },
+      {
+        "file_id": "F01382",
+        "file": "2024 Fall Bridge Notes.xlsx",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01383",
+        "file": "Cambium Carbon Customer Call -  Log Trucker (Miguel Raymond).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01384",
+        "file": "Cambium Carbon Customer Call - Forester _ Sawmill (Glenn Zane).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01385",
+        "file": "Cambium Carbon Customer Call - Mass Timber (Amazon).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01386",
+        "file": "Cambium Carbon Customer Call - Tree Service (Justin Floyd) (2).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.312
+      },
+      {
+        "file_id": "F01389",
+        "file": "Volo non-reliance letter draft (Executed Copy 12-10-24).pdf",
+        "company": "Cambium",
+        "flags": [],
+        "confidence": 0.15
+      }
+    ],
+    "n_duplicates": 0,
+    "n_superseded": 120,
+    "n_version_conflicts": 0,
+    "n_company_unresolved": 0,
+    "missing_expected": {
+      "Cambium": [
+        "03 Cap Table & Equity"
+      ]
+    }
+  },
+  "catalog": {
+    "csv": "out_real/Cambium_light/_CATALOG/catalog.csv",
+    "xlsx": "out_real/Cambium_light/_CATALOG/catalog.xlsx",
+    "sqlite": "out_real/Cambium_light/_CATALOG/catalog.sqlite",
+    "json": "out_real/Cambium_light/_CATALOG/catalog.json"
+  },
+  "generated": "2026-06-24T22:10:28+00:00"
+}

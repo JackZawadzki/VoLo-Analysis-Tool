@@ -1,0 +1,41 @@
+file_id,company,from_rel,to_rel,disposition,bucket,renamed,reason,ok
+F00001,UNKNOWN,Master Investment Tracker 2024-01-05.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-01-05.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00002,UNKNOWN,Master Investment Tracker 2024-02-09.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-02-09.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00003,UNKNOWN,Master Investment Tracker 2024-03-15.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-03-15.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00004,UNKNOWN,Master Investment Tracker 2024-04-20.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-04-20.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00005,UNKNOWN,Master Investment Tracker 2024-05-18.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-05-18.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00006,UNKNOWN,Master Investment Tracker 2024-06-21.xlsx,COMPANIES/_Unresolved_Company/15_Unclassified_Pending_Review/Master Investment Tracker 2024-06-21.xlsx,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00007,Nth Cycle,Board Decks/Nth Cycle board deck 2024-03.pdf,COMPANIES/Nth Cycle/06_Board_and_Governance/Nth Cycle board deck 2024-03.pdf,PLACED,06 Board & Governance,False,moved,True
+F00008,Cambium,Cambium/Cambium Board Deck 2024-02 (final).pdf,COMPANIES/Cambium/06_Board_and_Governance/Cambium Board Deck 2024-02 (final).pdf,PLACED,06 Board & Governance,False,moved,True
+F00009,Cambium,Cambium/Cambium Cap Table 2023-09-01.xlsx,COMPANIES/Cambium/14_Historical_Superseded/Cambium Cap Table 2023-09-01.xlsx,SUPERSEDED,14 Historical / Superseded,False,moved,True
+F00010,Cambium,Cambium/Cambium Cap Table 2024-03-15.xlsx,COMPANIES/Cambium/03_Cap_Table_and_Equity/Cambium Cap Table 2024-03-15.xlsx,PLACED,03 Cap Table & Equity,False,moved,True
+F00011,Cambium,Cambium/Cambium Financial Model v3.xlsm,COMPANIES/Cambium/04_Financials_and_Models/Cambium Financial Model v3.xlsm,PLACED,04 Financials & Models,False,moved,True
+F00012,Cambium,Cambium/Cambium Q1'24 Update (final) v2 #2.pdf,COMPANIES/Cambium/15_Unclassified_Pending_Review/Cambium Q1'24 Update (final) v2 _2.pdf,PENDING,15 Unclassified / Pending Review,True,moved,True
+F00013,Cambium,Cambium/Cambium SBIR grant award.pdf,COMPANIES/Cambium/05_Non_Dilutive_and_Grants/Cambium SBIR grant award.pdf,PLACED,05 Non-Dilutive & Grants,False,moved,True
+F00014,Cambium,Cambium/Cambium Term Sheet - executed.pdf,COMPANIES/Cambium/02_Financing_and_Legal/Cambium Term Sheet - executed.pdf,PLACED,02 Financing & Legal,False,moved,True
+F00015,Cambium,Cambium/Cambium call notes 2024-01-10.txt,COMPANIES/Cambium/08_Meeting_Notes_and_Calls/Cambium call notes 2024-01-10.txt,PLACED,08 Meeting Notes & Calls,False,moved,True
+F00016,Cambium,Cambium/Cambium impact report 2023.pdf,COMPANIES/Cambium/11_Impact_and_Climate/Cambium impact report 2023.pdf,PLACED,11 Impact & Climate,False,moved,True
+F00017,Cambium,Cambium/Cambium pitch deck.pptx,COMPANIES/Cambium/12_Company_Materials/Cambium pitch deck.pptx,PLACED,12 Company Materials,False,moved,True
+F00018,Cambium,Cambium/Investment Memo - Cambium - internal - draft.docx,COMPANIES/Cambium/14_Historical_Superseded/Investment Memo - Cambium - internal - draft.docx,SUPERSEDED,14 Historical / Superseded,False,moved,True
+F00019,Cambium,Cambium/Investment Memo - Cambium - internal - final v2.docx,COMPANIES/Cambium/01_Investment_Memos_and_IC/Investment Memo - Cambium - internal - final v2.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00020,Cambium,Cambium/Investment Memo Cambium external redacted.docx,COMPANIES/Cambium/01_Investment_Memos_and_IC/Investment Memo Cambium external redacted.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00021,Cambium,Cambium/random_unlabeled_thing.bin,COMPANIES/Cambium/15_Unclassified_Pending_Review/random_unlabeled_thing.bin,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00022,Cambium,Cap Tables/Cambium Cap Table 2024-03-15.xlsx,COMPANIES/Cambium/03_Cap_Table_and_Equity/Cambium Cap Table 2024-03-15__F00022.xlsx,PLACED,03 Cap Table & Equity,False,moved,True
+F00023,Nth Cycle,Cap Tables/NthCycle_captable.xlsx,COMPANIES/Nth Cycle/03_Cap_Table_and_Equity/NthCycle_captable.xlsx,PLACED,03 Cap Table & Equity,False,moved,True
+F00024,Veckta,Cap Tables/Veckta cap table 2024-01.xlsx,COMPANIES/Veckta/03_Cap_Table_and_Equity/Veckta cap table 2024-01.xlsx,PLACED,03 Cap Table & Equity,False,moved,True
+F00025,Nth Cycle,Diligence/Nth Cycle patent summary.pdf,COMPANIES/Nth Cycle/10_Technical_and_Diligence/Nth Cycle patent summary.pdf,PLACED,10 Technical & Diligence,False,moved,True
+F00026,Veckta,Diligence/Veckta technical diligence.pdf,COMPANIES/Veckta/10_Technical_and_Diligence/Veckta technical diligence.pdf,PLACED,10 Technical & Diligence,False,moved,True
+F00027,Hestia,Hestia/Hestia one-pager.pdf,COMPANIES/Hestia/12_Company_Materials/Hestia one-pager.pdf,PLACED,12 Company Materials,False,moved,True
+F00028,Cambium,Investment Memos/Cambium Investment Memo - internal - final v2.docx,COMPANIES/Cambium/01_Investment_Memos_and_IC/Cambium Investment Memo - internal - final v2.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00029,Nth Cycle,Investment Memos/Nth Cycle - IC memo.docx,COMPANIES/Nth Cycle/01_Investment_Memos_and_IC/Nth Cycle - IC memo.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00030,Veckta,Investment Memos/Veckta investment memo.docx,COMPANIES/Veckta/01_Investment_Memos_and_IC/Veckta investment memo.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00031,Veckta,Investor Updates/Veckta investor update Mar 2024.pdf,COMPANIES/Veckta/07_Monitoring_and_Investor_Updates/Veckta investor update Mar 2024.pdf,PLACED,07 Monitoring & Investor Updates,False,moved,True
+F00032,NxLite,NxLite/NXLITE_CAPTABLE_FINAL.XLSX,COMPANIES/NxLite/03_Cap_Table_and_Equity/NXLITE_CAPTABLE_FINAL.XLSX,PLACED,03 Cap Table & Equity,False,moved,True
+F00033,NxLite,NxLite/NxLite investor update February 2024.pdf,COMPANIES/NxLite/07_Monitoring_and_Investor_Updates/NxLite investor update February 2024.pdf,PLACED,07 Monitoring & Investor Updates,False,moved,True
+F00034,NxLite,NxLite/NxLite investor update January 2024.pdf,COMPANIES/NxLite/07_Monitoring_and_Investor_Updates/NxLite investor update January 2024.pdf,PLACED,07 Monitoring & Investor Updates,False,moved,True
+F00035,NxLite,NxLite/NxLite_term_sheet_2022.pdf,COMPANIES/NxLite/02_Financing_and_Legal/NxLite_term_sheet_2022.pdf,PLACED,02 Financing & Legal,False,moved,True
+F00036,Reframe,Reframe/Reframe Investment Memo.docx,COMPANIES/Reframe/01_Investment_Memos_and_IC/Reframe Investment Memo.docx,PLACED,01 Investment Memos & IC,False,moved,True
+F00037,Reframe,Reframe/Reframe cap table.png,COMPANIES/Reframe/03_Cap_Table_and_Equity/Reframe cap table.png,PLACED,03 Cap Table & Equity,False,moved,True
+F00038,Reframe,Reframe/Reframe customer LOI.pdf,COMPANIES/Reframe/15_Unclassified_Pending_Review/Reframe customer LOI.pdf,PENDING,15 Unclassified / Pending Review,False,moved,True
+F00039,Reframe,Reframe/Reframe model.xlsx,COMPANIES/Reframe/04_Financials_and_Models/Reframe model.xlsx,PLACED,04 Financials & Models,False,moved,True
+F00040,Reframe,Reframe/notes.txt,COMPANIES/Reframe/15_Unclassified_Pending_Review/notes.txt,PENDING,15 Unclassified / Pending Review,False,moved,True
