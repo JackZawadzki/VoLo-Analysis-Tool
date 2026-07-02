@@ -130,10 +130,20 @@ def _rule_runway(points):
 
 def _rule_margin(points):
     out = {}
+    # P2-3 stage-awareness: RED means broken/contradictory, not coherent pre-scale
+    # economics. If this SAME margin turns positive by the end of the modeled
+    # horizon, the early negative periods are the expected ramp — note them quietly
+    # (medium). Only a margin still negative at the end of the plan is structural.
+    turns_positive = bool(points) and points[-1][1] is not None and points[-1][1] > 0
     for p, v in points:
         if v < 0:
-            out[p] = (f"Negative margin ({_pct(v)}) — selling below cost in this period.",
-                      Severity.high)
+            if turns_positive:
+                out[p] = (f"Negative margin ({_pct(v)}) during the ramp — it turns positive later "
+                          "in the plan, so this is stage-appropriate rather than structural.",
+                          Severity.medium)
+            else:
+                out[p] = (f"Negative margin ({_pct(v)}) — selling below cost, and the plan never "
+                          "shows it turning positive.", Severity.high)
         elif v > 0.95:
             out[p] = (f"Margin of {_pct(v)} is near-100% — check whether this is grant/subsidy "
                       "revenue carried at no cost.", Severity.medium)
