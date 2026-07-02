@@ -711,7 +711,11 @@ def render_tornado(t, idx: int) -> str:
     for d in (cube["drivers"] if cube else None) or t.drivers:
         if cube:
             key, label, refs, base = d["key"], d["label"], d["refs"], d["value"]
-            lo, hi, is_frac = base * 0.8, base * 1.2, False
+            # type-aware defaults from the backend (a tax rate moves +-5pp, a
+            # volume +-25%); fall back to +-20% for older cubes without them
+            lo = d.get("low") if d.get("low") is not None else base * 0.8
+            hi = d.get("high") if d.get("high") is not None else base * 1.2
+            is_frac = False
             kids = d.get("children", [])
         else:
             key, label, refs, base = d.key, d.label, d.input_refs, d.base
@@ -720,7 +724,9 @@ def render_tornado(t, idx: int) -> str:
         _range_row(key, label, refs, base, lo, hi, is_frac, kind=("agg" if kids else ""))
         for c in kids:
             _range_row(c["key"], c["label"], c.get("refs", []), c["value"],
-                       c["value"] * 0.8, c["value"] * 1.2, False, kind="child", parent=key)
+                       c.get("low") if c.get("low") is not None else c["value"] * 0.8,
+                       c.get("high") if c.get("high") is not None else c["value"] * 1.2,
+                       False, kind="child", parent=key)
     a("</tbody></table><button class=reset>Reset ranges</button></details></div>")
 
     # single bar per input: length = swing of the selected output
@@ -815,7 +821,8 @@ function maSpec(torn){
       let lo,hi;
       if(cum){lo=0;hi=0;PS.forEach(p=>{const c=(dd.out[out]||{})[p];if(c){lo+=c.low;hi+=c.high;}});}
       else{const cell=((dd.out[out]||{})[per])||{low:base,high:base};lo=cell.low;hi=cell.high;}
-      drivers.push({key:dd.key,label:dd.label,base:dd.value,low:dd.value*0.8,high:dd.value*1.2,outLow:lo,outHigh:hi});
+      drivers.push({key:dd.key,label:dd.label,base:dd.value,
+        low:(dd.low!=null?dd.low:dd.value*0.8),high:(dd.high!=null?dd.high:dd.value*1.2),outLow:lo,outHigh:hi});
     });
   });
   const plabel=cum?('Cumulative '+PS[0]+'–'+PS[PS.length-1]):per;

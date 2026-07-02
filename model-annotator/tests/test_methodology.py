@@ -171,6 +171,65 @@ def test_ex_ratio_suppresses_signflip_when_excluded_exceeds_base():
     assert abs(series["2029"] - 500.0 / 3370.0) < 1e-9
 
 
+# --- sensitivity input discovery: types, ranges, guards, artifact kills ------
+def test_classify_type_context_ranges():
+    from model_annotator.input_discovery import classify_type
+    # rates move in percentage POINTS, not +-20% of themselves
+    assert classify_type("Tax Rate", "0.0%", 0.27).mode == "pp"
+    assert classify_type("Fixed Cost Inflation Rate", "0.00%", 0.03).name == "inflation_rate"
+    # level inputs move by a type-appropriate +-%
+    assert classify_type("CellCo Price per KWh", "#,##0", 45.0).name == "unit_price"
+    assert classify_type("Contracted Volume (KWh)", "#,##0", 2850.0).name == "unit_volume"
+    assert classify_type("Equity Issuance #21", "#,##0", 81.0).name == "fundraise"
+    assert classify_type("Useful Life", "0", 10.0).integer is True
+    # unlabelled %-formatted small value -> a generic rate, still pp mode
+    assert classify_type("", "0.0%", 0.08).mode == "pp"
+
+
+def test_ranged_vals_guards_clamp():
+    from model_annotator.input_discovery import classify_type, ranged_vals
+    # tax 27% flexes +-5pp inside [0, 60%]
+    lo, hi = ranged_vals(classify_type("Tax Rate", "0.0%", 0.27), 0.27)
+    assert abs(lo - 0.22) < 1e-9 and abs(hi - 0.32) < 1e-9
+    # inflation 3% flexes +-1.5pp (0.20 pct-flex would be invisible), floored at 0
+    lo, hi = ranged_vals(classify_type("Inflation rate", "0.0%", 0.03), 0.03)
+    assert abs(lo - 0.015) < 1e-9 and abs(hi - 0.045) < 1e-9
+    lo, _ = ranged_vals(classify_type("Inflation rate", "0.0%", 0.01), 0.01)
+    assert lo >= 0.0                                        # guard: no negative rate
+    # price never negative; volume +-25%
+    lo, hi = ranged_vals(classify_type("Unit price", "", 45.0), 45.0)
+    assert lo >= 0 and abs(lo - 45 * 0.85) < 1e-6 and abs(hi - 45 * 1.15) < 1e-6
+    # negative line (capex outflow) keeps its sign, magnitude flexes
+    lo, hi = ranged_vals(classify_type("Capex", "", -2.5), -2.5)
+    assert lo < hi and lo < 0 and hi < 0
+
+
+def test_bracket_range_invariant():
+    from model_annotator.sensitivity import _bracket_range
+    # normal pct/pp ranges pass through unchanged
+    assert _bracket_range(0.85 * 45, 1.15 * 45, 45.0) == (0.85 * 45, 1.15 * 45)
+    assert _bracket_range(0.22, 0.32, 0.27) == (0.22, 0.32)
+    # a range that does NOT bracket the base (clamp collapsed to one side) -> ±20%
+    lo, hi = _bracket_range(1.0, 1.0, 3.758e6)          # degenerate clamp
+    assert lo < 3.758e6 < hi
+    lo, hi = _bracket_range(0.9, 1.0, 5.0)              # base 5 outside [0.9,1.0]
+    assert lo < 5.0 < hi
+    # negative base still brackets
+    lo, hi = _bracket_range(0.0, 0.0, -2.5)
+    assert lo < -2.5 < hi
+
+
+def test_scale_factor_and_enum_killed():
+    from model_annotator.input_discovery import is_scale_factor, genuineness_score
+    # the D19 bug: a 1,000,000 'Factor' cell must never be a driver
+    assert is_scale_factor("Factor", 1_000_000.0) is True
+    assert is_scale_factor("Units in thousands", 1000.0) is True
+    assert is_scale_factor("CellCo Price per KWh", 45.0) is False
+    s_factor = genuineness_score("Factor", "#,##0", 1e6, True, True, False, True, True)
+    s_price = genuineness_score("CellCo Price per KWh", "#,##0", 45.0, True, True, False, True, True)
+    assert s_price > s_factor and s_factor < 3.0            # factor sinks below real inputs
+
+
 # --- sensitivity cube: driver keys MUST be unique (JS maGet/maEval invariant) -
 def test_cube_driver_keys_unique():
     """Every cube driver needs a unique key. Colliding keys make the front-end

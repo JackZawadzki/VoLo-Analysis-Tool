@@ -306,6 +306,19 @@ def _clean_label(s: str) -> str:
     return (out or s.strip())[:40]
 
 
+def _bracket_range(lo: float, hi: float, base: float) -> tuple[float, float]:
+    """Guarantee a displayed sensitivity range BRACKETS its base and has non-zero
+    width. The front-end slope is (outHigh-outLow)/(high-low); a range that clamped
+    to one side of the base (a rate whose base sits outside its [0,1] box, a mixed
+    aggregate) or collapsed to zero width would corrupt the live re-ranking. When
+    the type-aware range violates this, fall back to a plain ±20% of the base,
+    which always brackets it."""
+    tol = 1e-9 * max(1.0, abs(base))
+    if abs(hi - lo) < tol or not (min(lo, hi) - tol <= base <= max(lo, hi) + tol):
+        return min(base * 0.8, base * 1.2), max(base * 0.8, base * 1.2)
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
 def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Optional[Tornado]:
     """Flex the model's REAL input cells and recompute EVERY mapped output at
     EVERY period exactly through the workbook's own formulas, so the UI can let
@@ -313,7 +326,7 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     be faithfully reproduced (the caller then uses the line-item flex)."""
     if graph is None:
         return None
-    from .graph import encode, rank_inputs_by_impact
+    from .graph import encode
     from .recompute import RecomputeModel
     sheet = mapping.primary_sheet
     rev_item = mapping.get("revenue_total", sheet)
@@ -339,9 +352,12 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
 
     # outputs the analyst can view the change in (whichever are mapped), richest
     # first; the per-period cell of each is recomputed exactly.
+    # ending_cash included: financing assumptions (raise sizes/timing) only move
+    # CASH, and the user needs to see funding levers alongside revenue/cost ones
     want_full = [("ebitda", "EBITDA", eb_item), ("revenue", "Revenue", rev_item)]
     for okey, label, cid in [("gross_profit", "Gross profit", "gross_profit"),
-                             ("net_income", "Net income", "net_income")]:
+                             ("net_income", "Net income", "net_income"),
+                             ("cash", "Ending cash", "ending_cash")]:
         it = mapping.get(cid, sheet)
         if it is not None:
             want_full.append((okey, label, it))
@@ -358,7 +374,19 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     model = None
     out_specs = None
     out_nodes = {}
-    for specs in (want_full, want_full[:2]):     # try all outputs, then just EBITDA+revenue
+    # try all outputs, then peel off the fragile below-EBITDA spines one at a
+    # time (cash first, then net income — their cones often carry the workbook's
+    # own error cells) so a failure there doesn't also cost gross profit
+    ladders = [want_full,
+               [s for s in want_full if s[0] != "cash"],
+               [s for s in want_full if s[0] not in ("cash", "net_income")],
+               want_full[:2]]
+    seen_ladders = set()
+    for specs in ladders:
+        key = tuple(s[0] for s in specs)
+        if key in seen_ladders:
+            continue
+        seen_ladders.add(key)
         out_nodes = _out_nodes(specs)
         check = list(set(out_nodes.values())) or [eb_node, rev_node]
         # the cone covers every period (so the cube can read them) but faithfulness
@@ -373,90 +401,102 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
     eb_base = model.values.get(eb_node)
     rev_base = model.values.get(rev_node)
 
-    # discover EVERY input that actually feeds REVENUE or EBITDA (union of both
-    # cones, computed above) — not a fan-out-biased pre-filter — so cost stacks and
-    # volume levers are not missed; dead/reference cells are excluded (not upstream).
-    from openpyxl.utils import get_column_letter
+    # ---- genuine-input discovery -------------------------------------------
+    # A driver must be an ASSUMPTION a human typed (price, volume, cost rate,
+    # tax, financing) that feeds a key output — never a unit-scale factor, enum
+    # marker, year, or subtotal echo. Candidates span ALL columns (assumptions
+    # commonly sit outside period-header bands: a lone value in column C), are
+    # scored for genuineness, typed for context-appropriate ranges, and measured
+    # by exact recompute — the measured swing does the ranking, not a fan-out
+    # proxy. Generic: keyed on structure, labels and the dependency graph only.
     import re as _re
+    from .input_discovery import (classify_type, ranged_vals, genuineness_score,
+                                  is_enum_key, sheet_is_assumptionish)
     _COST = _re.compile(r"cost|personnel|payroll|opex|sg&a|r&d|salar|capex|overhead|wage", _re.I)
 
     def _clean_sheet(name):
         s = _re.sub(r"^(COSTS?-|M-)\s*", "", name).strip()
         return (s[:1].upper() + s[1:]) if s else name
 
-    def _leaf(sn, sd, cen, row, blo, bhi):
-        cells = []
-        for c in range(blo, bhi + 1):
-            if cen.kind(row, c) == CellKind.typed_input:
-                rec = sd.cell(row, c)
-                if rec is not None and is_number(rec.value):
-                    cells.append((encode(graph.sheet_index[sn], row, c), c, float(rec.value)))
-        nz = [x for x in cells if x[2] != 0]
-        if not nz:
-            return None
-        cells.sort(key=lambda x: x[1])
-        v0 = cells[-1][2] if cells[-1][2] != 0 else max(nz, key=lambda x: abs(x[2]))[2]
-        return dict(sn=sn, r=row, band=blo, bhi=bhi, cells=cells, v0=v0,
-                    ref=graph.node_ref(cells[-1][0]), label=_band_label(sd, row, blo))
+    # one upstream cone per mapped output: financing levers only reach CASH and
+    # tax levers only reach NET INCOME — an EBITDA∪revenue cone can't see them
+    rank_nodes: dict[str, int] = {}
+    for okey, _l, _it in out_specs:
+        nd = out_nodes.get((okey, tp))
+        if nd is not None:
+            rank_nodes[okey] = nd
+    cones = {okey: graph.upstream(nd, cap=400_000) for okey, nd in rank_nodes.items()}
+    up_all = set().union(*cones.values()) if cones else up
+    rev_cone = cones.get("revenue", set())
+    eb_cone = cones.get("ebitda", set())
+    conv_fill = getattr(structure.input_convention, "fill_key", None)
 
-    sheet_rows: dict[str, list[int]] = {}
+    sheet_leaves: dict[str, list[dict]] = {}
+    n_cands = 0
     for sn, sd in wbd.sheets.items():
         cen = structure.censuses.get(sn)
         si = graph.sheet_index.get(sn)
         if cen is None or si is None:
             continue
-        rs = set()
+        role = structure.roles.get(sn)
+        role_v = role[0].value if role else None
+        if role_v in ("documentation", "presentation", "scratch"):
+            continue
+        assumish = sheet_is_assumptionish(sn, role_v)
         for r in range(1, sd.max_row + 1):
+            cells, fmt, fill_hit = [], "", False
             for c in range(1, sd.max_col + 1):
                 if cen.kind(r, c) != CellKind.typed_input:
                     continue
                 rec = sd.cell(r, c)
                 if rec is None or not is_number(rec.value) or rec.value == 0:
                     continue
-                if encode(si, r, c) in up:
-                    rs.add(r)
-                    break
-        if rs:
-            sheet_rows[sn] = sorted(rs)
+                nd = encode(si, r, c)
+                if nd not in up_all:
+                    continue
+                cells.append((nd, c, float(rec.value)))
+                fmt = fmt or (rec.number_format or "")
+                fill_hit = fill_hit or (conv_fill is not None and rec.fill_key == conv_fill)
+            if not cells:
+                continue
+            cells.sort(key=lambda x: x[1])
+            v0 = cells[-1][2]
+            blo, bhi = cells[0][1], cells[-1][1]
+            label = _band_label(sd, r, blo)
+            in_rev = any(nd in rev_cone for nd, _c, _v in cells)
+            in_eb = any(nd in eb_cone for nd, _c, _v in cells)
+            score = genuineness_score(label, fmt, v0, True, in_rev and in_eb,
+                                      in_rev and not in_eb, fill_hit, assumish)
+            if score <= 0:
+                continue                               # scale factors, years, placeholders sink here
+            if is_enum_key(graph, wbd, cells[-1][0], v0):
+                continue                               # scenario switches / lookup keys: not quantities
+            itype = classify_type(label, fmt, v0)
+            sheet_leaves.setdefault(sn, []).append(dict(
+                sn=sn, r=r, band=blo, bhi=bhi, cells=cells, v0=v0,
+                ref=graph.node_ref(cells[-1][0]), label=label,
+                score=score, itype=itype))
+            n_cands += 1
 
-    # Bound the work: exactly recomputing the whole model per input is expensive
-    # on large workbooks, so cap how many candidate rows get flexed. Cost stacks
-    # collapse to one driver each (kept whole); elsewhere keep the highest-reach
-    # rows by a cheap graph proxy. Exact swing then re-ranks the survivors.
-    def _is_cost(nm):
-        rl = structure.roles.get(nm)
-        return (rl and rl[0].value == "cost_buildup") or bool(_COST.search(nm))
-    ROW_CAP = 45
-    noncost = [(sn, r) for sn, rows in sheet_rows.items() if not _is_cost(sn) for r in rows]
-    if len(noncost) > ROW_CAP:
-        pri: dict[tuple, int] = {}
-        for i, imp in enumerate(rank_inputs_by_impact(graph, [sheet], top_n=5000)):
-            pri.setdefault((imp.sheet, imp.row), i)
-        noncost.sort(key=lambda sr: pri.get(sr, 10 ** 9))
-        keep = set(noncost[:ROW_CAP])
-        for sn in list(sheet_rows):
-            if not _is_cost(sn):
-                kept = [r for r in sheet_rows[sn] if (sn, r) in keep]
-                if kept:
-                    sheet_rows[sn] = kept
-                else:
-                    del sheet_rows[sn]
+    # safety cap: exact recompute per candidate is the cost driver; keep the
+    # highest-genuineness rows if a model somehow yields thousands
+    MAX_FLEX_ROWS = 400
+    if n_cands > MAX_FLEX_ROWS:
+        ranked = sorted((lf for lfs in sheet_leaves.values() for lf in lfs),
+                        key=lambda lf: -lf["score"])[:MAX_FLEX_ROWS]
+        keep_ids = {id(lf) for lf in ranked}
+        for sn in list(sheet_leaves):
+            sheet_leaves[sn] = [lf for lf in sheet_leaves[sn] if id(lf) in keep_ids]
+            if not sheet_leaves[sn]:
+                del sheet_leaves[sn]
 
     leaves = []
     aggregates = []
     child_of = {}                          # id(leaf) -> aggregate dict
-    for sn, rows in sheet_rows.items():
+    for sn, row_leaves in sheet_leaves.items():
         sd = wbd.sheets[sn]
-        cen = structure.censuses[sn]
         role = structure.roles.get(sn)
         role = role[0].value if role else ""
-        bands = _sheet_bands(structure, sn, sd.max_col)
-        row_leaves = []
-        for r in rows:
-            for (blo, bhi) in bands:
-                lf = _leaf(sn, sd, cen, r, blo, bhi)
-                if lf:
-                    row_leaves.append(lf)
         if not row_leaves:
             continue
         is_cost = role == "cost_buildup" or _COST.search(sn) is not None
@@ -472,7 +512,14 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                 child_of[id(lf)] = agg
         elif role == "assumptions":
             for lf in row_leaves:           # each assumption row is its own lever
-                lf["label"] = _clean_label(lf["label"])
+                base_lab = _clean_label(lf["label"])
+                # bare assumption labels ("Units", "Base Case", "Other") read as
+                # nothing on a tornado — carry the section header for context
+                sec = _section_label(sd, lf["band"], lf["bhi"], lf["r"])
+                if sec and _clean_label(sec).lower() != base_lab.lower():
+                    lf["label"] = f"{base_lab} ({_clean_label(sec)[:24]})"
+                else:
+                    lf["label"] = base_lab
                 leaves.append(lf)
         else:
             # schedule/other: group per-segment rows by the SECTION header their
@@ -521,16 +568,29 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             _merged.append(agg)
     aggregates = _merged
 
-    def _flex(cells):
-        ov_lo = {nd: val * 0.8 for (nd, _c, val) in cells}
-        ov_hi = {nd: val * 1.2 for (nd, _c, val) in cells}
+    def _flex(cells, itype):
+        # context-appropriate move per cell: rates shift in percentage POINTS,
+        # level inputs scale by the type's ±%, all guard-clamped to validity
+        ov_lo, ov_hi = {}, {}
+        for (nd, _c, val) in cells:
+            lo_v, hi_v = ranged_vals(itype, val)
+            ov_lo[nd], ov_hi[nd] = lo_v, hi_v
         lo = model.outputs_with_overrides(ov_lo, all_nodes)
         hi = model.outputs_with_overrides(ov_hi, all_nodes)
-        # rank by how much the lever moves the OUTCOME — revenue or EBITDA, whichever
-        # it hits hardest (volume levers move revenue; cost levers move EBITDA)
-        eb_sw = abs((hi.get(eb_node) or 0) - (lo.get(eb_node) or 0))
-        rv_sw = abs((hi.get(rev_node) or 0) - (lo.get(rev_node) or 0))
-        return lo, hi, max(eb_sw, rv_sw)
+        # rank by the OUTCOME the lever hits hardest across every mapped output —
+        # volume levers move revenue, cost levers EBITDA, tax levers net income,
+        # financing levers cash; a single-output swing would miss the last two
+        sw = max(abs((hi.get(nd) or 0) - (lo.get(nd) or 0)) for nd in rank_nodes.values())
+        return lo, hi, sw
+
+    def _agg_itype(agg):
+        # an aggregate flexes with its children's modal type (same-type grouping)
+        kinds = [lf["itype"] for lf in agg.get("children", []) if lf.get("itype")]
+        if not kinds:
+            from .input_discovery import classify_type as _ct
+            return _ct(agg.get("label", ""), "", agg.get("v0", 0.0))
+        names = [k.name for k in kinds]
+        return kinds[names.index(max(set(names), key=names.count))]
 
     gate = max(1.0, 1e-4 * abs(eb_base or 1))
     cand = []
@@ -540,7 +600,8 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         cells = [x for x in agg["cells"] if x[0] not in claimed]
         if not cells:
             continue
-        lo, hi, sw = _flex(cells)
+        agg["itype"] = _agg_itype(agg)
+        lo, hi, sw = _flex(cells, agg["itype"])
         if sw < gate:
             for lf in agg["children"]:
                 child_of.pop(id(lf), None)
@@ -551,7 +612,7 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         for lf in agg["children"]:          # children are this aggregate's own decomposition
             if not all(c[0] in cellset for c in lf["cells"]):
                 continue
-            klo, khi, ksw = _flex(lf["cells"])
+            klo, khi, ksw = _flex(lf["cells"], lf["itype"])
             kids.append(dict(lf, lo=klo, hi=khi, swing=ksw))
         kids.sort(key=lambda d: -d["swing"])           # keep the most material rows as children
         cand.append(dict(agg, cells=cells, lo=lo, hi=hi, swing=sw, children=kids[:10]))
@@ -561,11 +622,18 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         cells = [x for x in lf["cells"] if x[0] not in claimed]
         if not cells:
             continue
-        lo, hi, sw = _flex(cells)
+        lo, hi, sw = _flex(cells, lf["itype"])
         if sw < gate:
             continue
         claimed |= {x[0] for x in cells}
         cand.append(dict(lf, cells=cells, lo=lo, hi=hi, swing=sw, children=[]))
+    if not cand:
+        return None
+    # guardrail: a swing orders of magnitude beyond the outputs means the flex
+    # broke the model's branching (an enum/marker that slipped through) — a real
+    # lever can't move EBITDA by 100x its own base
+    swing_cap = 100.0 * max(abs(eb_base or 1.0), abs(rev_base or 1.0))
+    cand = [d for d in cand if d["swing"] <= swing_cap]
     if not cand:
         return None
     cand.sort(key=lambda d: -d["swing"])
@@ -606,35 +674,67 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         # driver's base, drifting the base eval and compounding the slopes into
         # nonsense (billions). Distinct keys keep every driver independent.
         dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}:{i}"
-        kids = [{"key": f"{dkey}::{ci}", "label": c["label"], "refs": [c["ref"]],
-                 "value": c["v0"], "out": _outmat(c)} for ci, c in enumerate(d.get("children", []))]
+        it_d = d.get("itype")
+        base0 = d["v0"]
+        d_lo, d_hi = ranged_vals(it_d, base0) if it_d else (base0 * 0.8, base0 * 1.2)
+        d_lo, d_hi = _bracket_range(d_lo, d_hi, base0)
+
+        def _kid(ci, c):
+            kt = c.get("itype")
+            klo, khi = ranged_vals(kt, c["v0"]) if kt else (c["v0"] * 0.8, c["v0"] * 1.2)
+            klo, khi = _bracket_range(klo, khi, c["v0"])       # same JS-slope invariant
+            return {"key": f"{dkey}::{ci}", "label": c["label"], "refs": [c["ref"]],
+                    "value": c["v0"], "low": klo, "high": khi,
+                    "rtype": kt.name if kt else None, "out": _outmat(c)}
+        kids = [_kid(ci, c) for ci, c in enumerate(d.get("children", []))]
+        # low/high = the type-appropriate analyst-editable defaults (a tax rate
+        # moves ±5pp, a volume ±25% — never one blanket ±20%); the JS reads them
         cube["drivers"].append({"key": dkey, "label": d["label"], "refs": [d["ref"]],
-                                "value": d["v0"], "out": _outmat(d), "children": kids})
+                                "value": d["v0"], "low": d_lo, "high": d_hi,
+                                "rtype": it_d.name if it_d else None,
+                                "out": _outmat(d), "children": kids})
         eb_lo, eb_hi = d["lo"].get(eb_node), d["hi"].get(eb_node)
         rv_lo, rv_hi = d["lo"].get(rev_node), d["hi"].get(rev_node)
+        base_v = d["v0"] or 1.0
         drivers.append(SensitivityDriver(
             key=dkey, label=f"{d['label']} ({tp})",
-            input_refs=[d["ref"]], base=d["v0"], low=d["v0"] * 0.8, high=d["v0"] * 1.2,
-            low_pct=-0.20, high_pct=0.20,
+            input_refs=[d["ref"]], base=d["v0"], low=d_lo, high=d_hi,
+            low_pct=round(d_lo / base_v - 1.0, 4), high_pct=round(d_hi / base_v - 1.0, 4),
             output_low=eb_lo, output_high=eb_hi, swing=d["swing"],
             out2_low=rv_lo, out2_high=rv_hi, unit=U))
         adverse_low = (eb_lo or 0) < (eb_hi or 0)
-        fa, ff = (0.8, 1.2) if adverse_low else (1.2, 0.8)
         for (nd, _c, val) in d["cells"]:
-            adv_ov[nd] = val * fa
-            fav_ov[nd] = val * ff
+            c_lo, c_hi = ranged_vals(it_d, val) if it_d else (val * 0.8, val * 1.2)
+            adv_ov[nd] = c_lo if adverse_low else c_hi
+            fav_ov[nd] = c_hi if adverse_low else c_lo
     downside = model.outputs_with_overrides(adv_ov, [eb_node])[eb_node]
     upside = model.outputs_with_overrides(fav_ov, [eb_node])[eb_node]
+
+    caveats = ["Each input is flexed through the model's actual formulas — an exact recompute, "
+               "not a proportional estimate.",
+               "Single-input moves are exact; all-adverse and the two-way grid combine drivers linearly."]
+    # honesty over silence: when a mapped below-EBITDA output could not be
+    # exactly recomputed (its spine carries the workbook's own error cells or
+    # unsupported formulas), say which assumption families are therefore missing
+    built = {s[0] for s in out_specs}
+    blocked = []
+    if mapping.get("net_income", sheet) is not None and "net_income" not in built:
+        blocked.append("net income (tax / below-the-line assumptions)")
+    if mapping.get("ending_cash", sheet) is not None and "cash" not in built:
+        blocked.append("ending cash (financing / fundraising assumptions)")
+    if blocked:
+        caveats.append(
+            "Not shown here: " + " and ".join(blocked) + " could not be exactly recomputed — "
+            "that part of the workbook contains error cells or formulas the recompute engine "
+            "can't evaluate, so flexing those assumptions would produce made-up numbers. "
+            "They are still assumptions; review them via the flags and the raw sheet.")
 
     return Tornado(
         output_key="terminal_ebitda", output_label=f"Terminal EBITDA ({tp})",
         output_unit=U, output_base=eb_base, formula="recompute_linear",
         out2_base=rev_base, out2_label="Revenue", cube=cube,
         formula_note="every output recomputed through the model's own formulas as each input is flexed",
-        drivers=drivers, downside=downside, upside=upside,
-        caveats=["Each input is flexed through the model's actual formulas — an exact recompute, "
-                 "not a proportional estimate.",
-                 "Single-input moves are exact; all-adverse and the two-way grid combine drivers linearly."])
+        drivers=drivers, downside=downside, upside=upside, caveats=caveats)
 
 
 def build_sensitivities(wbd, structure: StructureResult, mapping: MappingResult,
