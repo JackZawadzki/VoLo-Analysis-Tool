@@ -57,7 +57,7 @@ _TYPE_RULES: list[tuple[re.Pattern, InputType]] = [
      InputType("interest_rate", "pp", -0.02, 0.02, 0.0, 0.4)),
     (re.compile(r"utili[sz]ation|attach|conversion|penetration|churn|retention|yield", re.I),
      InputType("adoption_rate", "pp", -0.10, 0.10, 0.0, 1.0)),
-    (re.compile(r"price|asp\b|€/|\$/|per unit|/unit|rate card|fee\b|royalt", re.I),
+    (re.compile(r"pric(e|ing)|asp\b|€/|\$/|per unit|/unit|rate card|fee\b|royalt", re.I),
      InputType("unit_price", "pct", -0.15, 0.15, 0.0, None)),
     (re.compile(r"volume|units?\b|quantit|capacity|kwh|mwh|throughput|orders?\b|customers?\b|clients?\b|deals?\b", re.I),
      InputType("unit_volume", "pct", -0.25, 0.25, 0.0, None)),
@@ -77,13 +77,21 @@ _TYPE_RULES: list[tuple[re.Pattern, InputType]] = [
 
 _GENERIC_PCT = InputType("generic_rate", "pp", -0.10, 0.10, 0.0, 1.0)
 _GENERIC_AMT = InputType("generic_amount", "pct", -0.20, 0.20, None, None)
+# a normalized deployment/phasing curve (monthly fractions summing to ~1/yr) is
+# flexed as a TIME SHIFT (commercialization slips k months), never ±pp — moving
+# every month by ±10pp would swing a normalized year by ±120% and break the
+# model's own sum-to-1 checks
+PHASING = InputType("phasing_curve", "shift", 0.0, 6.0, 0.0, None)
 
 
-def classify_type(label: str, number_format: str, value: float) -> InputType:
+def classify_type(label: str, number_format: str, value: float,
+                  curve_hint: bool = False) -> InputType:
     """Priority cascade over label semantics, then number-format/magnitude.
     Falls back to a generic ±20% amount — never fails."""
     lab = label or ""
     fmt = number_format or ""
+    if curve_hint:
+        return PHASING
     for rx, itype in _TYPE_RULES:
         if rx.search(lab):
             # a genuine RATE is bounded ~[0,1.5]: a large magnitude with no %
@@ -199,34 +207,84 @@ def sheet_is_assumptionish(name: str, role_value: Optional[str]) -> bool:
 _EQ_USE = re.compile(r"(?:=\s*(?:C\d)|IF\s*\(|MATCH\s*\(|LOOKUP)", re.I)
 
 
+def _enum_use_in(formula: str, cellpart: str, sheet: str) -> Optional[bool]:
+    """Does this formula consume the cell as a SWITCH/CODE rather than a quantity?
+    True = equality/branch-argument use; False = arithmetic use; None = no ref."""
+    f = formula.replace("$", "")
+    # the cell may be referenced bare (H867) or sheet-qualified ('Global Inputs'!H867)
+    pats = [rf"(?<![A-Z0-9_.!]){re.escape(cellpart)}(?![0-9])",
+            rf"'?{re.escape(sheet)}'?!{re.escape(cellpart)}(?![0-9])"]
+    hit_eq = hit_arith = False
+    for pat in pats:
+        for m in re.finditer(pat, f, re.I):
+            before = f[:m.start()].rstrip()
+            after = f[m.end():].lstrip()
+            if before.endswith("=") or after.startswith("="):
+                hit_eq = True                       # IF(x=CELL / CELL=3
+            elif (before[-1:] in (",", "(") and after[:1] in (",", ")")) and \
+                    re.search(r"\b(IF|CHOOSE|MATCH|LOOKUP|XLOOKUP|SWITCH|INDEX)\s*\(", f, re.I):
+                hit_eq = True                       # passed whole as a branch arm / lookup key
+            elif before[-1:] in "+-*/^&<>" or after[:1] in "+-*/^&<>":
+                hit_arith = True                    # genuine arithmetic input
+    if hit_eq and not hit_arith:
+        return True
+    if hit_arith:
+        return False
+    return None
+
+
 def is_enum_key(graph, wbd, node: int, value: float) -> bool:
-    """A small integer whose dependents only COMPARE it (IF(x=2), MATCH, lookup
-    keys) is a scenario switch/ID, not a quantity — a ±20% flex of '2' into 1.6
-    silently changes which branch the model takes, producing explosive garbage."""
+    """A small integer whose dependents only COMPARE or BRANCH on it (IF(x=2),
+    CHOOSE(x,...), MATCH, lookup keys) is a scenario switch/unit code, not a
+    quantity — a ±25% flex of '3' into 2.25 silently reroutes CHOOSE() branches
+    (verified: a units-of-measure enum flexed this way selected a ×1,000,000
+    GWh branch and blew EBITDA to ±1e12). Follows one pass-through hop, since
+    codes are often copied ('=Inputs!H867') before the CHOOSE consumes them."""
     if abs(value) > 20 or abs(value - round(value)) > 1e-9:
         return False
-    deps = graph.dependents.get(node, ())
-    if not deps:
-        return False
-    ref = graph.node_ref(node)
-    cellpart = ref.split("!")[-1].replace("$", "")
+    from .graph import decode
+
+    def _cell_of(nd):
+        si, r, c = decode(nd)
+        sn = graph.sheet_names[si]
+        sd = wbd.sheets.get(sn)
+        return sn, (sd.cell(r, c) if sd else None)
+
+    src_sheet = graph.sheet_names[decode(node)[0]]
+    src_part = graph.node_ref(node).split("!")[-1].replace("$", "")
     checked = eq_hits = 0
-    for d in list(deps)[:12]:
+    for d in list(graph.dependents.get(node, ()))[:12]:
         try:
-            from .graph import decode
-            si, r, c = decode(d)
-            sn = graph.sheet_names[si]
-            sd = wbd.sheets.get(sn)
-            rec = sd.cell(r, c) if sd else None
+            dep_sheet, rec = _cell_of(d)
             f = rec.formula if rec else None
         except Exception:
             continue
         if not f:
             continue
+        use = _enum_use_in(f, src_part, src_sheet)
+        if use is None:
+            continue
         checked += 1
-        # the dependent compares this cell for equality rather than computing with it
-        if re.search(rf"(?<![A-Z0-9$]){re.escape(cellpart)}(?![0-9])\s*=", f.replace("$", "")) or \
-           re.search(rf"=\s*{re.escape(cellpart)}(?![0-9])", f.replace("$", "")) or \
-           re.search(r"\bMATCH\s*\(", f, re.I):
+        if use:
             eq_hits += 1
+            continue
+        # pass-through hop: '=Inputs!H867' style copies — inspect what consumes the COPY
+        if re.fullmatch(r"=\s*(?:'[^']+'|[A-Za-z0-9_. ]+)?!?\$?[A-Z]{1,3}\$?\d+\s*", f):
+            dep_part = graph.node_ref(d).split("!")[-1].replace("$", "")
+            sub_eq = sub_n = 0
+            for d2 in list(graph.dependents.get(d, ()))[:12]:
+                try:
+                    _s2, rec2 = _cell_of(d2)
+                    f2 = rec2.formula if rec2 else None
+                except Exception:
+                    continue
+                if not f2:
+                    continue
+                use2 = _enum_use_in(f2, dep_part, dep_sheet)
+                if use2 is None:
+                    continue
+                sub_n += 1
+                sub_eq += bool(use2)
+            if sub_n and sub_eq >= max(1, sub_n // 2):
+                eq_hits += 1
     return checked > 0 and eq_hits >= max(1, checked // 2)

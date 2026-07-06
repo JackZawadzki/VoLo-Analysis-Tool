@@ -90,3 +90,20 @@ def test_two_letter_column_range_parses():
     assert m2 and m2.group("sq") == "Sheet 1" and m2.group("col") == "B"
     m3 = _CELL.match("DASHBOARD!H17")
     assert m3 and m3.group("nq") == "DASHBOARD" and m3.group("col") == "H"
+
+
+def test_sumifs_datedif_column():
+    # SUMIFS(sum_range, crit_range, crit): sum where criteria match
+    assert ev('SUMIFS(B1:B3,A1:A3,">2")',
+              ranges={"A1:A3": [1, 3, 5], "B1:B3": [10, 20, 30]}) == 50
+    # single-cell ranges (the degenerate form real models use)
+    assert ev("SUMIFS(A1,B1,C1)", cells={"A1": 7, "B1": 2, "C1": 2}) == 7
+    assert ev("SUMIFS(A1,B1,C1)", cells={"A1": 7, "B1": 2, "C1": 3}) == 0
+    # DATEDIF month arithmetic (the form that froze financing spines)
+    assert ev('DATEDIF(DATE(2026,1,15),DATE(2026,7,15),"m")') == 6
+    assert ev('DATEDIF(DATE(2026,1,1),DATE(2028,1,1),"y")') == 2
+    assert ev('IFERROR(DATEDIF(DATE(2026,6,1),DATE(2026,1,1),"m"),0)') == 0
+    # COLUMN(ref)/ROW(ref) resolve at compile time from the ref text
+    assert ev("COLUMN(C33)") == 3
+    assert ev("ROW(C33)") == 33
+    assert ev("COLUMN(AB7)-COLUMN(C7)") == 28 - 3

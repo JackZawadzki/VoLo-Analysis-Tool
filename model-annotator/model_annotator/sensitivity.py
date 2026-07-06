@@ -295,6 +295,125 @@ def _section_label(sd, blo: int, bhi: int, row: int) -> Optional[str]:
     return None
 
 
+_YEAR_STR = None  # compiled lazily below
+
+
+def _is_yearish(rec) -> bool:
+    """A header-evidence cell: a year (1990-2100), a date, or a date-formatted
+    number. Years/dates NEVER count as 'data in the band' when testing whether a
+    row is a title/header row — a column-header row of 2026/2027/2028 IS the
+    header, not data."""
+    if rec is None:
+        return False
+    v = rec.value
+    if hasattr(v, "year"):                       # datetime / date
+        return True
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if 1990 <= v <= 2100 and abs(v - round(v)) < 1e-9:
+            return True
+        core = (rec.number_format or "").split(";")[0]
+        import re as _r
+        if _r.search(r"[ymd]", _r.sub(r"\[[^\]]*\]|\"[^\"]*\"", "", core), _r.I) and "%" not in core:
+            return True
+    if isinstance(v, str):
+        s = v.strip()
+        return len(s) == 4 and s.isdigit() and 1990 <= int(s) <= 2100
+    return False
+
+
+def _table_header(sd, blo, bhi, row, max_up=40):
+    """The header row governing a data row, and everything derivable from it.
+
+    Real input decks look like:  [title: 'Pricing']
+                                 [banner: 'Base Case'   'Upside'   'Downside']
+                                 [header: Customer  Unit  2026 2027 2028 | Customer ...]
+                                 [data:   Anduril   KWh    45   45   45  | ...]
+    The old nearest-left-text label grabbed unit vocab ('KWh'), banners ('Base
+    Case') or entity headers ('Customer') — vague or plain wrong names. Instead:
+    find the nearest row above with year/date cells over the band (the column-
+    header row), type its label-side cells (entity / unit-of-measure columns),
+    detect repeated header text as scenario-block starts (named by the banner row
+    above), and take the MEASURE from the leftmost non-entity/non-unit header
+    text — else from the nearest pure title row above. Returns a dict or None."""
+    import re as _r
+    from collections import Counter
+
+    def _texts_on(rr, hi):
+        out = []
+        for c in range(1, hi + 1):
+            rec = sd.cell(rr, c)
+            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+                out.append((c, rec.value.strip()))
+        return out
+
+    def _title_above(rr0):
+        for rr in range(rr0 - 1, max(0, rr0 - 12), -1):
+            txts = _texts_on(rr, bhi)
+            if not txts:
+                continue
+            has_num = False
+            for c in range(blo, bhi + 1):
+                rec = sd.cell(rr, c)
+                if rec is not None and isinstance(rec.value, (int, float)) \
+                        and not isinstance(rec.value, bool) and not _is_yearish(rec):
+                    has_num = True
+                    break
+            if not has_num and txts[0][0] < blo:
+                cnt = Counter(t.lower() for _c, t in txts)
+                if max(cnt.values()) == 1:           # banners repeat; titles don't
+                    return txts[0][1]
+        return None
+
+    for rr in range(row - 1, max(0, row - max_up), -1):
+        year_cols = [c for c in range(blo, bhi + 1) if _is_yearish(sd.cell(rr, c))]
+        if not year_cols:
+            continue
+        texts = _texts_on(rr, bhi)
+        cnt = Counter(t.lower() for _c, t in texts)
+        entity_col = unit_col = None
+        measure = None
+        block_starts = sorted(c for c, t in texts if cnt[t.lower()] >= 2)
+        for c, t in texts:
+            if c >= blo and c not in year_cols and cnt[t.lower()] < 2:
+                continue
+            if _r.search(r"customer|client|segment|entity|product|name", t, _r.I) and entity_col is None:
+                entity_col = c
+            elif _r.match(r"units?\b", t, _r.I) and unit_col is None:
+                unit_col = c
+            elif measure is None and cnt[t.lower()] < 2 and c < blo:
+                measure = t
+        if measure is None:
+            measure = _title_above(rr)
+        blocks = []
+        if len(block_starts) >= 2:
+            for i, bs in enumerate(block_starts):
+                be = block_starts[i + 1] - 1 if i + 1 < len(block_starts) else 10 ** 6
+                name = None
+                for rb in (rr - 1, rr - 2):
+                    if rb < 1:
+                        break
+                    for c in range(bs, max(0, bs - 4), -1):
+                        recb = sd.cell(rb, c)
+                        if recb is not None and isinstance(recb.value, str) and recb.value.strip():
+                            name = recb.value.strip()
+                            break
+                    if name:
+                        break
+                blocks.append(dict(lo=bs, hi=be, name=name or f"block {i + 1}"))
+        years = {}
+        for c in range(blo, bhi + 1):
+            recy = sd.cell(rr, c)
+            if recy is not None and _is_yearish(recy):
+                v = recy.value
+                try:
+                    years[c] = str(v.year) if hasattr(v, "year") else str(int(float(str(v))))
+                except Exception:
+                    pass
+        return dict(row=rr, measure=measure, entity_col=entity_col,
+                    unit_col=unit_col, blocks=blocks, years=years)
+    return None
+
+
 def _clean_label(s: str) -> str:
     """Tidy a raw row/section label into a readable driver name: drop trailing
     unit notes (€/unit, /client), AVERAGE/TOTAL noise, and surrounding clutter."""
@@ -389,9 +508,12 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         seen_ladders.add(key)
         out_nodes = _out_nodes(specs)
         check = list(set(out_nodes.values())) or [eb_node, rev_node]
-        # the cone covers every period (so the cube can read them) but faithfulness
-        # is gated only on the headline terminal EBITDA + revenue
-        model = RecomputeModel.build(graph, check, gate_nodes=[eb_node, rev_node])
+        # per-output faithfulness: gate on EVERY requested output's terminal cell
+        # (not just EBITDA+revenue), so a cube never shows an output the engine
+        # can't reproduce — an unfaithful spine peels off via the ladder instead
+        gates = [out_nodes.get((s[0], tp)) for s in specs]
+        gates = [g for g in gates if g is not None] or [eb_node, rev_node]
+        model = RecomputeModel.build(graph, check, gate_nodes=gates)
         if model is not None:
             out_specs = [s for s in specs if any((s[0], p) in out_nodes for p in periods)]
             break
@@ -443,16 +565,26 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         if role_v in ("documentation", "presentation", "scratch"):
             continue
         assumish = sheet_is_assumptionish(sn, role_v)
+        # curve detection needs the FINEST axis on the sheet — the primary axis is
+        # deliberately the annual one, but deployment ramps live on the monthly
+        # (or quarterly) columns alongside it
+        grans = {getattr(getattr(ax, "granularity", None), "value", "annual")
+                 for ax in structure.axes.get(sn, [])} or {"annual"}
+        gran = "monthly" if "monthly" in grans else ("quarterly" if "quarterly" in grans else "annual")
+        shift_k = {"monthly": 6, "quarterly": 2}.get(gran, 1)   # columns ≈ 6 months
         for r in range(1, sd.max_row + 1):
-            cells, fmt, fill_hit = [], "", False
+            cells, zcells, fmt, fill_hit = [], [], "", False
             for c in range(1, sd.max_col + 1):
                 if cen.kind(r, c) != CellKind.typed_input:
                     continue
                 rec = sd.cell(r, c)
-                if rec is None or not is_number(rec.value) or rec.value == 0:
+                if rec is None or not is_number(rec.value):
                     continue
                 nd = encode(si, r, c)
                 if nd not in up_all:
+                    continue
+                if rec.value == 0:
+                    zcells.append((nd, c, 0.0))        # zero cells: shift targets only
                     continue
                 cells.append((nd, c, float(rec.value)))
                 fmt = fmt or (rec.number_format or "")
@@ -462,7 +594,62 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             cells.sort(key=lambda x: x[1])
             v0 = cells[-1][2]
             blo, bhi = cells[0][1], cells[-1][1]
-            label = _band_label(sd, r, blo)
+
+            # header recipe: measure / entity / unit-of-measure / scenario blocks
+            hdr = _table_header(sd, blo, bhi, r)
+            entity = unit_val = None
+            block_name = None
+            if hdr:
+                if hdr.get("entity_col"):
+                    rec_e = sd.cell(r, hdr["entity_col"])
+                    if rec_e is not None and isinstance(rec_e.value, str) and rec_e.value.strip():
+                        entity = rec_e.value.strip()[:34]
+                if hdr.get("unit_col"):
+                    rec_u = sd.cell(r, hdr["unit_col"])
+                    if rec_u is not None and rec_u.value is not None:
+                        unit_val = str(rec_u.value).strip()[:16]
+                # scenario blocks: flex ONLY the live block — the inert Upside/
+                # Downside columns don't feed the selected scenario, and summing
+                # them corrupts the displayed base
+                if hdr.get("blocks"):
+                    def _blk_of(c):
+                        for b in hdr["blocks"]:
+                            if b["lo"] <= c <= b["hi"]:
+                                return b
+                        return None
+                    per_blk: dict[int, list] = {}
+                    for x in cells:
+                        b = _blk_of(x[1])
+                        per_blk.setdefault(id(b) if b else -1, []).append((b, x))
+                    def _blk_score(entries):
+                        b = entries[0][0]
+                        pref = 2 if (b and _re.search(r"base", b["name"], _re.I)) else 0
+                        live = sum(1 for _b, (nd, _c, _v) in entries if nd in up_all)
+                        return (pref, live, len(entries))
+                    best = max(per_blk.values(), key=_blk_score)
+                    b0 = best[0][0]
+                    if b0 is not None:
+                        block_name = b0["name"][:20]
+                        cells = sorted((x for _b, x in best), key=lambda x: x[1])
+                        zcells = [z for z in zcells if b0["lo"] <= z[1] <= b0["hi"]]
+                        v0 = cells[-1][2]
+                        blo, bhi = cells[0][1], cells[-1][1]
+
+            measure = (hdr or {}).get("measure")
+            raw_label = _band_label(sd, r, blo)
+            if measure and entity:
+                label = f"{measure} — {entity}"
+            elif measure:
+                lbl2 = _clean_label(raw_label)
+                label = measure if lbl2.lower() in (measure.lower(), "") else f"{measure} — {lbl2}"
+            else:
+                # no header table found: fall back to the section title for
+                # context so a bare product/row name still reads on a tornado
+                label = raw_label
+                sec = _section_label(sd, blo, bhi, r)
+                if sec and _clean_label(sec).lower() != _clean_label(raw_label).lower():
+                    label = f"{_clean_label(raw_label)} ({_clean_label(sec)[:24]})"
+
             in_rev = any(nd in rev_cone for nd, _c, _v in cells)
             in_eb = any(nd in eb_cone for nd, _c, _v in cells)
             score = genuineness_score(label, fmt, v0, True, in_rev and in_eb,
@@ -470,12 +657,29 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             if score <= 0:
                 continue                               # scale factors, years, placeholders sink here
             if is_enum_key(graph, wbd, cells[-1][0], v0):
-                continue                               # scenario switches / lookup keys: not quantities
-            itype = classify_type(label, fmt, v0)
+                continue                               # scenario switches / unit codes: not quantities
+
+            # a normalized phasing/deployment curve (many small fractions summing
+            # to ~1 per year) is a TIMING assumption: flex = start delay, not ±pp
+            vals = [v for _n, _c, v in cells]
+            curve_hint = (len(vals) >= 6 and all(0.0 <= v <= 1.0001 for v in vals)
+                          and sum(vals) >= 0.8 and gran in ("monthly", "quarterly"))
+            type_label = f"{measure or ''} {raw_label}".strip()
+            itype = classify_type(type_label, fmt, v0, curve_hint=curve_hint)
+            # a NAMED customer/contract row feeding revenue carries binary risk:
+            # its downside runs to ZERO (lose the contract), not just -X% — the
+            # per-customer child bar then shows true concentration exposure.
+            # (The family aggregate keeps the symmetric dial via _agg_itype.)
+            if entity and in_rev and getattr(itype, "mode", None) == "pct" and v0 > 0:
+                from .input_discovery import InputType as _IT
+                itype = _IT(itype.name + "@risk", "pct", -1.0, itype.high,
+                            0.0, itype.hi_clamp, itype.integer)
             sheet_leaves.setdefault(sn, []).append(dict(
-                sn=sn, r=r, band=blo, bhi=bhi, cells=cells, v0=v0,
-                ref=graph.node_ref(cells[-1][0]), label=label,
-                score=score, itype=itype))
+                sn=sn, r=r, band=blo, bhi=bhi, cells=cells, zcells=zcells, v0=v0,
+                ref=graph.node_ref(cells[-1][0]), label=label, fmt=fmt,
+                measure=measure, entity=entity, unit_val=unit_val,
+                hdr_row=(hdr or {}).get("row"), block=block_name,
+                shift_k=shift_k, score=score, itype=itype))
             n_cands += 1
 
     # safety cap: exact recompute per candidate is the cost driver; keep the
@@ -510,65 +714,108 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             aggregates.append(agg)
             for lf in row_leaves:
                 child_of[id(lf)] = agg
-        elif role == "assumptions":
-            for lf in row_leaves:           # each assumption row is its own lever
-                base_lab = _clean_label(lf["label"])
-                # bare assumption labels ("Units", "Base Case", "Other") read as
-                # nothing on a tornado — carry the section header for context
-                sec = _section_label(sd, lf["band"], lf["bhi"], lf["r"])
-                if sec and _clean_label(sec).lower() != base_lab.lower():
-                    lf["label"] = f"{base_lab} ({_clean_label(sec)[:24]})"
-                else:
-                    lf["label"] = base_lab
-                leaves.append(lf)
         else:
-            # schedule/other: group per-segment rows by the SECTION header their
-            # modeller put them under (e.g. 'Licensing (royalty per unit)',
-            # 'Units x client'), so families become one lever with segment children
-            # instead of N ambiguous bars. Single-row sections stay standalone,
-            # named with their section for context.
+            # ONE path for assumption sheets and schedules alike: rows sharing the
+            # same TABLE HEADER (and scenario block) are one family — a pricing
+            # deck, a volume deck, a phasing-curve block — grouped into a single
+            # driver with per-entity children. Never grouped by the column band
+            # (which splintered one curve family into per-band fragments) or by
+            # nearest-left text (which named drivers 'Units'/'Base Case').
             leaves.extend(row_leaves)
-            by_sec: dict[tuple, list] = {}
-            sec_of: dict[int, Optional[str]] = {}
+            by_tbl: dict[tuple, list] = {}
             for lf in row_leaves:
-                sec = _section_label(sd, lf["band"], lf["bhi"], lf["r"])
-                sec_of[id(lf)] = sec
-                by_sec.setdefault((lf["band"], (sec or f"~row{lf['r']}").lower()), []).append(lf)
-            for _key, lfs in by_sec.items():
-                sec = sec_of[id(lfs[0])]
-                if sec and len(lfs) >= 2:
-                    agg = dict(sn=sn, r=-1, band=lfs[0]["band"],
-                               cells=[c for lf in lfs for c in lf["cells"]],
-                               v0=sum(lf["v0"] for lf in lfs),
-                               ref=f"{sn} · {sec[:28]}",
-                               label=_clean_label(sec), children=lfs)
-                    for lf in lfs:
-                        lf["label"] = _clean_label(lf["label"])    # child = segment name
-                    aggregates.append(agg)
-                    for lf in lfs:
-                        child_of[id(lf)] = agg
-                else:                       # single-row section -> standalone w/ context
-                    for lf in lfs:
-                        base = _clean_label(lf["label"])
-                        lf["label"] = f"{base} ({_clean_label(sec)})" if sec else base
+                if lf.get("hdr_row") is not None and lf.get("measure"):
+                    # SAME-TYPE constraint: a family is one lever only when its
+                    # rows are the same KIND of assumption — a header that merely
+                    # spans a block of unrelated rows (salary + tax + headcount)
+                    # must not fuse them into one meaningless dial
+                    tname = getattr(lf.get("itype"), "name", "") or ""
+                    key = (lf["hdr_row"], lf.get("block") or "", tname.replace("@risk", ""))
+                else:
+                    key = (None, f"~row{lf['r']}", "")
+                by_tbl.setdefault(key, []).append(lf)
+            for key, lfs in by_tbl.items():
+                if key[0] is None or len(lfs) < 2:
+                    continue                        # single rows stand alone, already well-named
+                lfs.sort(key=lambda l: l["r"])
+                measure = lfs[0].get("measure") or _clean_label(lfs[0]["label"])
 
-    # merge duplicate aggregates across replica blocks (e.g. three 'TOTAL New
-    # clients' from Spain/EU/US become ONE driver flexing all blocks together)
-    _bylabel: dict[str, dict] = {}
+                def _entity_of(lf):
+                    e = lf.get("entity")
+                    if e:
+                        return e
+                    lbl = _clean_label(lf["label"])
+                    # strip an embedded "measure — " prefix so entities read clean
+                    if measure and lbl.lower().startswith(measure.lower()):
+                        lbl = lbl[len(measure):].strip(" -—:·,") or lbl
+                    return lbl
+                ents = [_entity_of(lf)[:22] for lf in lfs]
+                # mixed units of measure ($/KWh next to $/Unit) or wildly mixed
+                # magnitudes: summing bases misleads — show the largest instead
+                unitvals = {lf.get("unit_val") for lf in lfs if lf.get("unit_val")}
+                mags = [abs(lf["v0"]) for lf in lfs if lf["v0"]]
+                mixed = len(unitvals) > 1 or (mags and max(mags) / max(1e-12, min(mags)) > 100)
+                v0_agg = (max(lfs, key=lambda l: abs(l["v0"]))["v0"] if mixed
+                          else sum(lf["v0"] for lf in lfs))
+                blocknote = f"; {lfs[0]['block']}" if lfs[0].get("block") else ""
+                label = f"{measure} — {len(lfs)} rows: " + ", ".join(ents[:2]) \
+                        + (f", +{len(lfs) - 2} more" if len(lfs) > 2 else "")
+                agg = dict(sn=sn, r=-1, band=lfs[0]["band"],
+                           cells=[c for lf in lfs for c in lf["cells"]],
+                           zcells=[z for lf in lfs for z in lf.get("zcells", [])],
+                           v0=v0_agg, mixed_units=mixed,
+                           ref=f"{sn} · {measure[:24]}{blocknote}",
+                           label=label[:70], measure=measure,
+                           shift_k=lfs[0].get("shift_k", 1), children=lfs)
+                for lf in lfs:                      # child = its entity/row name
+                    lf["label"] = _entity_of(lf)[:38]
+                aggregates.append(agg)
+                for lf in lfs:
+                    child_of[id(lf)] = agg
+
+    # merge duplicate aggregates across replica blocks — but ONLY when they are
+    # genuinely the same lever: same normalized measure AND same format family
+    # AND comparable magnitude (a units-of-measure enum table must never merge
+    # into a BOM deck again just because both were labeled 'Units')
+    _bylabel: dict[tuple, dict] = {}
     _merged: list[dict] = []
     for agg in aggregates:
-        k = _re.sub(r"[^a-z0-9]+", "", agg["label"].lower())
-        if k and k in _bylabel:
-            m = _bylabel[k]
+        base_mag = abs(agg["v0"]) or 1.0
+        fmt0 = "%" if any("%" in (lf.get("fmt") or "") for lf in agg["children"]) else "#"
+        k = (_re.sub(r"[^a-z0-9]+", "", (agg.get("measure") or agg["label"]).lower()), agg["sn"], fmt0)
+        m = _bylabel.get(k)
+        if m is not None and max(base_mag, abs(m["v0"]) or 1.0) / max(1e-12, min(base_mag, abs(m["v0"]) or 1.0)) < 1e3:
             m["cells"] = m["cells"] + agg["cells"]
+            m["zcells"] = m.get("zcells", []) + agg.get("zcells", [])
             m["children"] = m["children"] + agg["children"]
             m["v0"] = m["v0"] + agg["v0"]
         else:
-            _bylabel[k] = agg
+            _bylabel.setdefault(k, agg)
             _merged.append(agg)
     aggregates = _merged
 
-    def _flex(cells, itype):
+    def _shift_overrides(rows_cells, k):
+        """Delay a phasing curve by k columns: each row's value vector slides k
+        columns later (deployment slips ~6 months); the vacated leading columns
+        go to zero and the trailing typed zero-cells receive the displaced tail.
+        The row's total is preserved wherever the model left room for the tail."""
+        ov = {}
+        for rcells in rows_cells:
+            seq = sorted(rcells, key=lambda x: x[1])
+            vals = [v for _n, _c, v in seq]
+            shifted = [0.0] * min(k, len(vals)) + vals[:max(0, len(vals) - k)]
+            for (nd, _c, _v), nv in zip(seq, shifted):
+                ov[nd] = nv
+        return ov
+
+    def _flex(cells, itype, shift_rows=None, shift_k=1):
+        # a phasing curve is flexed as a START DELAY (the analyst's 'what if
+        # commercialization slips 6 months'), not by bending monthly fractions
+        if itype is not None and getattr(itype, "mode", None) == "shift" and shift_rows:
+            lo = model.outputs_with_overrides({}, all_nodes)          # on-time = base
+            hi = model.outputs_with_overrides(_shift_overrides(shift_rows, shift_k), all_nodes)
+            sw = max(abs((hi.get(nd) or 0) - (lo.get(nd) or 0)) for nd in rank_nodes.values())
+            return lo, hi, sw
         # context-appropriate move per cell: rates shift in percentage POINTS,
         # level inputs scale by the type's ±%, all guard-clamped to validity
         ov_lo, ov_hi = {}, {}
@@ -583,9 +830,24 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         sw = max(abs((hi.get(nd) or 0) - (lo.get(nd) or 0)) for nd in rank_nodes.values())
         return lo, hi, sw
 
+    def _shift_rows_of(d):
+        """Per-row ordered cell vectors (nonzero + typed zero tail cells) for a
+        shift flex — the zeros are the landing zone for the displaced tail."""
+        kids = d.get("children") or [d]
+        return [sorted(list(lf["cells"]) + list(lf.get("zcells", [])), key=lambda x: x[1])
+                for lf in kids]
+
+    def _deresk(it):
+        # the to-zero downside is a PER-CUSTOMER lens; the family aggregate flexes
+        # as a symmetric dial (all our pct types are symmetric, so low = -high)
+        if it is not None and it.name.endswith("@risk"):
+            from .input_discovery import InputType as _IT
+            return _IT(it.name[:-5], "pct", -it.high, it.high, it.lo_clamp, it.hi_clamp, it.integer)
+        return it
+
     def _agg_itype(agg):
         # an aggregate flexes with its children's modal type (same-type grouping)
-        kinds = [lf["itype"] for lf in agg.get("children", []) if lf.get("itype")]
+        kinds = [_deresk(lf["itype"]) for lf in agg.get("children", []) if lf.get("itype")]
         if not kinds:
             from .input_discovery import classify_type as _ct
             return _ct(agg.get("label", ""), "", agg.get("v0", 0.0))
@@ -601,7 +863,10 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         if not cells:
             continue
         agg["itype"] = _agg_itype(agg)
-        lo, hi, sw = _flex(cells, agg["itype"])
+        shifting = getattr(agg["itype"], "mode", None) == "shift"
+        lo, hi, sw = _flex(cells, agg["itype"],
+                           shift_rows=_shift_rows_of(agg) if shifting else None,
+                           shift_k=agg.get("shift_k", 1))
         if sw < gate:
             for lf in agg["children"]:
                 child_of.pop(id(lf), None)
@@ -612,7 +877,10 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         for lf in agg["children"]:          # children are this aggregate's own decomposition
             if not all(c[0] in cellset for c in lf["cells"]):
                 continue
-            klo, khi, ksw = _flex(lf["cells"], lf["itype"])
+            k_shift = getattr(lf["itype"], "mode", None) == "shift"
+            klo, khi, ksw = _flex(lf["cells"], lf["itype"],
+                                  shift_rows=_shift_rows_of(lf) if k_shift else None,
+                                  shift_k=lf.get("shift_k", 1))
             kids.append(dict(lf, lo=klo, hi=khi, swing=ksw))
         kids.sort(key=lambda d: -d["swing"])           # keep the most material rows as children
         cand.append(dict(agg, cells=cells, lo=lo, hi=hi, swing=sw, children=kids[:10]))
@@ -622,7 +890,10 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         cells = [x for x in lf["cells"] if x[0] not in claimed]
         if not cells:
             continue
-        lo, hi, sw = _flex(cells, lf["itype"])
+        l_shift = getattr(lf["itype"], "mode", None) == "shift"
+        lo, hi, sw = _flex(cells, lf["itype"],
+                           shift_rows=_shift_rows_of(lf) if l_shift else None,
+                           shift_k=lf.get("shift_k", 1))
         if sw < gate:
             continue
         claimed |= {x[0] for x in cells}
@@ -631,9 +902,16 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         return None
     # guardrail: a swing orders of magnitude beyond the outputs means the flex
     # broke the model's branching (an enum/marker that slipped through) — a real
-    # lever can't move EBITDA by 100x its own base
+    # lever can't move EBITDA by 100x its own base. Tested on EVERY (output,
+    # period) cell, not just the terminal ranking swing: an enum flex can look
+    # sane in the terminal year yet put ±1e12 in an early-year cube cell.
     swing_cap = 100.0 * max(abs(eb_base or 1.0), abs(rev_base or 1.0))
-    cand = [d for d in cand if d["swing"] <= swing_cap]
+
+    def _worst_cell_swing(d):
+        return max((abs((d["hi"].get(nd) or 0) - (d["lo"].get(nd) or 0)) for nd in all_nodes),
+                   default=0.0)
+
+    cand = [d for d in cand if d["swing"] <= swing_cap and _worst_cell_swing(d) <= swing_cap]
     if not cand:
         return None
     cand.sort(key=lambda d: -d["swing"])
@@ -675,38 +953,57 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         # nonsense (billions). Distinct keys keep every driver independent.
         dkey = f"in:{d['sn']}:{d['r']}:{d.get('band', 0)}:{i}"
         it_d = d.get("itype")
+        d_shift = getattr(it_d, "mode", None) == "shift"
         base0 = d["v0"]
-        d_lo, d_hi = ranged_vals(it_d, base0) if it_d else (base0 * 0.8, base0 * 1.2)
-        d_lo, d_hi = _bracket_range(d_lo, d_hi, base0)
+        if d_shift:
+            # a timing lever: the editable input is the DELAY in months (0 = the
+            # plan's own start), so base 0, range 0..6; outputs interpolate from
+            # on-time (low) to slipped-6-months (high)
+            months = 6.0
+            d_val, d_lo, d_hi = 0.0, 0.0, months
+            d_label = f"{d['label']} — start delay (months)"
+        else:
+            d_lo, d_hi = ranged_vals(it_d, base0) if it_d else (base0 * 0.8, base0 * 1.2)
+            d_lo, d_hi = _bracket_range(d_lo, d_hi, base0)
+            d_val, d_label = base0, d["label"]
 
         def _kid(ci, c):
             kt = c.get("itype")
-            klo, khi = ranged_vals(kt, c["v0"]) if kt else (c["v0"] * 0.8, c["v0"] * 1.2)
-            klo, khi = _bracket_range(klo, khi, c["v0"])       # same JS-slope invariant
+            if getattr(kt, "mode", None) == "shift":
+                kval, klo, khi = 0.0, 0.0, 6.0
+            else:
+                kval = c["v0"]
+                klo, khi = ranged_vals(kt, kval) if kt else (kval * 0.8, kval * 1.2)
+                klo, khi = _bracket_range(klo, khi, kval)      # same JS-slope invariant
             return {"key": f"{dkey}::{ci}", "label": c["label"], "refs": [c["ref"]],
-                    "value": c["v0"], "low": klo, "high": khi,
+                    "value": kval, "low": klo, "high": khi,
                     "rtype": kt.name if kt else None, "out": _outmat(c)}
         kids = [_kid(ci, c) for ci, c in enumerate(d.get("children", []))]
         # low/high = the type-appropriate analyst-editable defaults (a tax rate
-        # moves ±5pp, a volume ±25% — never one blanket ±20%); the JS reads them
-        cube["drivers"].append({"key": dkey, "label": d["label"], "refs": [d["ref"]],
-                                "value": d["v0"], "low": d_lo, "high": d_hi,
+        # moves ±5pp, a volume ±25%, a phasing curve 0-6 months of delay — never
+        # one blanket ±20%); the JS reads them
+        cube["drivers"].append({"key": dkey, "label": d_label, "refs": [d["ref"]],
+                                "value": d_val, "low": d_lo, "high": d_hi,
                                 "rtype": it_d.name if it_d else None,
                                 "out": _outmat(d), "children": kids})
         eb_lo, eb_hi = d["lo"].get(eb_node), d["hi"].get(eb_node)
         rv_lo, rv_hi = d["lo"].get(rev_node), d["hi"].get(rev_node)
-        base_v = d["v0"] or 1.0
+        base_v = d_val or 1.0
         drivers.append(SensitivityDriver(
-            key=dkey, label=f"{d['label']} ({tp})",
-            input_refs=[d["ref"]], base=d["v0"], low=d_lo, high=d_hi,
+            key=dkey, label=f"{d_label} ({tp})",
+            input_refs=[d["ref"]], base=d_val, low=d_lo, high=d_hi,
             low_pct=round(d_lo / base_v - 1.0, 4), high_pct=round(d_hi / base_v - 1.0, 4),
             output_low=eb_lo, output_high=eb_hi, swing=d["swing"],
             out2_low=rv_lo, out2_high=rv_hi, unit=U))
         adverse_low = (eb_lo or 0) < (eb_hi or 0)
-        for (nd, _c, val) in d["cells"]:
-            c_lo, c_hi = ranged_vals(it_d, val) if it_d else (val * 0.8, val * 1.2)
-            adv_ov[nd] = c_lo if adverse_low else c_hi
-            fav_ov[nd] = c_hi if adverse_low else c_lo
+        if d_shift:
+            # all-adverse = every curve slips; all-favorable = the plan holds
+            adv_ov.update(_shift_overrides(_shift_rows_of(d), d.get("shift_k", 1)))
+        else:
+            for (nd, _c, val) in d["cells"]:
+                c_lo, c_hi = ranged_vals(it_d, val) if it_d else (val * 0.8, val * 1.2)
+                adv_ov[nd] = c_lo if adverse_low else c_hi
+                fav_ov[nd] = c_hi if adverse_low else c_lo
     downside = model.outputs_with_overrides(adv_ov, [eb_node])[eb_node]
     upside = model.outputs_with_overrides(fav_ov, [eb_node])[eb_node]
 

@@ -350,6 +350,15 @@ def _compile(node):
 
 
 def _compile_call(name, anodes):
+    # COLUMN(ref)/ROW(ref) resolve at COMPILE time from the ref text — the AST
+    # keeps the ref string, and the answer is a constant (no resolver needed).
+    # The bare COLUMN()/ROW() forms are substituted per-cell in _eval_node.
+    if name in ("COLUMN", "ROW") and len(anodes) == 1 and anodes[0][0] in ("cell", "range"):
+        ref0 = anodes[0][1].split(":")[0].split("!")[-1].replace("$", "")
+        m0 = re.match(r"([A-Za-z]{1,3})(\d+)$", ref0)
+        if m0:
+            const = float(_col_to_idx(m0.group(1))) if name == "COLUMN" else float(m0.group(2))
+            return lambda ctx: const
     ac = [_compile(a) for a in anodes]
     if name == "IF":
         c, th = ac[0], ac[1]
@@ -559,6 +568,36 @@ def _apply(name, args):
         rng = _aslist(args[0])
         crit = args[1]
         return float(sum(1 for c in rng if _crit_match(c, crit)))
+    if name == "SUMIFS":
+        # SUMIFS(sum_range, crit_range1, crit1[, crit_range2, crit2, ...])
+        sumr = _aslist(args[0])
+        pairs = list(zip(args[1::2], args[2::2]))
+        tot = 0.0
+        for i, v in enumerate(sumr):
+            ok = True
+            for rng, crit in pairs:
+                lr = _aslist(rng)
+                if not _crit_match(lr[i] if i < len(lr) else None, crit):
+                    ok = False
+                    break
+            if ok and not (v is None or isinstance(v, str) or v is _NA):
+                tot += _num(v)
+        return tot
+    if name == "DATEDIF":
+        a, b = _as_date(args[0]), _as_date(args[1])
+        unit = str(args[2]).strip().upper() if len(args) > 2 else "D"
+        if b < a:
+            raise _XlError()
+        if unit == "D":
+            return float((b - a).days)
+        months = (b.year - a.year) * 12 + (b.month - a.month) - (1 if b.day < a.day else 0)
+        if unit == "M":
+            return float(max(0, months))
+        if unit == "Y":
+            return float(max(0, months // 12))
+        if unit == "YM":
+            return float(max(0, months % 12))
+        raise Unsupported(f"DATEDIF unit {unit!r}")
     if name in ("XLOOKUP",):
         lookup = args[0]
         larr = _aslist(args[1])
@@ -790,6 +829,13 @@ class RecomputeModel:
         si = self._formula_src[node][1]
         if fn is None:
             formula = self._formula_src[node][0]
+            # bare COLUMN()/ROW() mean "this cell's column/row" — a per-cell
+            # constant, substituted before compiling (the closure is per-node)
+            if "COLUMN()" in formula.upper().replace(" ", "") or \
+                    "ROW()" in formula.upper().replace(" ", ""):
+                _si, _r, _c = decode(node)
+                formula = re.sub(r"(?i)\bCOLUMN\s*\(\s*\)", str(_c), formula)
+                formula = re.sub(r"(?i)\bROW\s*\(\s*\)", str(_r), formula)
             fn = _compile(_Parser(_tokenize(formula.lstrip("="))).parse())
             self._compiled[node] = fn
         return fn(self._make_resolvers(si))
@@ -841,8 +887,11 @@ class RecomputeModel:
                 self.values[node] = rec.value if (rec is not None and rec.value is not None) else 0.0
                 n_frozen += 1
         self.n_frozen = n_frozen
-        # too much of the model is unevaluable -> not trustworthy; fall back
-        if n_frozen > max(8, int(0.03 * len(order))):
+        # backstop only: the REAL arbiter of faithfulness is the gate below (the
+        # requested outputs must reproduce their cached values exactly). A hard
+        # 3% frozen-cell fail threw away models whose frozen cells sat off the
+        # gated spines entirely — the loose 25% cap catches only genuine wrecks.
+        if n_frozen > max(8, int(0.25 * len(order))):
             return None
         # gate: the headline outputs must reproduce the cached values
         for node in (gate_nodes or check_nodes):
