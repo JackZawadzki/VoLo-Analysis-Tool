@@ -1,1 +1,0 @@
-/Users/jackzawadzki/Library/CloudStorage/GoogleDrive-jackz@voloearth.com/Shared drives/Portfolio Company Information/CaliCat (H2U)/2022 H2U Data Room B2/Patents & Licensing/Caltech/This is the monthly payment of $15_820 we make to CalTech.msg

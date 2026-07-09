@@ -1,1 +1,0 @@
-/Users/jackzawadzki/Library/CloudStorage/GoogleDrive-jackz@voloearth.com/Shared drives/Portfolio Company Information/CaliCat (H2U)/2022 H2U Data Room B2 (A+ Round)/Business Development/SCG/Fw_ H2U Task 1B deliverable for approval.msg

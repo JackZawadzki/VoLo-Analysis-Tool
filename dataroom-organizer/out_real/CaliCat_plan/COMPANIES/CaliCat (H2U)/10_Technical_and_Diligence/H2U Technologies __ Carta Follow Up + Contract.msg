@@ -1,1 +1,0 @@
-/Users/jackzawadzki/Library/CloudStorage/GoogleDrive-jackz@voloearth.com/Shared drives/Portfolio Company Information/CaliCat (H2U)/2022 H2U Data Room B2 (A+ Round)/Equity/H2U Technologies __ Carta Follow Up + Contract.msg
