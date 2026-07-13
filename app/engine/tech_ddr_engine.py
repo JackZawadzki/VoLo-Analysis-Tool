@@ -299,6 +299,16 @@ def _search_call(client: Anthropic, prompt: str, max_tokens: int, budget: _Budge
             break
 
         messages.append({"role": "assistant", "content": resp.content})
+
+        # Server-side web_search pauses a long/looping turn with
+        # stop_reason == "pause_turn" (it emits server_tool_use, NOT a
+        # client-side tool_use). The turn is NOT finished — resume by
+        # re-sending the accumulated messages; the RESEARCH_MAX_ITERS bound
+        # caps the loop. Without this the loop hit `else: break` below and
+        # returned pre-JSON preamble → "No JSON found in response".
+        if resp.stop_reason == "pause_turn":
+            continue
+
         tool_results = [
             {"type": "tool_result", "tool_use_id": b.id, "content": ""}
             for b in resp.content if getattr(b, "type", None) == "tool_use"

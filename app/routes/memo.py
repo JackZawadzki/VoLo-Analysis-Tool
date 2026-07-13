@@ -2071,7 +2071,8 @@ You are writing ONE section of an investment memorandum.
 
 CRITICAL — FACTUAL ACCURACY:
 - ONLY state facts, names, numbers, dates, and claims that appear explicitly in the provided source documents or report data.
-- NEVER fabricate facility names, locations, dollar amounts, percentages, timelines, partnerships, or any other specifics.
+- NEVER fabricate PERSON names (founders, team members, advisors, customers), COMPANY names (competitors, partners, acquirers, investors, comparable startups), facility names, locations, dollar amounts, percentages, timelines, or partnerships. If a specific person or company is not named in the sources for the subject company, do not name one — write "the founding team" / "incumbent competitors" generically instead.
+- Every named person and company must trace to the SUBJECT company's own source documents (the company named in the user message). If you find yourself introducing a person or organization that is not in those sources, STOP — that is a hallucination; delete it.
 - If you cannot find a specific detail in the sources, either omit it or flag it as "not confirmed in data room materials" or a diligence gap.
 - Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] or [RVM]. If you cannot cite it, do not write it.
 - When in doubt, be less specific rather than risk inventing details. "The company's manufacturing facility" is better than fabricating a facility name.
@@ -2082,7 +2083,7 @@ Rules:
 3. Balance the bull case and bear case — credibility comes from honest assessment, not advocacy
 4. Use Markdown formatting: ### for sub-sections, **bold** for emphasis, bullet lists only for catalogs of discrete items
 5. Do NOT include the section title as a header — it will be added automatically
-6. Target 400-800 words per section (more for Financing Overview and Business Model, less for shorter sections)
+6. Length must match the grounded material available. 400-800 words is a CEILING for well-documented sections, never a target to pad toward. When the sources are thin, write a SHORT section (a few honest sentences) that names the diligence gaps — a 3-sentence grounded section is far better than 500 words of invented specifics. Do NOT invent people, companies, or facts to reach a word count.
 7. Do NOT reference other sections or say "as discussed in..." — each section stands alone
 8. If information is missing or insufficient, explicitly note it as a diligence gap requiring follow-up — do NOT fill gaps with invented details
 9. Open with a strong orienting statement that frames why this topic matters for the investment thesis
@@ -2153,6 +2154,19 @@ def _pass2_write_section(client, model: str, section: dict, brief: str,
                          citation_legend: str = "") -> dict:
     """Pass 2: Write a single memo section from its aggregated brief + report data."""
 
+    # No grounded material for this section — do NOT hand the model an empty
+    # brief and tell it to "be thorough" (that is precisely when it confabulates
+    # people and competitor companies from other deals). Emit an explicit
+    # diligence-gap stub and skip the LLM call entirely.
+    if not (brief or "").strip() and not (report_slice or "").strip():
+        return {
+            "text": (f"*The data room did not contain material specific to this "
+                     f"section for {company_name or 'this company'}. Treat this as a "
+                     f"diligence gap to close before IC — request the supporting "
+                     f"documentation from the company.*"),
+            "tokens_in": 0, "tokens_out": 0,
+        }
+
     user_parts = [f"# SECTION: {section['title']}"]
     user_parts.append(f"## Section Purpose\n{section['guidance']}")
 
@@ -2173,7 +2187,7 @@ def _pass2_write_section(client, model: str, section: dict, brief: str,
     if links:
         user_parts.append("## Reference Links\n" + "\n".join(f"- {l}" for l in links))
 
-    user_parts.append(f"\nWrite the '{section['title']}' section of the investment memo for {company_name or 'this company'}. Be thorough and data-driven. Cite your sources using [n] notation.")
+    user_parts.append(f"\nWrite the '{section['title']}' section of the investment memo for {company_name or 'this company'}. Use ONLY the facts, people, and companies named above — do not introduce any person or organization that is not in this material. Match the section length to the grounded material: a thin section should be short and flag diligence gaps, never padded with invented specifics. Cite your sources using [n] notation.")
 
     user_msg = "\n\n".join(user_parts)
 

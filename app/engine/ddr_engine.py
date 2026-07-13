@@ -56,6 +56,7 @@ def _agentic_call(client: Anthropic, prompt: str,
     messages = [{"role": "user", "content": prompt}]
     final_text = ""
     web_sources = []  # real URLs harvested from web_search results
+    pause_count = 0   # server-side web_search "pause_turn" resumes (capped below)
 
     while True:
         backoff_delays = [30, 60, 120, 240, 300]
@@ -92,9 +93,10 @@ def _agentic_call(client: Anthropic, prompt: str,
                 else:
                     raise
 
+        turn_texts = []
         for block in response.content:
             if hasattr(block, "text"):
-                final_text = block.text
+                turn_texts.append(block.text)
             # Harvest REAL source URLs straight from the web_search tool
             # results — these come from the search engine, not the model, so
             # they are genuine working links (the reliable fix for broken or
@@ -107,6 +109,13 @@ def _agentic_call(client: Anthropic, prompt: str,
                         web_sources.append(
                             {"title": getattr(_r, "title", None) or _u, "url": _u})
 
+        # Keep the JSON: accumulate ALL text blocks of this turn instead of
+        # letting a trailing courtesy sentence overwrite the block that holds
+        # the JSON. _extract_json spans first '{' to last '}', so surrounding
+        # prose is harmless.
+        if turn_texts:
+            final_text = "\n".join(turn_texts)
+
         # Count both client-side tool_use and server-side web_search calls
         tool_calls = [b for b in response.content
                       if b.type in ("tool_use", "server_tool_use")]
@@ -117,6 +126,20 @@ def _agentic_call(client: Anthropic, prompt: str,
             break
 
         messages.append({"role": "assistant", "content": response.content})
+
+        # Server-side web_search pauses a long/looping turn with
+        # stop_reason == "pause_turn" — it emits server_tool_use, NOT a
+        # client-side tool_use, so the tool_results list below is empty. The
+        # turn is NOT finished: resume by re-sending the accumulated messages
+        # with no extra user turn. Previously this fell through to the
+        # `else: break`, so the loop exited after one turn with only the
+        # model's pre-JSON preamble → "No JSON found in response".
+        if response.stop_reason == "pause_turn":
+            pause_count += 1
+            if pause_count > 8:
+                break
+            continue
+
         tool_results = [
             {"type": "tool_result", "tool_use_id": b.id, "content": ""}
             for b in response.content if b.type == "tool_use"
@@ -408,7 +431,7 @@ def analyze(api_key: str, pitch_text: str, on_progress=None) -> dict:
 
     raw_text, web_sources = _agentic_call(
         client, prompt,
-        max_tokens=16000, temperature=0.2,
+        max_tokens=32000, temperature=0.2,
         on_progress=on_progress,
     )
     result = _extract_json(raw_text)

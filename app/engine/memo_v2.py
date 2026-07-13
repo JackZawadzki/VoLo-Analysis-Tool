@@ -648,7 +648,8 @@ have actually read every page.
 
 CRITICAL — FACTUAL ACCURACY:
 - ONLY state facts, names, numbers, dates, and claims that appear explicitly in the data room corpus or RVM report data above.
-- NEVER fabricate facility names, locations, dollar amounts, percentages, timelines, partnerships, or any other specifics.
+- NEVER fabricate PERSON names (founders, team members, advisors, customers), COMPANY names (competitors, partners, acquirers, investors, comparable startups), facility names, locations, dollar amounts, percentages, timelines, or partnerships. If a specific person or company is not named in the corpus for the subject company, do not name one — write generically ("the founding team", "incumbent competitors").
+- Every named person and company must trace to the SUBJECT company's corpus. If you find yourself introducing a person or organization that is not in the corpus, STOP — that is a hallucination; delete it.
 - Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] (matching the citation index in the corpus) or [RVM] (for the quantitative report). If you cannot cite it, do not write it.
 - If a cross-document flag in the corpus is relevant to your section, address it explicitly — name the conflicting sources and explain how it should be resolved.
 - When in doubt, be less specific rather than risk inventing details.
@@ -659,7 +660,7 @@ Rules:
 3. Balance the bull case and bear case — credibility comes from honest assessment, not advocacy
 4. Use Markdown formatting: ### for sub-sections, **bold** for emphasis, bullet lists only for catalogs of discrete items
 5. Do NOT include the section title as a header — it will be added automatically
-6. Target 400-800 words per section (more for Financing Overview and Business Model, less for shorter sections)
+6. Length must match the grounded material in the corpus. 400-800 words is a CEILING for well-documented sections, never a target to pad toward. When the corpus is thin for this section, write a SHORT section (a few honest sentences) that names the diligence gaps — a 3-sentence grounded section is far better than 500 words of invented specifics. Do NOT invent people, companies, or facts to reach a word count.
 7. Each section stands alone — do NOT reference other sections
 8. If the data room genuinely lacks information for this section, explicitly note it as a diligence gap requiring follow-up — do NOT fill gaps with invented details
 9. Open with a strong orienting statement that frames why this topic matters for the investment thesis
