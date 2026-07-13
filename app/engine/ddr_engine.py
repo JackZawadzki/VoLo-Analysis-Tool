@@ -62,13 +62,20 @@ def _agentic_call(client: Anthropic, prompt: str,
         backoff_delays = [30, 60, 120, 240, 300]
         for attempt in range(5):
             try:
-                response = client.messages.create(
+                # Stream and collect the final message. A DDR turn runs several
+                # server-side web searches and a large JSON output, which can
+                # exceed the SDK's 10-minute non-streaming ceiling (it raises
+                # "Streaming is required..." pre-flight once max_tokens is large).
+                # Streaming removes that ceiling; get_final_message() returns the
+                # same Message shape the rest of this loop expects.
+                with client.messages.stream(
                     model=MODEL,
                     max_tokens=max_tokens,
                     temperature=temperature,
                     tools=[WEB_SEARCH_TOOL],
                     messages=messages,
-                )
+                ) as stream:
+                    response = stream.get_final_message()
                 break
             except RateLimitError as e:
                 wait = backoff_delays[min(attempt, len(backoff_delays) - 1)]
