@@ -174,10 +174,41 @@ def _node_for_item(graph, item, period):
     return encode(graph.sheet_index[sh], row, column_index_from_string(col_l)), t[1]
 
 
+# a stray cell that is not a real label: a placeholder ("N/A", "-", "TBD"), or a
+# bare number sitting in a label column. Skipped when picking a row/section name.
+_PLACEHOLDER_TXT = re.compile(r"^\s*(n\.?/?a\.?|tbd|t\.?b\.?d\.?|[-—–]+|x+|\?+|\.+|0+|"
+                              r"\d+(\.\d+)?%?)\s*$", re.I)
+# a document banner/title, not a financial section title: confidentiality/legal/
+# prepared-by lines and cover-page titles ("2026-2030 Operating Plan")
+_BANNER_TXT = re.compile(r"confidential|internal use|proprietary|all rights|copyright|©|"
+                         r"do not (distribute|circulate)|for discussion|preliminary|draft\b|"
+                         r"prepared (by|for)|\bas of\b|www\.|\.com\b|"
+                         r"operating plan|business plan|pro\s*forma|"
+                         r"projected\s+(p\s*&?\s*l|p and l|income|financ|statement)|"
+                         r"^\s*\d{4}\s*[-–]\s*\d{4}\b", re.I)
+
+
+# a bare date ("06/16/2026", "16-Jun-26") is a prepared-on stamp, not a section
+_DATE_TXT = re.compile(r"^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|"
+                       r"\d{1,2}[-\s][A-Za-z]{3,9}[-\s]\d{2,4})\s*$")
+# a denomination caption ("$000", "$MM", "in thousands") is a units line, not a section
+_DENOM_TXT = re.compile(r"^\s*(\$|€|£)?\s*(000s?|k|m|mm|bn?)\s*$|^\s*in\s+(thousand|million|billion)s?\s*$"
+                        r"|^\s*\(?\s*\$?\s*0{3,}s?\s*\)?\s*$", re.I)
+
+
+def _is_junk_label(text: str) -> bool:
+    t = (text or "").strip()
+    return (not t) or bool(_PLACEHOLDER_TXT.match(t)) or bool(_BANNER_TXT.search(t)) \
+        or bool(_DATE_TXT.match(t)) or bool(_DENOM_TXT.match(t))
+
+
 def _row_label(sd, row: int) -> str:
+    # the row's name is the LEFT-most substantive label — skipping placeholder
+    # tokens ("N/A" in an empty period column) and document banners that sit
+    # between the real label and the data
     for c in range(1, min(sd.max_col, 12) + 1):
         rec = sd.cell(row, c)
-        if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+        if rec is not None and isinstance(rec.value, str) and not _is_junk_label(rec.value):
             return rec.value.strip()[:38]
     return f"row {row}"
 
@@ -265,7 +296,7 @@ def _band_label(sd, row: int, band_lo: int) -> str:
     if band_lo > 1:
         for c in range(band_lo - 1, 0, -1):
             rec = sd.cell(row, c)
-            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+            if rec is not None and isinstance(rec.value, str) and not _is_junk_label(rec.value):
                 return rec.value.strip()[:38]
     return _row_label(sd, row)
 
@@ -279,7 +310,7 @@ def _section_label(sd, blo: int, bhi: int, row: int) -> Optional[str]:
         lab = None
         for c in range(max(1, blo - 1), 0, -1):
             rec = sd.cell(rr, c)
-            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+            if rec is not None and isinstance(rec.value, str) and not _is_junk_label(rec.value):
                 lab = rec.value.strip()
                 break
         if not lab:
@@ -342,7 +373,7 @@ def _table_header(sd, blo, bhi, row, max_up=40):
         out = []
         for c in range(1, hi + 1):
             rec = sd.cell(rr, c)
-            if rec is not None and isinstance(rec.value, str) and rec.value.strip():
+            if rec is not None and isinstance(rec.value, str) and not _is_junk_label(rec.value):
                 out.append((c, rec.value.strip()))
         return out
 
@@ -565,6 +596,11 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
         if role_v in ("documentation", "presentation", "scratch"):
             continue
         assumish = sheet_is_assumptionish(sn, role_v)
+        # a balance sheet's line items (AR, inventory, PP&E, payables) are working-
+        # capital OUTPUTS driven by revenue x DSO / COGS x DIO / capex schedules —
+        # not operating levers. Skip them unless the modeller coloured them as
+        # inputs; the true drivers (DSO, DIO, growth) live on the assumption sheet.
+        is_balance_sheet = bool(_re.search(r"balance\s*sheet", sn, _re.I))
         # curve detection needs the FINEST axis on the sheet — the primary axis is
         # deliberately the annual one, but deployment ramps live on the monthly
         # (or quarterly) columns alongside it
@@ -591,6 +627,8 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                 fill_hit = fill_hit or (conv_fill is not None and rec.fill_key == conv_fill)
             if not cells:
                 continue
+            if is_balance_sheet and not fill_hit:
+                continue                               # WC output, not an operating lever
             cells.sort(key=lambda x: x[1])
             v0 = cells[-1][2]
             blo, bhi = cells[0][1], cells[-1][1]
@@ -636,19 +674,25 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                         blo, bhi = cells[0][1], cells[-1][1]
 
             measure = (hdr or {}).get("measure")
-            raw_label = _band_label(sd, r, blo)
+            raw_label = _clean_label(_band_label(sd, r, blo))
+            # when the header is a bare PERIOD row (years only, no measure text —
+            # common on assumption sheets), the row's own left label IS the entity
+            # ('Space & Defense') and the nearest SECTION TITLE above is the measure
+            # ('Revenue Growth %'). _section_label already skips document banners.
+            if not measure:
+                sec = _section_label(sd, blo, bhi, r)
+                if sec:
+                    sec = _clean_label(sec)
+                    if sec.lower() != raw_label.lower():
+                        measure = sec
+                        if not entity and raw_label and not raw_label.startswith("row "):
+                            entity = raw_label
             if measure and entity:
                 label = f"{measure} — {entity}"
             elif measure:
-                lbl2 = _clean_label(raw_label)
-                label = measure if lbl2.lower() in (measure.lower(), "") else f"{measure} — {lbl2}"
+                label = measure if raw_label.lower() in (measure.lower(), "") else f"{measure} — {raw_label}"
             else:
-                # no header table found: fall back to the section title for
-                # context so a bare product/row name still reads on a tornado
                 label = raw_label
-                sec = _section_label(sd, blo, bhi, r)
-                if sec and _clean_label(sec).lower() != _clean_label(raw_label).lower():
-                    label = f"{_clean_label(raw_label)} ({_clean_label(sec)[:24]})"
 
             in_rev = any(nd in rev_cone for nd, _c, _v in cells)
             in_eb = any(nd in eb_cone for nd, _c, _v in cells)
@@ -660,11 +704,16 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
                 continue                               # scenario switches / unit codes: not quantities
 
             # a normalized phasing/deployment curve (many small fractions summing
-            # to ~1 per year) is a TIMING assumption: flex = start delay, not ±pp
-            vals = [v for _n, _c, v in cells]
-            curve_hint = (len(vals) >= 6 and all(0.0 <= v <= 1.0001 for v in vals)
-                          and sum(vals) >= 0.8 and gran in ("monthly", "quarterly"))
+            # to ~1 per year) is a TIMING assumption: flex = start delay, not ±pp.
+            # Require an explicit curve/schedule cue in the name too — otherwise a
+            # row of annual growth RATES that happen to land in [0,1] gets mis-read
+            # as a curve and flexed as a nonsensical "start delay".
             type_label = f"{measure or ''} {raw_label}".strip()
+            vals = [v for _n, _c, v in cells]
+            curve_cue = bool(_re.search(r"curve|phas|deploy|ramp|schedul|timing|seasonal|cadence"
+                                        r"|%\s*complet|roll[- ]?out|spread", type_label, _re.I))
+            curve_hint = (curve_cue and len(vals) >= 6 and all(0.0 <= v <= 1.0001 for v in vals)
+                          and sum(vals) >= 0.8 and gran in ("monthly", "quarterly"))
             itype = classify_type(type_label, fmt, v0, curve_hint=curve_hint)
             # a NAMED customer/contract row feeding revenue carries binary risk:
             # its downside runs to ZERO (lose the contract), not just -X% — the
@@ -724,13 +773,13 @@ def _recompute_ebitda_tornado(wbd, structure, mapping, graph, U, periods) -> Opt
             leaves.extend(row_leaves)
             by_tbl: dict[tuple, list] = {}
             for lf in row_leaves:
-                if lf.get("hdr_row") is not None and lf.get("measure"):
-                    # SAME-TYPE constraint: a family is one lever only when its
-                    # rows are the same KIND of assumption — a header that merely
-                    # spans a block of unrelated rows (salary + tax + headcount)
-                    # must not fuse them into one meaningless dial
-                    tname = getattr(lf.get("itype"), "name", "") or ""
-                    key = (lf["hdr_row"], lf.get("block") or "", tname.replace("@risk", ""))
+                # group rows by their MEASURE (the deck/section they belong to —
+                # 'Revenue Growth %', 'Pricing') within a scenario block, and only
+                # when they are the same KIND of assumption (a section spanning
+                # unrelated rows must not fuse into one meaningless dial)
+                if lf.get("measure"):
+                    tname = (getattr(lf.get("itype"), "name", "") or "").replace("@risk", "")
+                    key = (lf["measure"].lower(), lf.get("block") or "", tname)
                 else:
                     key = (None, f"~row{lf['r']}", "")
                 by_tbl.setdefault(key, []).append(lf)

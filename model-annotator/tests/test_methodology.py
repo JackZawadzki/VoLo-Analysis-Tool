@@ -230,6 +230,19 @@ def test_scale_factor_and_enum_killed():
     assert s_price > s_factor and s_factor < 3.0            # factor sinks below real inputs
 
 
+# --- driver naming: placeholder / banner / date / denomination are not labels --
+def test_junk_label_filter():
+    from model_annotator.sensitivity import _is_junk_label
+    for junk in ["N/A", "n/a", "-", "—", "TBD", "0", "12", "45%",
+                 "Carbice Confidential - For Internal Use Only", "Proprietary & Confidential",
+                 "06/16/2026", "16-Jun-2026", "$000", "$MM", "in thousands",
+                 "2026-2030 Operating Plan", "Projected P&L for Carbice", "Business Plan"]:
+        assert _is_junk_label(junk), f"{junk!r} should be junk"
+    for real in ["Space & Defense", "Revenue Growth %", "Data & Power", "Gross Margin %",
+                 "Machinery and equipment", "SAFE", "Income Statement", "R&D"]:
+        assert not _is_junk_label(real), f"{real!r} should be a real label"
+
+
 # --- units: a bare "$000" denomination line below the title = thousands --------
 def test_denomination_token_detected_below_title():
     import types
