@@ -186,6 +186,38 @@ def _monotone_prefix(tokens: list[PeriodToken]) -> list[PeriodToken]:
     return out
 
 
+def _interleaved_axes(sd: SheetData, line, orientation) -> list[tuple[float, PeriodAxis]]:
+    """Recover a single-granularity axis from a header that INTERLEAVES kinds.
+
+    Real statements often lay out '2025 | Q1'26 Q2'26 Q3'26 Q4'26 | 2026 |
+    Q1'27 .. | 2027 | 2028 2029 2030' on one row — the annual series the analyst
+    reads is scattered across non-adjacent columns among the quarterly ones, so no
+    contiguous same-kind run exists and detection finds nothing. Here we take, per
+    granularity, the monotone same-kind subsequence across the whole line. Only
+    fires when the line genuinely interleaves kinds (more period cells than the
+    subsequence), so pure runs stay with the contiguous path above."""
+    toks = []
+    for r, c, rec in line:
+        tp = _classify_period_value(rec.value, rec.number_format) if rec else None
+        if tp:
+            toks.append(PeriodToken(row=r, col=c, label=tp[0], kind=tp[1], sort_key=tp[2]))
+    if len(toks) < MIN_RUN:
+        return []
+    by_kind: dict[str, list[PeriodToken]] = {}
+    for t in toks:
+        gk = "year" if t.kind in ("year", "year_n") else t.kind
+        by_kind.setdefault(gk, []).append(t)
+    out = []
+    for _gk, ts in by_kind.items():
+        mono = []
+        for t in ts:                       # greedy strictly-increasing subsequence
+            if not mono or t.sort_key > mono[-1].sort_key:
+                mono.append(t)
+        if len(mono) >= MIN_RUN and len(mono) < len(toks):
+            out.append(_axis_from_run(sd, list(mono), orientation))
+    return out
+
+
 def detect_period_axes(sd: SheetData) -> list[PeriodAxis]:
     """All period axes on a sheet, best first. Empty list if none found."""
     candidates: list[tuple[float, PeriodAxis]] = []
@@ -197,6 +229,7 @@ def detect_period_axes(sd: SheetData) -> list[PeriodAxis]:
             run = _monotone_prefix(run)
             if len(run) >= MIN_RUN:
                 candidates.append(_axis_from_run(sd, run, Orientation.periods_in_columns))
+        candidates.extend(_interleaved_axes(sd, line, Orientation.periods_in_columns))
 
     # Hypothesis B: periods in rows (scan left columns)
     for col in range(1, min(sd.max_col, SCAN_BAND) + 1):
@@ -205,6 +238,7 @@ def detect_period_axes(sd: SheetData) -> list[PeriodAxis]:
             run = _monotone_prefix(run)
             if len(run) >= MIN_RUN:
                 candidates.append(_axis_from_run(sd, run, Orientation.periods_in_rows))
+        candidates.extend(_interleaved_axes(sd, line, Orientation.periods_in_rows))
 
     if not candidates:
         return []

@@ -230,6 +230,29 @@ def test_scale_factor_and_enum_killed():
     assert s_price > s_factor and s_factor < 3.0            # factor sinks below real inputs
 
 
+# --- period axis: recover an interleaved annual series (annual totals among Qs) -
+def test_interleaved_annual_axis_recovered():
+    import types
+    from model_annotator import structure as S
+    class _C:
+        def __init__(self, v, f="General"):
+            self.value = v
+            self.number_format = f
+    sd = types.SimpleNamespace(name="Income Statement")
+    # a real layout: 2025 | Q1'26 Q2'26 Q3'26 Q4'26 | 2026 | 2027 | 2028 | 2029 | 2030
+    line = [(9, 6, _C(2025)), (9, 7, None),
+            (9, 8, _C("Q1 2026")), (9, 10, _C("Q2 2026")), (9, 12, _C("Q3 2026")),
+            (9, 14, _C("Q4 2026")), (9, 16, _C(2026)), (9, 26, _C(2027)),
+            (9, 28, _C(2028)), (9, 30, _C(2029)), (9, 32, _C(2030))]
+    axes = S._interleaved_axes(sd, line, S.Orientation.periods_in_columns)
+    annual = [ax for _s, ax in axes
+              if [p for p in ax.periods] == ["2025", "2026", "2027", "2028", "2029", "2030"]]
+    assert annual, f"expected the 2025-2030 annual series, got {[list(a.periods) for _s, a in axes]}"
+    # the annual columns must be the real total columns (6,16,26,28,30,32), not the quarters
+    cols = [ref.split("!")[-1] for ref in annual[0].header_cells]
+    assert cols[0].startswith("F") and cols[1].startswith("P")   # col 6 = F, col 16 = P
+
+
 # --- sensitivity cube: driver keys MUST be unique (JS maGet/maEval invariant) -
 def test_cube_driver_keys_unique():
     """Every cube driver needs a unique key. Colliding keys make the front-end
