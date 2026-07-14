@@ -350,7 +350,12 @@ def detect_units(sd: SheetData) -> UnitsInfo:
         # single header row are per-column units (e.g. several "NPV ($M)" cols)
         rows_with_scale = {h[0] for h in hits if h[3] == scale}
         caption = col <= 3 and bool(_CAPTION.search(text))
-        if (row <= 4 and col <= 6) or len(rows_with_scale) >= 3 or caption:
+        # a cell whose ENTIRE content is the denomination token ("$000", "in
+        # thousands", "$M") in the top-left title block is an unambiguous sheet
+        # denomination line, even a few rows below the title — this is exactly how
+        # models caption units ("$000" on its own row under the plan name).
+        denom_only = col <= 3 and row <= 12 and len(text.strip()) <= 16
+        if (row <= 4 and col <= 6) or len(rows_with_scale) >= 3 or caption or denom_only:
             return UnitsInfo(
                 scale=scale, label=label, confidence=0.95, explicit=True,
                 evidence=f"{format_ref(sd.name, a1(row, col))} = {text!r}",

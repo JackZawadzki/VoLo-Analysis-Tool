@@ -992,6 +992,17 @@ def render_report(report: Report, filename: str) -> str:
     a(f"<h1>{e(company)} <span class=muted style='font-weight:400'>— Analysis</span></h1>")
     periods = wm.period_axis.periods if wm.period_axis else []
 
+    # denomination banner: the figures below are the model's own stored values, so
+    # they tie to the workbook cell-for-cell — but the reader must know the scale
+    # ("$000" means 3,012 is $3.0M, not $3,012). Surface the primary sheet's units.
+    prim_u = wm.units.get(wm.primary_statement_sheet) if wm.primary_statement_sheet else None
+    if prim_u and (prim_u.scale or 1.0) != 1.0:
+        mult = {1_000.0: "thousands", 1_000_000.0: "millions", 1_000_000_000.0: "billions"}.get(
+            prim_u.scale, f"units of {prim_u.scale:g}")
+        a(f"<div class=denom style='margin:2px 0 10px;font-size:13px;color:var(--muted)'>"
+          f"<b style='color:#8a5a2b'>Figures in {e(prim_u.label)}</b> — as denominated in the model "
+          f"(a value of 3,012 means 3,012 {mult} = 3.0M). Numbers below match the workbook cells exactly.</div>")
+
     # executive summary
     es = report.executive_summary
     if es and es.text:

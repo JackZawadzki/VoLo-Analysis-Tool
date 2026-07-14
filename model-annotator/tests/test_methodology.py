@@ -230,6 +230,38 @@ def test_scale_factor_and_enum_killed():
     assert s_price > s_factor and s_factor < 3.0            # factor sinks below real inputs
 
 
+# --- units: a bare "$000" denomination line below the title = thousands --------
+def test_denomination_token_detected_below_title():
+    import types
+    from model_annotator import structure as S
+    FMT = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)'
+    grid = {(2, 3): "Projected P&L for Carbice 2025-2030",
+            (4, 2): "2026-2030 Operating Plan",
+            (5, 2): "$000 ",              # the denomination line, one cell, row 5
+            (7, 2): "Carbice Confidential - For Internal Use Only"}
+
+    class _C:
+        def __init__(self, v, f=FMT):
+            self.value = v
+            self.number_format = f
+
+    class _SD:
+        name = "Income Statement"
+        max_row = 24
+        max_col = 30
+
+        def cell(self, r, c):
+            return _C(grid[(r, c)]) if (r, c) in grid else None
+        def iter_cells(self):
+            for (r, c), v in grid.items():
+                yield r, c, _C(v)
+    u = S.detect_units(_SD())
+    assert u.scale == 1000.0 and "thousand" in u.label.lower()
+    # a genuinely whole-units sheet (no denomination token) stays scale 1
+    grid.pop((5, 2))
+    assert S.detect_units(_SD()).scale == 1.0
+
+
 # --- period axis: recover an interleaved annual series (annual totals among Qs) -
 def test_interleaved_annual_axis_recovered():
     import types
