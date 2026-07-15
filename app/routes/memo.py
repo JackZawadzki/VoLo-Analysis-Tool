@@ -1140,21 +1140,32 @@ def _return_profile_block(report: dict) -> str:
 
 
 def _verdict_token(text: str):
-    """Extract an Invest / Pass / Conditional verdict from an EXPLICIT verdict
-    phrase only — a recommendation cue directly followed by the verdict word
-    (e.g. 'Recommendation: PASS', 'we recommend to invest', 'verdict — conditional').
+    """Classify a section's verdict as invest / pass / conditional / hold /
+    monitor from an EXPLICIT recommendation phrase — a recommendation cue followed
+    (within a short window) by the verdict word in any common form (invest /
+    investing / investment, pass / passing / decline, monitor / monitoring, hold).
     Returns None when there is no explicit cue, so ordinary prose ('pass-through
-    economics', 'conditional on closing', 'would not pass up') can never trigger a
-    false mismatch (fix 13). Comparison is skipped whenever either side is None."""
+    economics', 'conditional on closing', 'would not pass up') never classifies.
+    Only an explicit invest-vs-pass split is treated as a contradiction downstream."""
     if not text:
         return None
     t = text.lower()
-    m = re.search(
-        r'(?:recommendation|we\s+recommend|recommend(?:ed|ing|ation)?|verdict|our\s+call)'
-        r'\b[:\s*—–-]{0,4}(?:a\s+|to\s+|is\s+|of\s+)?\b(invest|pass|conditional|hold|monitor)\b',
-        t,
-    )
-    return m.group(1) if m else None
+    # canonical verdict <- verb-family regex. Order matters: 'conditional' is a
+    # qualifier and is checked first so "conditional invest" reads as conditional.
+    fams = [
+        ("conditional", r'condition(?:al|ally)?'),
+        ("pass",        r'pass(?:ing|ed)?|declin(?:e|ing|ed)'),
+        ("invest",      r'invest(?:ing|ed|ment|s)?|proceed(?:ing)?|participat(?:e|ing)'),
+        ("monitor",     r'monitor(?:ing|ed)?|watch(?:list)?|track'),
+        ("hold",        r'hold(?:ing)?'),
+    ]
+    cue = (r'(?:recommendation|we\s+(?:would\s+)?recommend|recommend(?:ed|ing|ation)?'
+           r'|verdict|our\s+(?:call|recommendation)|decision)')
+    for canon, verb in fams:
+        # cue, then a small gap (connectors like "is to", "a", "against"), then verb
+        if re.search(cue + r'\b[:\s*—–-]{0,4}[^.\n]{0,30}?\b(?:' + verb + r')\b', t):
+            return canon
+    return None
 
 
 def _consistency_qa_block(report: dict, inputs: dict, section_texts: dict, memo_md: str) -> str:
@@ -1167,10 +1178,12 @@ def _consistency_qa_block(report: dict, inputs: dict, section_texts: dict, memo_
     warnings = []     # review items
     own_signal = False  # a targeted (non-generic) finding worth surfacing a block for
 
-    # Fix 13 — recommendation must be identical across the synthesis surfaces.
+    # Fix 13 — the two synthesis surfaces must not give OPPOSITE verdicts. Only an
+    # explicit invest-vs-pass split is a true contradiction; 'conditional' (and
+    # hold/monitor) are qualifiers compatible with either, so they never flag.
     _rec = _verdict_token(section_texts.get("recommendation", ""))
     _ov = _verdict_token(section_texts.get("investment_overview", ""))
-    if _rec and _ov and _rec != _ov:
+    if _rec and _ov and {_rec, _ov} == {"invest", "pass"}:
         errors.append(f"Recommendation mismatch — the Investment Overview implies '{_ov.upper()}' but the Recommendation section reads '{_rec.upper()}'. Reconcile to one verdict.")
         own_signal = True
 
@@ -1273,6 +1286,13 @@ def _build_report_context(report_row) -> str:
     _trl_label = _ov.get("trl_label")
     _fm_block = report.get("financial_model", {}) or {}
     _fm_has = bool(_fm_block.get("has_data"))
+    # A founder revenue curve is genuine (the company's own projection) whenever
+    # founder_comparison has data — that is True both for an uploaded Excel model
+    # AND for founder projections extracted from the deck (the "manual" path in
+    # deal_report). Only when NO founder curve exists at all is the series a pure
+    # sim baseline. Keying solely on financial_model.has_data would wrongly disavow
+    # real deck-extracted founder numbers as "sim-derived" (fix 9).
+    _fc_has = bool((report.get("founder_comparison") or {}).get("has_data"))
     parts.append("\n## CANONICAL FACTS — use these EXACT values in every section; do NOT recompute or vary them")
     if _trl not in (None, "", "N/A"):
         _trl_line = f"- TRL (technology readiness level): {_trl}"
@@ -1281,9 +1301,11 @@ def _build_report_context(report_row) -> str:
         parts.append(_trl_line + " — use this TRL verbatim everywhere; do not state a different TRL in any section.")
     parts.append(f"- Company stage: {report_row['entry_stage']}")
     if _fm_has:
-        parts.append('- Founder revenue model: the company uploaded a financial model; the "Founder" revenue series below IS the company\'s own projection.')
+        parts.append('- Founder revenue model: the company uploaded a financial model; the "Founder" revenue series below IS the company\'s own uploaded projection — attribute it to the company/management.')
+    elif _fc_has:
+        parts.append('- Founder revenue model: no Excel model was uploaded, but the "Founder" revenue series below comes from the founders\' OWN projections in the company materials (the deck). It IS a company/management projection — attribute it to the founders/management (note it is deck-derived, not an audited model), and do NOT call it a simulation output.')
     else:
-        parts.append('- Founder revenue model: NONE uploaded. Any "founder" revenue curve below is a MODEL baseline, NOT a company/management projection — do not attribute it to the founders or call it a founder/management forecast; label it "sim-derived baseline (no founder model provided)".')
+        parts.append('- Founder revenue model: NONE provided. Any "founder" revenue curve below is a MODEL baseline, NOT a company/management projection — do not attribute it to the founders or call it a founder/management forecast; label it "sim-derived baseline (no founder projection provided)".')
     parts.append("- Provenance of figures below: SIMULATION RESULTS = model-generated Monte-Carlo outputs (NOT company projections or company-reported numbers); FINANCIAL MODEL = figures extracted from the company's uploaded model; deal terms / INPUT PARAMETERS = as entered. Never present a simulation output as a founder projection or a company-reported figure.")
 
     # Input parameters. Skip the structured carbon/volume blobs AND the round
