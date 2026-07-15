@@ -16,7 +16,9 @@ Generates a professional PDF with:
 """
 
 import io
+import os
 import re
+import unicodedata
 from datetime import datetime
 
 from reportlab.lib.pagesizes import letter
@@ -28,6 +30,93 @@ from reportlab.platypus import (
     Flowable,
 )
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
+
+
+# ── Fonts (bundled Unicode TTF so math/Greek/symbols render; no tofu boxes) ───
+# Mirrors the tech-DDR renderer: register a DejaVuSans family and sanitize any
+# glyph the active font cannot draw, so emojis / special characters never show
+# up as black boxes (□) in the PDF.
+_FONT_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+FONT = "Helvetica"
+FONT_B = "Helvetica-Bold"
+FONT_I = "Helvetica-Oblique"
+FONT_BI = "Helvetica-BoldOblique"
+_SUPPORTED = None  # set of codepoints the active font can render (None = Helvetica/Latin-1)
+
+
+def _register_fonts():
+    global FONT, FONT_B, FONT_I, FONT_BI, _SUPPORTED
+    try:
+        faces = [
+            ("DejaVuSans", "DejaVuSans.ttf"),
+            ("DejaVuSans-Bold", "DejaVuSans-Bold.ttf"),
+            ("DejaVuSans-Oblique", "DejaVuSans-Oblique.ttf"),
+            ("DejaVuSans-BoldOblique", "DejaVuSans-BoldOblique.ttf"),
+        ]
+        for name, fn in faces:
+            pdfmetrics.registerFont(TTFont(name, os.path.join(_FONT_DIR, fn)))
+        registerFontFamily(
+            "DejaVuSans", normal="DejaVuSans", bold="DejaVuSans-Bold",
+            italic="DejaVuSans-Oblique", boldItalic="DejaVuSans-BoldOblique",
+        )
+        FONT, FONT_B = "DejaVuSans", "DejaVuSans-Bold"
+        FONT_I, FONT_BI = "DejaVuSans-Oblique", "DejaVuSans-BoldOblique"
+        face = pdfmetrics.getFont("DejaVuSans").face
+        cmap = getattr(face, "charToGlyph", None)
+        if cmap:
+            _SUPPORTED = set(cmap.keys())
+    except Exception as ex:  # pragma: no cover - fall back to built-in Helvetica
+        print(f"[DDR] DejaVu font registration failed, using Helvetica: {ex}", flush=True)
+        _SUPPORTED = None
+
+
+_register_fonts()
+
+# Transliterations used ONLY when the active font lacks the glyph.
+_TRANSLIT = {
+    "■": "", "□": "", "▪": "", "◼": "", "●": "-", "•": "-", "▸": "-", "‣": "-",
+    "→": "->", "⇒": "=>", "←": "<-", "↔": "<->", "↦": "->",
+    "≈": "~", "≅": "~", "≃": "~", "≤": "<=", "≥": ">=", "≠": "!=",
+    "∝": "proportional to", "∞": "infinity", "≪": "<<", "≫": ">>",
+    "×": "x", "÷": "/", "−": "-", "–": "-", "—": "-", "‐": "-", "⁻": "-",
+    "’": "'", "‘": "'", "“": '"', "”": '"', "…": "...", "′": "'", "″": '"',
+    "√": "sqrt", "∑": "sum", "∏": "prod", "∫": "integral", "∮": "integral",
+    "∇": "grad", "∂": "d", "∆": "Delta", "Δ": "Delta", "∈": "in", "∉": "not in",
+    "≡": "=", "≜": "=", "⊗": "(x)", "⊕": "(+)", "·": "*", "∙": "*",
+}
+
+# Always removed even if the font CAN draw them — tofu/box/replacement glyphs.
+_FORCE_STRIP = {"�", "■", "□", "▪", "▫", "◼", "◻", "◾", "◽"}
+
+
+def _font_safe(s: str) -> str:
+    """Replace any character the active font cannot render with a transliteration
+    or NFKD-ASCII fallback, so the PDF never shows a tofu box. A small set of
+    box/replacement glyphs is dropped unconditionally. Emojis (no glyph in
+    DejaVu) are transliterated away or dropped rather than rendered as boxes."""
+    if not s:
+        return s
+    out = []
+    for ch in s:
+        if ch in _FORCE_STRIP:
+            continue
+        o = ord(ch)
+        ok = (o in _SUPPORTED) if _SUPPORTED is not None else (o < 0x100)
+        if ok or ch in "\n\r\t":
+            out.append(ch)
+            continue
+        rep = _TRANSLIT.get(ch)
+        if rep is None:
+            dec = unicodedata.normalize("NFKD", ch)
+            if _SUPPORTED is not None:
+                rep = "".join(c for c in dec if ord(c) in _SUPPORTED)
+            else:
+                rep = "".join(c for c in dec if ord(c) < 0x100)
+        out.append(rep or "")
+    return "".join(out)
 
 # ── Shared Colors ────────────────────────────────────────────────────────────
 
@@ -77,6 +166,7 @@ def _esc_preserving_entities(text: str) -> str:
 def _p(text, style) -> Paragraph:
     if not isinstance(text, str):
         text = str(text)
+    text = _font_safe(text)  # strip/transliterate unrenderable glyphs so no tofu boxes
     parts = _SAFE_TAG_RE.split(text)
     tags = _SAFE_TAG_RE.findall(text)
     escaped_parts = [_esc_preserving_entities(p) for p in parts]
@@ -128,25 +218,82 @@ def _cite_list(sources, limit: int = 3) -> str:
     return ", ".join(i for i in items if i)
 
 
+def _count_unique_sources(analysis: dict) -> int:
+    """Single deduped unique-source count reported IDENTICALLY in the methodology
+    line and the sources appendix (fix 31). Counts every claim/section source
+    plus the harvested web_sources, deduped by URL/title/publisher — never the
+    model's self-reported ``sources_consulted``, which can disagree."""
+    def _key(s):
+        if isinstance(s, dict):
+            return (s.get("url") or s.get("title") or s.get("publisher") or "").strip().lower()
+        return str(s).strip().lower()
+    uniq: set = set()
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            for k in ("sources", "source", "current_best_source"):
+                val = obj.get(k)
+                if isinstance(val, list):
+                    for s in val:
+                        if isinstance(s, dict) or (isinstance(s, str) and s.strip()):
+                            kk = _key(s)
+                            if kk:
+                                uniq.add(kk)
+                elif isinstance(val, dict) or (isinstance(val, str) and val.strip()):
+                    kk = _key(val)
+                    if kk:
+                        uniq.add(kk)
+            for k in ("source_note", "note"):  # match the appendix, which lists these too
+                v = obj.get(k)
+                if isinstance(v, str) and v.strip():
+                    uniq.add(v.strip().lower())
+            for v in obj.values():
+                if isinstance(v, (dict, list)):
+                    _walk(v)
+        elif isinstance(obj, list):
+            for it in obj:
+                _walk(it)
+
+    for sec in ("claims", "unverified_claims", "competitive_landscape",
+                "status_flags", "outcome_magnitude"):
+        _walk(analysis.get(sec))
+    # Cap web at the same 10 shown in the appendix so the count never exceeds the
+    # enumerated list.
+    for ws in (analysis.get("web_sources") or [])[:10]:
+        u = (ws.get("url") or "").strip().lower() if isinstance(ws, dict) else ""
+        if u:
+            uniq.add(u)
+    return len(uniq)
+
+
 # ── PDF Styles ───────────────────────────────────────────────────────────────
 
 def _build_styles():
     base = getSampleStyleSheet()
+    # Point every inherited base style at the registered DejaVu family so glyphs
+    # the sanitizer keeps (Greek/math/symbols) actually render instead of tofu.
+    _fmap = {'Helvetica': FONT, 'Helvetica-Bold': FONT_B,
+             'Helvetica-Oblique': FONT_I, 'Helvetica-BoldOblique': FONT_BI}
+    for _sn in list(base.byName.keys()):
+        _st = base[_sn]
+        _fn = getattr(_st, 'fontName', '') or ''
+        if _fn in _fmap:
+            _st.fontName = _fmap[_fn]
     return {
         "title": ParagraphStyle(
             'DDRTitle', parent=base['Heading1'],
             fontSize=24, textColor=colors.HexColor('#2d5f3f'),
-            spaceAfter=16, alignment=TA_CENTER, fontName='Helvetica-Bold',
+            spaceAfter=16, alignment=TA_CENTER, fontName=FONT_B,
         ),
         "heading": ParagraphStyle(
             'DDRHeading', parent=base['Heading2'],
             fontSize=15, textColor=colors.HexColor('#2d5f3f'),
-            spaceAfter=10, spaceBefore=16, fontName='Helvetica-Bold',
+            spaceAfter=10, spaceBefore=16, fontName=FONT_B,
         ),
         "subheading": ParagraphStyle(
             'DDRSubheading', parent=base['Heading3'],
             fontSize=12, textColor=colors.HexColor('#1a472a'),
-            spaceAfter=6, spaceBefore=10, fontName='Helvetica-Bold',
+            spaceAfter=6, spaceBefore=10, fontName=FONT_B,
         ),
         "body": ParagraphStyle(
             'DDRBody', parent=base['BodyText'],
@@ -215,9 +362,9 @@ def generate_report_pdf(analysis: dict, output_path: str):
             canv.setStrokeColor(colors.HexColor('#d4e6da'))
             canv.setLineWidth(0.5)
             canv.line(0, self.height, self.field_width, self.height)
-            canv.setFont('Helvetica-Bold', 8)
+            canv.setFont(FONT_B, 8)
             canv.setFillColor(colors.HexColor(VOLO_GREEN))
-            canv.drawString(2, self.field_height + 3, self.label)
+            canv.drawString(2, self.field_height + 3, _font_safe(self.label))
             canv.acroForm.textfield(
                 name=self.field_name, tooltip=self.label,
                 x=0, y=0, width=self.field_width, height=self.field_height,
@@ -257,15 +404,15 @@ def generate_report_pdf(analysis: dict, output_path: str):
             )
             toc_pg = ParagraphStyle(
                 'DDRTOCPg', parent=S['body'], fontSize=11, leading=18,
-                alignment=TA_CENTER, fontName='Helvetica-Bold',
+                alignment=TA_CENTER, fontName=FONT_B,
                 textColor=colors.HexColor(VOLO_GREEN),
             )
             rows = []
             for key, label in _TOC_ORDER:
                 if key in entries:
                     rows.append([
-                        Paragraph(label, toc_name),
-                        Paragraph(str(entries[key]), toc_pg),
+                        Paragraph(_font_safe(label), toc_name),
+                        Paragraph(_font_safe(str(entries[key])), toc_pg),
                     ])
             if rows:
                 tbl = Table(rows, colWidths=[5.8 * inch, 0.7 * inch])
@@ -422,10 +569,21 @@ def generate_report_pdf(analysis: dict, output_path: str):
 
         for cl in claims:
             cl_type = cl.get('type', 'OTHER')[:4].upper()
-            v_status = cl.get('verification_status', 'UNVERIFIED')
-            use_style = (S["verified"] if v_status == 'VERIFIED'
-                         else S["flag"] if v_status == 'PARTIALLY VERIFIED'
-                         else S["alert"])
+            v_status = cl.get('verification_status', 'company-reported')
+            # Map the 5-level verification taxonomy onto the existing 3 render
+            # styles, with back-compat for the legacy binary values saved in
+            # older reports. green = independently verified; caution = supported
+            # by literature/secondary evidence (or legacy "partially verified");
+            # alert = company-reported / unsupported / legacy "unverified".
+            _vs = (v_status or '').strip().lower()
+            if _vs in ('independently verified', 'verified'):
+                use_style = S["verified"]
+            elif _vs in ('supported by peer-reviewed literature',
+                         'supported by credible secondary evidence',
+                         'partially verified'):
+                use_style = S["flag"]
+            else:  # company-reported, unsupported or conflicting, unverified, unknown
+                use_style = S["alert"]
             text = (
                 f"<b>[{cl_type}] {cl.get('claim', 'N/A')}</b><br/>"
                 f"{cl.get('source_label', v_status)}"
@@ -583,7 +741,7 @@ def generate_report_pdf(analysis: dict, output_path: str):
 
         story.append(Spacer(1, 0.15 * inch))
         story.append(_p(
-            f"<i><b>Methodology:</b> Analysis based on {analysis.get('sources_consulted', '?')} sources "
+            f"<i><b>Methodology:</b> Analysis based on {_count_unique_sources(analysis)} unique sources, "
             f"including web research, financial databases, and industry reports. "
             f"No investment recommendation is made.</i><br/>"
             f"<b>Generated:</b> {datetime.now().strftime('%B %d, %Y at %H:%M:%S')}",
@@ -609,7 +767,7 @@ def generate_report_pdf(analysis: dict, output_path: str):
         src_heading_style = ParagraphStyle(
             'DDRSrcHeading', parent=S["body_small"],
             fontSize=9, leading=12, spaceAfter=2, spaceBefore=6,
-            fontName='Helvetica-Bold', textColor=colors.HexColor('#2d5f3f'),
+            fontName=FONT_B, textColor=colors.HexColor('#2d5f3f'),
         )
 
         section_sources = {}
@@ -646,7 +804,6 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 return (s.get("url") or s.get("title") or s.get("publisher") or "").strip().lower()
             return str(s).strip().lower()
 
-        total_unique = set()
         for section_label in ['Claims', 'Competitive Landscape', 'Status & Legal',
                               'Unverified Claims', 'Outcome Magnitude']:
             sources = section_sources.get(section_label, [])
@@ -659,7 +816,6 @@ def generate_report_pdf(analysis: dict, output_path: str):
                 if key and key not in seen:
                     seen.add(key)
                     unique.append(s)
-                    total_unique.add(key)
             story.append(_p(
                 f"<b>{section_label}:</b> " + " · ".join(_cite(s) for s in unique),
                 src_heading_style,
@@ -671,21 +827,20 @@ def generate_report_pdf(analysis: dict, output_path: str):
         if web_sources:
             story.append(Spacer(1, 0.08 * inch))
             story.append(_p(
-                "<b>Verified Live Links</b> <i>(captured directly from web search)</i>:",
+                "<b>Additional web-search links</b> <i>(captured directly from web search; supplementary, not necessarily tied to a specific claim)</i>:",
                 src_heading_style,
             ))
             seen_w = set()
-            for ws in web_sources[:40]:
+            for ws in web_sources[:10]:
                 u = (ws.get('url') or '').strip() if isinstance(ws, dict) else ''
                 if not u or u in seen_w:
                     continue
                 seen_w.add(u)
-                total_unique.add(u.lower())
                 story.append(_p("&#8226; " + _cite(ws), src_style))
 
         story.append(Spacer(1, 0.1 * inch))
         story.append(_p(
-            f"<b>Total unique sources cited:</b> {len(total_unique)}",
+            f"<b>Total unique sources cited:</b> {_count_unique_sources(analysis)}",
             src_style,
         ))
 

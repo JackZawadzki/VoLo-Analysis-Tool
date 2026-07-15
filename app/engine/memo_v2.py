@@ -654,6 +654,14 @@ CRITICAL — FACTUAL ACCURACY:
 - If a cross-document flag in the corpus is relevant to your section, address it explicitly — name the conflicting sources and explain how it should be resolved.
 - When in doubt, be less specific rather than risk inventing details.
 
+CLAIM DISCIPLINE (source vs. verification):
+- CONSERVATIVE ATTRIBUTION — present UNVERIFIED technical performance, customer activity, partnerships, pilots, or commercial traction as REPORTED, not as established fact: "the company reports", "management claims", "company materials indicate", "reported pre-pilot", "planned evaluation". State it as fact only when independent evidence in the corpus supports it.
+- SOURCE vs MODEL — keep company-reported, independently-verified, extracted-financial-model, and simulation/model-generated figures distinct. NEVER describe a simulation output or a model estimate as a founder projection or a company-reported number.
+- COMMERCIAL-STAGE LADDER — use these exact terms and never upgrade a lower stage into a higher one (do NOT call "pilot planning", "pre-pilot", "technical discussion", or "evaluation" a "commercial pilot"): discussion < evaluation < pre-pilot < scoped pilot < paid pilot < qualification < commercial agreement < production deployment. Use the HIGHEST stage the evidence actually supports, and use that same term consistently.
+- NO UNSUPPORTED PROMOTION — avoid conclusory promotional phrasing ("the physics works", "first commercially viable application", "eliminates adoption friction", "transformational", "the question is not whether the technology is real") unless verified evidence supports the conclusion.
+- NO FALSE GAPS — do not write "not provided" / "no data available" / "data room did not contain" for a datum that is present elsewhere in the corpus; if a topic is only partly covered, name the SPECIFIC remaining gap (e.g. pricing validation, unit volumes, mfg CAPEX, working-capital, gross-margin support, financing cadence) instead.
+- SAY IT ONCE — do not re-derive the same explanation (technology, TAM, customer traction, drop-in integration, binary risk, founder projections) that belongs in another section; state it in its home section and reference it briefly elsewhere.
+
 Rules:
 1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts FROM THE CORPUS ONLY
 2. Be thorough but avoid padding — every sentence should add value
@@ -980,10 +988,18 @@ You are writing ONE section of an investment memorandum. You have been given a C
 
 CRITICAL — FACTUAL ACCURACY:
 - ONLY state facts, names, numbers, dates, and claims that appear in the consolidated brief or the RVM report data.
-- NEVER fabricate facility names, locations, dollar amounts, percentages, timelines, partnerships, or any other specifics.
+- NEVER fabricate PERSON names (founders, team, advisors, customers), COMPANY names (competitors, partners, acquirers, investors, comparable startups), facility names, locations, dollar amounts, percentages, timelines, or partnerships. If a specific person or company is not named in the brief, do not name one.
 - Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] (matching the citation index) or [RVM] (for the quantitative report). If you cannot cite it, do not write it.
 - The brief preserves the original citation numbers — pass them through verbatim. Do not invent new citation numbers.
 - When in doubt, be less specific rather than risk inventing details. If the brief is empty or thin for this section, mark the gap explicitly as a diligence follow-up rather than padding with invented content.
+
+CLAIM DISCIPLINE (source vs. verification):
+- CONSERVATIVE ATTRIBUTION — present UNVERIFIED technical performance, customer activity, partnerships, pilots, or commercial traction as REPORTED, not as established fact: "the company reports", "management claims", "company materials indicate", "reported pre-pilot", "planned evaluation". State it as fact only when independent evidence in the brief supports it.
+- SOURCE vs MODEL — keep company-reported, independently-verified, extracted-financial-model, and simulation/model-generated figures distinct. NEVER describe a simulation output or a model estimate as a founder projection or a company-reported number.
+- COMMERCIAL-STAGE LADDER — use these exact terms and never upgrade a lower stage into a higher one (do NOT call "pilot planning", "pre-pilot", "technical discussion", or "evaluation" a "commercial pilot"): discussion < evaluation < pre-pilot < scoped pilot < paid pilot < qualification < commercial agreement < production deployment. Use the HIGHEST stage the evidence actually supports, and use that same term consistently.
+- NO UNSUPPORTED PROMOTION — avoid conclusory promotional phrasing ("the physics works", "first commercially viable application", "eliminates adoption friction", "transformational", "the question is not whether the technology is real") unless verified evidence supports the conclusion.
+- NO FALSE GAPS — do not write "not provided" / "no data available" / "data room did not contain" for a datum that is present elsewhere in the brief; if a topic is only partly covered, name the SPECIFIC remaining gap (e.g. pricing validation, unit volumes, mfg CAPEX, working-capital, gross-margin support, financing cadence) instead.
+- SAY IT ONCE — do not re-derive the same explanation (technology, TAM, customer traction, drop-in integration, binary risk, founder projections) that belongs in another section; state it in its home section and reference it briefly elsewhere.
 
 Rules:
 1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts FROM THE BRIEF ONLY
@@ -991,7 +1007,7 @@ Rules:
 3. Balance the bull case and bear case — credibility comes from honest assessment, not advocacy
 4. Use Markdown formatting: ### for sub-sections, **bold** for emphasis, bullet lists only for catalogs of discrete items
 5. Do NOT include the section title as a header — it will be added automatically
-6. Target 400-800 words per section (more for Financing Overview and Business Model, less for shorter sections)
+6. Length must match the grounded material in the brief. 400-800 words is a CEILING for well-documented sections, never a target to pad toward. When the brief is thin, write a SHORT section that names the diligence gaps — never pad with invented specifics.
 7. Each section stands alone — do NOT reference other sections
 8. If the brief genuinely lacks information for this section, explicitly note it as a diligence gap requiring follow-up — do NOT fill gaps with invented details
 9. Open with a strong orienting statement that frames why this topic matters for the investment thesis

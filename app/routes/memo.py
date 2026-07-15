@@ -1070,21 +1070,53 @@ def _return_profile_block(report: dict) -> str:
     check_m = ov.get("check_size_millions", hero.get("new_check_m"))
     own_new = ov.get("new_check_ownership_pct", hero.get("new_check_ownership_pct"))
 
-    def _returns_table(src):
-        return [
+    # Full metric set (fix 14): show expected (mean) alongside median/conditional
+    # MOIC and the loss/upside probabilities so the mean is never read in
+    # isolation, and append a caveat when the mean is tail-driven.
+    sim       = report.get("simulation", {}) or {}
+    moic_cond = sim.get("moic_conditional", {}) or {}
+    prob      = sim.get("probability", sim.get("probability_buckets", {})) or {}
+
+    def _returns_table(src, extra=False):
+        rows = [
             "| Metric | Value |",
             "| --- | --- |",
-            f"| Expected MOIC | {_x(src.get('expected_moic'))} |",
+            f"| Expected (mean) MOIC | {_x(src.get('expected_moic'))} |",
+        ]
+        if extra and isinstance(moic_cond.get("p50"), (int, float)):
+            rows.append(f"| Median MOIC (P50, all paths) | {_x(moic_cond.get('p50'))} |")
+        if extra and isinstance(moic_cond.get("mean"), (int, float)):
+            rows.append(f"| Conditional MOIC (mean of survivors) | {_x(moic_cond.get('mean'))} |")
+        rows += [
             f"| Expected IRR | {_p(src.get('expected_irr'))} |",
             f"| P(>3x) | {_p(src.get('p_gt_3x'))} |",
-            f"| Survival rate | {_p(src.get('survival_rate'))} |",
-            "",
         ]
+        if extra and isinstance(prob.get("gt_5x"), (int, float)):
+            rows.append(f"| P(>5x) | {_p(prob.get('gt_5x'))} |")
+        rows.append(f"| Survival rate | {_p(src.get('survival_rate'))} |")
+        if extra and isinstance(prob.get("total_loss"), (int, float)):
+            rows.append(f"| P(total loss) | {_p(prob.get('total_loss'))} |")
+        rows.append("")
+        return rows
+
+    def _tail_caveat():
+        exp_moic = hero.get("expected_moic")
+        cond_p50 = moic_cond.get("p50")
+        if (isinstance(exp_moic, (int, float)) and isinstance(cond_p50, (int, float))
+                and cond_p50 > 0 and exp_moic >= 2.0 * cond_p50):
+            p10x = prob.get("gt_10x")
+            tail = f" (P(>10x) is {_p(p10x)})" if isinstance(p10x, (int, float)) else ""
+            return ("*The expected (mean) MOIC is materially above the median outcome, so it is driven by "
+                    f"a small number of extreme right-tail paths{tail}; the typical (median) result is lower.*")
+        return ""
 
     lines = ["### Return Profile", ""]
     if is_fo:
         lines += [f"**This Check — the investment decision** (return on the new {_m(check_m)} at {_pp(own_new)})", ""]
-        lines += _returns_table(hero)
+        lines += _returns_table(hero, extra=True)
+        _tc = _tail_caveat()
+        if _tc:
+            lines += [_tc, ""]
         lines += ["*The forward, decision-relevant return on the new capital deployed in this round.*", ""]
         lines += [
             f"**Total Position — all VoLo capital deployed** "
@@ -1100,7 +1132,90 @@ def _return_profile_block(report: dict) -> str:
         ]
     else:
         lines += [f"**Return on this investment** ({_m(check_m)} at {_pp(own_new)})", ""]
-        lines += _returns_table(hero)
+        lines += _returns_table(hero, extra=True)
+        _tc = _tail_caveat()
+        if _tc:
+            lines += [_tc, ""]
+    return "\n".join(lines)
+
+
+def _verdict_token(text: str):
+    """Extract an Invest / Pass / Conditional verdict from an EXPLICIT verdict
+    phrase only — a recommendation cue directly followed by the verdict word
+    (e.g. 'Recommendation: PASS', 'we recommend to invest', 'verdict — conditional').
+    Returns None when there is no explicit cue, so ordinary prose ('pass-through
+    economics', 'conditional on closing', 'would not pass up') can never trigger a
+    false mismatch (fix 13). Comparison is skipped whenever either side is None."""
+    if not text:
+        return None
+    t = text.lower()
+    m = re.search(
+        r'(?:recommendation|we\s+recommend|recommend(?:ed|ing|ation)?|verdict|our\s+call)'
+        r'\b[:\s*—–-]{0,4}(?:a\s+|to\s+|is\s+|of\s+)?\b(invest|pass|conditional|hold|monitor)\b',
+        t,
+    )
+    return m.group(1) if m else None
+
+
+def _consistency_qa_block(report: dict, inputs: dict, section_texts: dict, memo_md: str) -> str:
+    """SOFT pre-render backstop (fixes 1/4/13/14/33). Prevention is handled
+    upstream (canonical facts + prompt discipline); this only LABELS anything
+    that slipped through — it never blocks rendering. Reuses the existing
+    qa_review engine (deterministic report checks + LLM prose review) and adds a
+    couple of cross-section text checks. Returns a markdown block, or '' if clean."""
+    errors = []       # genuine inconsistencies to reconcile
+    warnings = []     # review items
+    own_signal = False  # a targeted (non-generic) finding worth surfacing a block for
+
+    # Fix 13 — recommendation must be identical across the synthesis surfaces.
+    _rec = _verdict_token(section_texts.get("recommendation", ""))
+    _ov = _verdict_token(section_texts.get("investment_overview", ""))
+    if _rec and _ov and _rec != _ov:
+        errors.append(f"Recommendation mismatch — the Investment Overview implies '{_ov.upper()}' but the Recommendation section reads '{_rec.upper()}'. Reconcile to one verdict.")
+        own_signal = True
+
+    # Fix 4 — false diligence-gap phrasing (backstop; prompts prevent it).
+    _placeholders = ("not provided", "no data available", "data room did not contain",
+                     "not disclosed", "no information was provided")
+    _hits = sorted({p for p in _placeholders if p in (memo_md or "").lower()})
+    if _hits:
+        warnings.append("Placeholder 'missing data' phrasing present (" + ", ".join(_hits) + "). Confirm the datum is genuinely absent; if it was extracted elsewhere, state the specific remaining gap instead.")
+        own_signal = True
+
+    # Reuse the existing QA engine (fix 14 MOIC/IRR plausibility, ownership /
+    # post-money / follow-on math, + the LLM prose contradiction pass).
+    try:
+        from ..engine.qa_review import run_qa_review
+        qa = run_qa_review(report, inputs or {}, memo_markdown=memo_md, run_llm=True)
+        for f in (qa.get("findings") or []):
+            sev = f.get("severity", "info")
+            _txt = f"{f.get('title', '')}: {f.get('detail', '')}".strip().strip(':').strip()
+            if not _txt:
+                continue
+            if sev == "error":
+                errors.append(_txt)
+            elif sev == "warning":
+                warnings.append(_txt)
+    except Exception as e:
+        logger.warning(f"run_qa_review failed in memo QA pass: {e}")
+
+    # Only surface a block when something actionable is present: a hard error, or
+    # one of our targeted signals. A memo whose only findings are generic QA
+    # warnings (e.g. an intentionally-omitted section) stays clean — prevention,
+    # not noise.
+    if not errors and not own_signal:
+        return ""
+
+    lines = ["## Internal QA & Consistency Review",
+             "*Automated pre-render checks — internal. Resolve these before circulating the memo.*", ""]
+    if errors:
+        lines.append("**Unresolved inconsistencies:**")
+        lines += [f"- {t}" for t in errors]
+        lines.append("")
+    if warnings:
+        lines.append("**Warnings to review:**")
+        lines += [f"- {t}" for t in warnings]
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -1149,11 +1264,34 @@ def _build_report_context(report_row) -> str:
     # for a follow-on foregrounds the prior round → wrong post-money).
     parts.extend(_format_round_terms(report.get("deal_overview", {})))
 
+    # ── CANONICAL FACTS (fixes 6/3/9): stamp the authoritative, single-source
+    #    values so every section uses the SAME number and cannot drift between
+    #    sections, and label provenance so a model output is never presented as a
+    #    company/founder figure.
+    _ov = report.get("deal_overview", {}) or {}
+    _trl = _ov.get("trl", inputs.get("trl"))
+    _trl_label = _ov.get("trl_label")
+    _fm_block = report.get("financial_model", {}) or {}
+    _fm_has = bool(_fm_block.get("has_data"))
+    parts.append("\n## CANONICAL FACTS — use these EXACT values in every section; do NOT recompute or vary them")
+    if _trl not in (None, "", "N/A"):
+        _trl_line = f"- TRL (technology readiness level): {_trl}"
+        if _trl_label:
+            _trl_line += f" ({_trl_label})"
+        parts.append(_trl_line + " — use this TRL verbatim everywhere; do not state a different TRL in any section.")
+    parts.append(f"- Company stage: {report_row['entry_stage']}")
+    if _fm_has:
+        parts.append('- Founder revenue model: the company uploaded a financial model; the "Founder" revenue series below IS the company\'s own projection.')
+    else:
+        parts.append('- Founder revenue model: NONE uploaded. Any "founder" revenue curve below is a MODEL baseline, NOT a company/management projection — do not attribute it to the founders or call it a founder/management forecast; label it "sim-derived baseline (no founder model provided)".')
+    parts.append("- Provenance of figures below: SIMULATION RESULTS = model-generated Monte-Carlo outputs (NOT company projections or company-reported numbers); FINANCIAL MODEL = figures extracted from the company's uploaded model; deal terms / INPUT PARAMETERS = as entered. Never present a simulation output as a founder projection or a company-reported figure.")
+
     # Input parameters. Skip the structured carbon/volume blobs AND the round
     # structure fields — the latter are stated authoritatively under THIS ROUND
     # above; re-dumping raw pre_money/check/prior_* here invites the synthesis
     # writer to conflate a prior round with the current one.
     _ctx_skip_input_keys = {
+        'trl', 'trl_label',  # TRL is stated once, authoritatively, in CANONICAL FACTS
         'volume', 'op_carbon', 'emb_carbon', 'portfolio',
         'pre_money_millions', 'check_size_millions', 'round_size_m', 'post_money_millions',
         'investment_type', 'prior_investments',
@@ -1171,7 +1309,7 @@ def _build_report_context(report_row) -> str:
     sim = report.get("simulation", {})
     hero = report.get("hero_metrics", {}) or sim.get("hero_metrics", {})
     if sim or hero:
-        parts.append("\n## SIMULATION RESULTS")
+        parts.append("\n## SIMULATION RESULTS (model-generated Monte-Carlo outputs — NOT company projections or company-reported figures)")
         if hero:
             parts.append(f"- Expected MOIC: {hero.get('expected_moic', 'N/A')}x")
             parts.append(f"- P(>3x): {hero.get('p_gt_3x', 'N/A')}")
@@ -1193,7 +1331,7 @@ def _build_report_context(report_row) -> str:
     # Adoption — key is adoption_analysis, curve is a dict keyed by year
     adoption = report.get("adoption_analysis", report.get("adoption", {}))
     if adoption:
-        parts.append("\n## MARKET ADOPTION")
+        parts.append("\n## MARKET ADOPTION (model S-curve; revenue values are COMPANY revenue in $M by CALENDAR YEAR — this is company revenue, not total-market adoption, and not the same as the addressable market)")
         scurve = adoption.get("scurve", {})
         if scurve:
             parts.append(f"- Bass p (innovation): {scurve.get('bass_p_mean', 'N/A')}")
@@ -1370,6 +1508,7 @@ def _build_report_context(report_row) -> str:
     comps = report.get("valuation_context", report.get("valuation_comps", {}))
     if comps:
         parts.append("\n## VALUATION CONTEXT")
+        parts.append("- NOTE: these EV/EBITDA multiples are sector comps derived from a GENERIC public-markets dataset. When you discuss valuation, weight toward the comparables closest to THIS company's business model, customer base, margin profile, and likely exit pathway; do NOT average across unrelated sectors, and flag when the available comps are a poor match rather than blending them.")
         parts.append(f"- IPO EV/EBITDA Mean: {comps.get('ipo_ev_ebitda_mean', 'N/A')}x")
         parts.append(f"- Acquisition EV/EBITDA Mean: {comps.get('acq_ev_ebitda_mean', 'N/A')}x")
         rng = comps.get('suggested_exit_multiple_range', [])
@@ -2077,6 +2216,14 @@ CRITICAL — FACTUAL ACCURACY:
 - Every quantitative claim (dollar amount, percentage, date, capacity figure) MUST have a citation [n] or [RVM]. If you cannot cite it, do not write it.
 - When in doubt, be less specific rather than risk inventing details. "The company's manufacturing facility" is better than fabricating a facility name.
 
+CLAIM DISCIPLINE (source vs. verification):
+- CONSERVATIVE ATTRIBUTION — present UNVERIFIED technical performance, customer activity, partnerships, pilots, or commercial traction as REPORTED, not as established fact: "the company reports", "management claims", "company materials indicate", "reported pre-pilot", "planned evaluation". State it as fact only when independent evidence in the sources supports it.
+- SOURCE vs MODEL — keep company-reported, independently-verified, extracted-financial-model, and simulation/model-generated figures distinct. NEVER describe a simulation output or a model estimate as a founder projection or a company-reported number.
+- COMMERCIAL-STAGE LADDER — use these exact terms and never upgrade a lower stage into a higher one (do NOT call "pilot planning", "pre-pilot", "technical discussion", or "evaluation" a "commercial pilot"): discussion < evaluation < pre-pilot < scoped pilot < paid pilot < qualification < commercial agreement < production deployment. Use the HIGHEST stage the evidence actually supports, and use that same term consistently.
+- NO UNSUPPORTED PROMOTION — avoid conclusory promotional phrasing ("the physics works", "first commercially viable application", "eliminates adoption friction", "transformational", "the question is not whether the technology is real") unless verified evidence supports the conclusion.
+- NO FALSE GAPS — do not write "not provided" / "no data available" / "data room did not contain" for a datum that is present elsewhere in your material; if a topic is only partly covered, name the SPECIFIC remaining gap (e.g. pricing validation, unit volumes, mfg CAPEX, working-capital, gross-margin support, financing cadence) instead.
+- SAY IT ONCE — do not re-derive the same explanation (technology, TAM, customer traction, drop-in integration, binary risk, founder projections) that belongs in another section; state it in its home section and reference it briefly elsewhere.
+
 Rules:
 1. Write in professional, data-driven prose — cite specific numbers, percentages, and dollar amounts FROM THE SOURCE DOCUMENTS ONLY
 2. Be thorough but avoid padding — every sentence should add value
@@ -2222,6 +2369,12 @@ CRITICAL — FACTUAL ACCURACY:
 - Every quantitative claim must be traceable to the section texts or report data provided. If a number does not appear in your inputs, do not invent it.
 - When synthesizing, use the same level of specificity as the source sections — do not add details that are not there.
 
+CLAIM DISCIPLINE:
+- CONSERVATIVE ATTRIBUTION — carry through the section texts' attribution: unverified technical, customer, pilot, partnership, or traction claims stay "the company reports" / "management claims", not established fact.
+- SOURCE vs MODEL — never present a simulation output or a model estimate as a founder projection or a company-reported figure; keep them distinct.
+- COMMERCIAL-STAGE LADDER — use the section texts' stage terms consistently (discussion < evaluation < pre-pilot < scoped pilot < paid pilot < qualification < commercial agreement < production deployment); never upgrade a lower stage into a higher one.
+- SAY IT ONCE — synthesize; do not restate at length the same technology/TAM/traction/risk explanation the data sections already cover.
+
 Rules:
 1. Synthesize across all sections — do not just summarize one part
 2. For the Investment Overview: write a compelling one-liner, populate the deal terms table using the CURRENT round's terms (pre-/post-money, check size, ownership) from the "Deal Terms — CURRENT ROUND" block, and list portfolio themes as concise bullets
@@ -2229,8 +2382,8 @@ Rules:
 4. For the Investment Recommendation: give a clear verdict (Invest / Pass / Conditional) with the bull and bear case
 5. Include the most important quantitative highlights: MOIC, IRR, P(>3x), carbon t/$, portfolio impact — ONLY if present in the provided data
 6. Do NOT include the section title as a header — it will be added automatically
-7. Write with conviction and intellectual authority — this should read like a narrative that commands attention
-8. Frame this as a generational opportunity or a thoughtful pass — avoid lukewarm language
+7. Write in clear, authoritative prose grounded in the evidence — conviction comes from specific, sourced facts, not adjectives or hyperbole
+8. State a clear verdict (Invest / Pass / Conditional) and EXPLAIN the specific rationale behind it. A Pass must read as a reasoned pass (say WHY it is a pass); an Invest must be justified by the evidence. Do NOT inflate either into promotional language or an unexplained endorsement.
 9. FOLLOW-ON deals (when the Deal Terms block says "Follow-on"): VoLo is ALREADY an investor. Every relevant section must address BOTH the new round — the decision at hand, using the current round's terms — AND VoLo's prior investment (combined ownership, total invested across rounds, and how this check builds on the existing position). Keep the two distinct; never use a prior round's valuation as the current headline terms, and never omit the prior investment from the memo.
 
 {_STYLE_GUIDE}"""
@@ -2578,6 +2731,7 @@ def _build_memo_payload(
 
     # ── Gather raw inputs ──
     report_data_json = None  # Raw report JSON for chart embedding
+    report_inputs_json = None  # Raw inputs JSON (for the QA consistency backstop)
     conn = get_db()
     try:
         # Report
@@ -2594,6 +2748,7 @@ def _build_memo_payload(
             if row:
                 report_context = _build_report_context(row)
                 report_data_json = row["report_json"]
+                report_inputs_json = row["inputs_json"]
                 if not company_name:
                     company_name = row["company_name"]
 
@@ -2993,6 +3148,20 @@ def _build_memo_payload(
     memo_parts.append("")
 
     memo_md = "\n".join(memo_parts)
+
+    # ── Consistency / QA backstop (fixes 1/4/13/14/33 + soft gating) ──────────
+    # Prevention is upstream (canonical facts + prompt discipline). This SOFT
+    # pass only appends a clearly-labeled review of anything that slipped
+    # through; it never blocks rendering.
+    try:
+        _qa_rp = json.loads(report_data_json) if isinstance(report_data_json, str) else (report_data_json or {})
+        _qa_inp = json.loads(report_inputs_json) if isinstance(report_inputs_json, str) else (report_inputs_json or {})
+        _qa_block = _consistency_qa_block(_qa_rp or {}, _qa_inp or {}, section_texts, memo_md)
+        if _qa_block:
+            memo_md = memo_md + "\n\n" + _qa_block
+    except Exception as _qa_err:
+        logger.warning(f"QA consistency backstop skipped: {_qa_err}")
+
     elapsed = time.time() - start_time
 
     # ── Convert to HTML ──

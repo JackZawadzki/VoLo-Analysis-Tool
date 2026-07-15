@@ -213,6 +213,49 @@ def _cite(src) -> str:
     return _link(str(src).strip(), str(src).strip())
 
 
+def _count_unique_sources(analysis: dict) -> int:
+    """Deduped external-source count reported IDENTICALLY in the methodology line
+    and the Citations appendix (fix 31) — mirrors the appendix's own collection
+    (section source/sources/link fields, skipping the related_research reading
+    list, plus _research_sources). Never the model's self-reported count."""
+    acc = []
+
+    def _walk(obj):
+        if isinstance(obj, dict):
+            for k in ("sources", "source", "link"):
+                v = obj.get(k)
+                if isinstance(v, list):
+                    for s in v:
+                        if isinstance(s, dict) or (isinstance(s, str) and s.strip()):
+                            acc.append(s)
+                elif isinstance(v, dict) or (isinstance(v, str) and v.strip()):
+                    acc.append(v)
+            for vk, vv in obj.items():
+                if vk == "related_research":
+                    continue
+                if isinstance(vv, (dict, list)):
+                    _walk(vv)
+        elif isinstance(obj, list):
+            for it in obj:
+                _walk(it)
+
+    for key in ("prior_work_literature_map", "benchmarking_framework",
+                "theory_to_product_bridge", "commercial_implications",
+                "manufacturing_scaleup_risk", "technology_explanation",
+                "claimed_product", "executive_summary"):
+        _walk(analysis.get(key))
+    acc.extend(analysis.get("_research_sources", []) or [])
+    seen = set()
+    for s in acc:
+        if isinstance(s, dict):
+            k = str(s.get("url") or s.get("link") or s.get("title") or "").strip().lower()
+        else:
+            k = str(s).strip().lower()
+        if k:
+            seen.add(k)
+    return len(seen)
+
+
 def _risk_color(sev: str) -> str:
     s = (sev or "").upper()
     return {"HIGH": BAD_RED, "MEDIUM": WARN_ORANGE, "LOW": GOOD_GREEN}.get(s, MUTED)
@@ -586,7 +629,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         story.append(_p(
             f"<i><b>Methodology:</b> Multi-pass technical analysis — full reads of the "
             f"founder's document(s), web research for prior work / datasets / benchmarks / "
-            f"market, and synthesis. {analysis.get('sources_consulted', '?')} external sources "
+            f"market, and synthesis. {_count_unique_sources(analysis)} unique external sources "
             f"consulted. This brief is informational and contains no investment recommendation.</i>"
             f"<br/><b>Generated:</b> {datetime.now().strftime('%B %d, %Y at %H:%M:%S')}",
             S["small"]))
@@ -626,9 +669,9 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
         web_sources = analysis.get('web_sources') or []
         if web_sources:
             story.append(Spacer(1, 0.06 * inch))
-            story.append(_p("<b>Verified live links</b> <i>(captured directly from web search)</i>:", src_st))
+            story.append(_p("<b>Additional web-search links</b> <i>(captured directly from web search; supplementary, not necessarily tied to a specific claim)</i>:", src_st))
             seen_w = set()
-            for ws in web_sources[:40]:
+            for ws in web_sources[:10]:
                 if not isinstance(ws, dict):
                     continue
                 u = str(ws.get('url') or '').strip()
@@ -643,7 +686,7 @@ def generate_tech_report_pdf(analysis: dict, output_path: str):
             story.append(Spacer(1, 0.06 * inch))
             story.append(_p("<b>Documents analyzed:</b> " + ", ".join(docs), src_st))
         story.append(Spacer(1, 0.05 * inch))
-        story.append(_p(f"<b>Total unique external sources:</b> {len(unique)}", src_st))
+        story.append(_p(f"<b>Total unique external sources:</b> {_count_unique_sources(analysis)}", src_st))
 
         return story
 

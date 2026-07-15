@@ -258,10 +258,18 @@ THOROUGHNESS GUIDANCE:
 - Every unverified claim needs 1-2 concrete investigation steps naming specific data sources or tests
 - All competitor names must be real companies with verifiable existence
 
-DATA LABELING — label every claim as:
-- "COMPANY CLAIM (Unverified)" — only from the pitch deck, no independent confirmation
-- "VERIFIED: [Source]" — confirmed by independent third party
-- "PARTIALLY VERIFIED: Company claims X, [Source] indicates Y"
+DATA LABELING — assign every claim ONE verification level (this 5-level taxonomy REPLACES the old binary verified/unverified):
+- "independently verified" — confirmed by an independent third party you cite (filing, court/patent record, reputable outlet, primary dataset)
+- "supported by peer-reviewed literature" — the underlying SCIENTIFIC phenomenon is backed by peer-reviewed work. This validates the SCIENCE, NOT the company's specific formulation, measured device performance, production applicability, durability, or customer results — never overstate peer-reviewed science as product validation.
+- "supported by credible secondary evidence" — corroborated by a credible secondary source short of independent verification
+- "company-reported" — only from the company's own materials, no independent confirmation
+- "unsupported or conflicting" — no support found, or sources conflict
+
+CLAIM DISCIPLINE:
+- CONSERVATIVE ATTRIBUTION — present company-reported technical performance, customer activity, partnerships, pilots, and traction as REPORTED ("the company reports", "management claims", "company materials indicate"), never as established fact, unless the level is "independently verified".
+- COMMERCIAL-STAGE LADDER — use these exact terms and never upgrade a lower stage into a higher one: discussion < evaluation < pre-pilot < scoped pilot < paid pilot < qualification < commercial agreement < production deployment. Do NOT convert "pilot planning", "pre-pilot", "technical discussion", or "evaluation" into "commercial pilot".
+- RECONCILE PRICING — if the materials contain multiple pricing bases (price per gram, cost per wafer, revenue per chip, value-based pricing, licensing revenue), FLAG the inconsistency in the relevant claim rather than blending them into one figure.
+- IDENTITY & TRANSACTION CROSS-CHECK — for any acquisition, funding round, or named company, verify (via web_search) acquirer vs target, year, amount, HQ location, market cap, revenue, investor participation, and disambiguate similarly-named companies; if you cannot confirm a detail, say "unconfirmed" rather than stating it.
 
 OUTCOME COMPARABLES — reference real companies with known valuations:
 - "If the efficiency claims are accurate, this could compete with [Company] which holds X% of the market, valued at $Y"
@@ -350,16 +358,16 @@ Return comprehensive JSON:
         {{
             "type": "TECHNOLOGY",
             "claim": "Exact quoted claim from the deck",
-            "verification_status": "VERIFIED / UNVERIFIED / PARTIALLY VERIFIED",
-            "source_label": "COMPANY CLAIM (Unverified) / VERIFIED: [Source]",
+            "verification_status": "independently verified | supported by peer-reviewed literature | supported by credible secondary evidence | company-reported | unsupported or conflicting",
+            "source_label": "<the verification level above> — [Source name if any]",
             "what_needs_investigation": "Specific test or data source that could verify this",
             "sources": [{{"title": "Report or article name", "url": "https://real-url-from-your-search", "publisher": "Publisher"}}]
         }},
         {{
             "type": "MARKET",
             "claim": "Exact quoted claim from the deck",
-            "verification_status": "VERIFIED / UNVERIFIED / PARTIALLY VERIFIED",
-            "source_label": "COMPANY CLAIM (Unverified) / VERIFIED: [Source]",
+            "verification_status": "independently verified | supported by peer-reviewed literature | supported by credible secondary evidence | company-reported | unsupported or conflicting",
+            "source_label": "<the verification level above> — [Source name if any]",
             "what_needs_investigation": "Specific data source that would verify this",
             "sources": [{{"title": "Report or article name", "url": "https://real-url-from-your-search", "publisher": "Publisher"}}]
         }}
@@ -422,6 +430,9 @@ IMPORTANT:
 - ONLY include CRITICAL and HIGH priority unverified claims. Skip MEDIUM and LOW entirely.
 - Keep descriptions concise — this report targets 8-10 pages total.
 - Do not recommend whether to invest — only surface what is unverified and what it could mean.
+- OVERVIEW-CLAIMS ALIGNMENT: the company_overview must NOT state as established fact any claim you mark below "independently verified". Describe such claims as company-reported in the overview.
+- SIZED OUTCOMES NEED A DERIVATION: only populate a dollar figure (market_opportunity_usd, addressable_market_usd, comparable_valuation_usd) when it follows from an explicit, reviewable calculation you can state (e.g. units × price, or % of a cited market). Do NOT attach a bare "$X" opportunity to a claim without that basis — leave the figure null and describe the outcome qualitatively instead.
+- NO UNSUPPORTED EXIT/ACQUISITION RANGES: only give a specific valuation or exit range when anchored to a NAMED comparable transaction, a stated revenue/EBITDA scenario, an explicit multiple, and timing/dilution assumptions. Otherwise keep it qualitative.
 - After completing your web research, return the full JSON and nothing else — no markdown fences, no prose.
 """
 
