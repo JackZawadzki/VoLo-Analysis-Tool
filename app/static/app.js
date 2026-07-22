@@ -9471,20 +9471,31 @@ function _memoMatchSectionKey(h2Text) {
 
 function _memoWrapSections(container, sections) {
     const h2s = Array.from(container.querySelectorAll('h2'));
+    const usedKeys = new Set();
+    // A real section boundary is an H2 that maps to a section key we have NOT wrapped
+    // yet. This makes matching first-occurrence-wins, so a sub-heading that greedily
+    // matches an already-used key (e.g. "Market Composition…" matching `market`)
+    // folds into the section above it instead of spawning a duplicate wrapper with a
+    // colliding memo-sect-content-<key> id.
+    const _isNewSectionH2 = (el) => {
+        if (!el || el.tagName !== 'H2') return false;
+        const k = _memoMatchSectionKey(el.textContent);
+        return !!k && !usedKeys.has(k);
+    };
     for (const h2 of h2s) {
         const sectionKey = _memoMatchSectionKey(h2.textContent);
-        // Wrap any recognised section H2 — even if sections[sectionKey] is empty
-        // (happens when memo was loaded from history or sections_json was not fully saved)
-        if (!sectionKey) continue;
+        // Wrap each recognised section H2 once (first occurrence). Unrecognised
+        // sub-heading H2s (e.g. "Portfolio Themes" inside Investment Overview) and
+        // repeat matches fold into the section above so they still get edit
+        // controls instead of being orphaned and un-editable (the reported bug).
+        if (!sectionKey || usedKeys.has(sectionKey)) continue;
+        usedKeys.add(sectionKey);
 
         // Collect all elements belonging to this section, up to the next H2 that
-        // is ITSELF a recognised section. Sub-heading H2s that don't map to a
-        // section key (e.g. "Portfolio Themes" inside Investment Overview) are
-        // folded into THIS section instead of being orphaned — otherwise they get
-        // no edit/revise controls at all and can't be edited (the reported bug).
+        // starts a NEW section.
         const sectionEls = [];
         let sibling = h2.nextElementSibling;
-        while (sibling && !(sibling.tagName === 'H2' && _memoMatchSectionKey(sibling.textContent))) {
+        while (sibling && !_isNewSectionH2(sibling)) {
             sectionEls.push(sibling);
             sibling = sibling.nextElementSibling;
         }
