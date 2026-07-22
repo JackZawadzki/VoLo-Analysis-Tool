@@ -9477,10 +9477,14 @@ function _memoWrapSections(container, sections) {
         // (happens when memo was loaded from history or sections_json was not fully saved)
         if (!sectionKey) continue;
 
-        // Collect all elements belonging to this section (until next H2)
+        // Collect all elements belonging to this section, up to the next H2 that
+        // is ITSELF a recognised section. Sub-heading H2s that don't map to a
+        // section key (e.g. "Portfolio Themes" inside Investment Overview) are
+        // folded into THIS section instead of being orphaned — otherwise they get
+        // no edit/revise controls at all and can't be edited (the reported bug).
         const sectionEls = [];
         let sibling = h2.nextElementSibling;
-        while (sibling && sibling.tagName !== 'H2') {
+        while (sibling && !(sibling.tagName === 'H2' && _memoMatchSectionKey(sibling.textContent))) {
             sectionEls.push(sibling);
             sibling = sibling.nextElementSibling;
         }
@@ -9849,7 +9853,13 @@ let _pendingCharts = [];
 
 
 function _memoInjectDealCard(container, report) {
-    if (!report) return;
+    if (!container || !report) return;
+    // Idempotent injection: a re-render or an AI section-revision calls this on
+    // the SAME container WITHOUT resetting innerHTML, so remove any card already
+    // present before adding a fresh one. Without this, every edit/revision
+    // stacked another hero block after the Investment Overview heading — the
+    // runaway-duplicate that produced the 68-page PDF.
+    container.querySelectorAll('.memo-deal-card').forEach(el => el.remove());
     const ov = report.deal_overview || {};
     const hero = report.hero_metrics || {};
 
